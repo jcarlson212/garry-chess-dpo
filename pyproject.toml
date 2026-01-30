@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grandmaster-dpo"
+version = "0.1.0"
+description = "Preference-based alignment of Maia-2 chess policies to individual grandmasters (e.g., Kasparov) via DPO-style training."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Jason Carlson" }
+]
+dependencies = [
+  # --- Maia-2 core deps (pinned as in upstream) ---
+  "chess==1.10.0",
+  "einops==0.8.0",
+  "gdown==5.2.0",
+  "numpy==1.26.4",
+  "pandas==2.2.3",
+  "pyyaml==6.0.2",
+  "pyzstd==0.15.9",
+  "requests==2.32.3",
+  "torch==2.4.0; platform_system != 'Darwin' or platform_machine == 'arm64'",
+  "torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "tqdm==4.65.0",
+  "maia2",
+  "tkinter",
+
+  # --- Practical additions for a research repo ---
+  "tensorboard>=2.0.0",
+  "packaging>=24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+  "black>=24.0.0",
+  "mypy>=1.10.0",
+  "types-PyYAML>=6.0.0",
+  "types-requests>=2.32.0",
+]
+cli = [
+  "typer>=0.12.0",
+  "rich>=13.7.0",
+]
+wandb = [
+  "wandb>=0.17.0",
+]
+# If you ever choose to use lc0 from python directly (optional):
+# lczero = ["lczero-bindings>=0.1.0"]  # only if you actually need it
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+[Event "casual correspondence game"]
+[Site "https://lichess.org/KuXD9to3"]
+[Date "2026.01.30"]
+[Round "-"]
+[White "Anonymous"]
+[Black "lichess AI level 6"]
+[Result "1-0"]
+[GameId "KuXD9to3"]
+[UTCDate "2026.01.30"]
+[UTCTime "05:29:17"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[Variant "Standard"]
+[TimeControl "-"]
+[ECO "C25"]
+[Opening "Vienna Game: Anderssen Defense"]
+[Termination "Normal"]
+[Annotator "lichess.org"]
+
+1. e4 e5 2. Nc3 Bc5 { C25 Vienna Game: Anderssen Defense } 3. Nf3 d6 4. a3 Nf6 5. Be2 Nc6 6. b4 Bd4 7. Nxd4 Nxd4 8. O-O Be6 9. d3 a5 10. b5 h6 11. Rb1 O-O 12. f4 b6 13. Be3 Nxe2+ 14. Qxe2 Re8 15. Kh1 exf4 16. Rxf4 Qe7 17. Qf2 Ng4 18. Rxg4 Bxg4 19. Nd5 Qd7 20. Qg3 Kh7 21. Bd4 Rg8 22. a4 Rab8 23. h3 Be6 24. Nf4 c5 25. Bb2 c4 26. Qf3 g5 27. Nh5 Rg6 28. Rf1 Qc8 29. d4 Qh8 30. Bc3 g4 31. hxg4 Qg8 32. d5 Bxg4 33. Nf6+ Rxf6 34. Qxf6 Qg6 35. Qxf7+ Qxf7 36. Rxf7+ Kg6 37. Rf4 h5 38. Kh2 Rg8 39. Rf6+ Kh7 40. Rxd6 Bd1 41. Rd7+ Kh6 42. Bd2+ Kg6 43. Rd6+ Kg7 44. Rxb6 Kf7 45. Bxa5 Bxc2 46. Bc3 Rg6 47. Rxg6 Bxe4 48. Rf6+ Kg8 49. a5 Bxd5 50. b6 Be4 51. b7 Bxb7 52. a6 Be4 53. a7 Kh7 54. Rf4 Bd5 55. Rd4 Ba8 56. Rd7+ Kg6 57. Rd6+ Kg5 58. Rb6 Kh4 59. Bf6+ Kg4 60. Rb4 h4 61. Rb8 Be4 62. Rc8 Bd5 63. Rd8 Bc6 64. a8=Q Bxa8 65. Rxa8 h3 66. Rg8+ Kf5 67. Bc3 Ke4 68. Re8+ Kd3 69. Bf6 Kc2 70. gxh3 Kb3 71. Rc8 Kb4 72. Be7+ Kc3 73. h4 Kd4 74. Kg3 Kc3 75. Kf3 Kb3 76. h5 Kc3 77. h6 Kb3 78. h7 Kc2 79. Rxc4+ Kd3 80. h8=Q Kxc4 81. Qe5 Kd3 82. Qe4+ Kd2 83. Qe3+ Kd1 84. Qe2+ Kc1 85. Ke3 Kb1 86. Kd3 Ka1 87. Kc3 Kb1 88. Qb2# { White wins by checkmate. } 1-0
+
+

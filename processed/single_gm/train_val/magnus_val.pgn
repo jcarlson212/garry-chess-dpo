@@ -1,0 +1,2568 @@
+[Event "Grand Chess Tour Cote dIvoire (Rapid & Blitz)"]
+[Site "Abidjan CIV"]
+[Date "2019.05.08"]
+[Round "3.1"]
+[White "Magnus Carlsen"]
+[Black "Hikaru Nakamura"]
+[Result "1/2-1/2"]
+[EventDate "2019.05.08"]
+[ECO "A18"]
+[WhiteElo "2861"]
+[BlackElo "2761"]
+[PlyCount "64"]
+
+1. c4 Nf6 2. Nc3 e6 3. e4 d5 4. e5 d4 5. exf6 dxc3 6. fxg7 cxd2+ 7. Bxd2 Bxg7
+8. Qb3 Nc6 9. Nf3 Qe7 10. Bd3 O-O 11. O-O-O a5 12. a3 e5 13. Bc3 f5 14. c5+ Kh8
+15. Bb5 Be6 16. Qc2 Qxc5 17. Bxc6 Qxc6 18. Nxe5 Qe4 19. Qd2 Ba2 20. Nd3 Qc4 21.
+Rhe1 Rae8 22. Rxe8 Rxe8 23. Re1 Rxe1+ 24. Nxe1 Qc6 25. Nf3 Bxc3 26. bxc3 Bd5
+27. Qd4+ Kg8 28. Nh4 Qe6 29. Kd2 b6 30. f3 Bc4 31. Nxf5 Qe2+ 32. Kc1 Qe1+
+1/2-1/2
+
+
+
+[Event "Grand Chess Tour Paris (Blitz)"]
+[Site "Paris FRA"]
+[Date "2017.06.25"]
+[Round "13"]
+[White "Magnus Carlsen"]
+[Black "Shakhriyar Mamedyarov"]
+[Result "1/2-1/2"]
+[EventDate "2017.06.21"]
+[ECO "C50"]
+[WhiteElo "2832"]
+[BlackElo "2800"]
+[PlyCount "126"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. d3 d6 6. c3 a6 7. a4 Ba7 8. Re1 h6
+9. Nbd2 O-O 10. Nf1 Re8 11. Qb3 Qe7 12. a5 Rb8 13. Be3 Be6 14. Bxe6 Qxe6 15.
+Qxe6 Rxe6 16. Bxa7 Nxa7 17. Ne3 Rd8 18. b4 d5 19. Rad1 dxe4 20. dxe4 Rxd1 21.
+Rxd1 Nxe4 22. Rd8+ Kh7 23. Rd7 Nxc3 24. Rxc7 Nc6 25. Rxf7 e4 26. Nd2 Re7 27.
+Rxe7 Nxe7 28. Nec4 Nc6 29. Nd6 Nxb4 30. Nxb7 Nc6 31. Nc4 Ne2+ 32. Kf1 Ned4 33.
+Nc5 Kg6 34. Nxe4 Nb3 35. Ke2 Kf5 36. Kd3 Ncxa5 37. Nxa5 Nxa5 38. Nc5 Nc6 39.
+Nxa6 Ne5+ 40. Ke2 g5 41. Nc5 h5 42. Nd3 Ng4 43. h3 Nf6 44. Ke3 Nd5+ 45. Kd4 Ne7
+46. Nb4 Ng6 47. Nd5 g4 48. Ke3 Nh4 49. Nf4 Kg5 50. Ke4 gxh3 51. gxh3 Kh6 52.
+Ne6 Kg6 53. Nf4+ Kg5 54. Nd5 Ng6 55. f4+ Kh4 56. f5 Nf8 57. Nf4 Nd7 58. Ng6+
+Kxh3 59. Kf4 h4 60. Kg5 Nc5 61. Nxh4 Ne4+ 62. Kf4 Nd6 63. Nf3 Nxf5 1/2-1/2
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2012.06.07"]
+[Round "4"]
+[White "Magnus Carlsen"]
+[Black "Teimour Radjabov"]
+[Result "1-0"]
+[EventDate "2012.06.07"]
+[ECO "C03"]
+[WhiteElo "2835"]
+[BlackElo "2784"]
+[PlyCount "55"]
+
+1. e4 e6 2. d4 d5 3. Nd2 a6 4. Ngf3 c5 5. c3 cxd4 6. Nxd4 Nf6 7. e5 Nfd7 8. f4
+Nc6 9. N2f3 Be7 10. Bd3 Nc5 11. Bc2 Bd7 12. O-O Nxd4 13. Nxd4 g6 14. Be3 Qc7
+15. Kh1 h5 16. Qe1 Rc8 17. Bf2 Ba4 18. Bb1 Bd7 19. Bh4 Bxh4 20. Qxh4 Qd8 21.
+Qf2 Qe7 22. Bc2 Ba4 23. b3 Bd7 24. a4 O-O 25. Rae1 Bc6 26. f5 exf5 27. Nxf5
+gxf5 28. Qg3+ 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "29"]
+[White "Magnus Carlsen"]
+[Black "Alireza Firouzja"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "C48"]
+[WhiteElo "2835"]
+[BlackElo "2777"]
+[PlyCount "68"]
+
+1. e4 e5 2. Nc3 Nf6 3. Nf3 Nc6 4. Bb5 Nd4 5. Nxd4 exd4 6. e5 dxc3 7. exf6 Qxf6
+8. dxc3 Bc5 9. Qe2+ Be7 10. O-O O-O 11. Re1 Bc5 12. Be3 Bxe3 13. Qxe3 c6 14.
+Bd3 d5 15. Qe7 Qxe7 16. Rxe7 Rb8 17. f4 g6 18. Rae1 Be6 19. Kf2 Rfc8 20. h4 Kf8
+21. R1xe6 fxe6 22. Rxh7 Kg8 23. Bxg6 Rf8 24. Kf3 Rf6 25. h5 Rbf8 26. g3 e5 27.
+Re7 exf4 28. g4 Rd6 29. g5 d4 30. c4 b5 31. Bd3 Rf7 32. Re8+ Rf8 33. Rxf8+ Kxf8
+34. h6 1-0
+
+
+
+[Event "BNbank Blitz"]
+[Site "Oslo NOR"]
+[Date "2009.11.28"]
+[Round "17"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "D85"]
+[WhiteElo "2715"]
+[BlackElo "2801"]
+[PlyCount "79"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 d5 4. cxd5 Nxd5 5. e4 Nxc3 6. bxc3 Bg7 7. Nf3 c5 8.
+Rb1 O-O 9. Be2 b6 10. O-O Bb7 11. d5 Bxc3 12. Bc4 Bg7 13. e5 Ba6 14. Qd3 Bxc4
+15. Qxc4 Nd7 16. Re1 a6 17. Qh4 e6 18. Bg5 Qc7 19. d6 Qc6 20. Bh6 f6 21. exf6
+Rxf6 22. Ng5 Nf8 23. d7 Bxh6 24. Qxh6 Qxd7 25. Ne4 Rf7 26. Rxb6 c4 27. Qe3 Qd3
+28. Qc1 Rd8 29. Rxa6 Qd4 30. Rc6 Qa7 31. Qxc4 Rd4 32. Qc2 Ra4 33. Re2 Qd4 34.
+h3 Qa1+ 35. Kh2 Qe5+ 36. Ng3 Qf4 37. Rc8 Kg7 38. Qc3+ Kh6 39. f3 g5 40. Rxf8
+1-0
+
+
+
+[Event "Grand Chess Tour Paris (Blitz)"]
+[Site "Paris FRA"]
+[Date "2017.06.25"]
+[Round "11"]
+[White "Magnus Carlsen"]
+[Black "Etienne Bacrot"]
+[Result "1-0"]
+[EventDate "2017.06.21"]
+[ECO "C50"]
+[WhiteElo "2832"]
+[BlackElo "2708"]
+[PlyCount "175"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. d3 d6 6. c3 a6 7. Bb3 O-O 8. h3 h6
+9. Re1 Re8 10. Nbd2 Be6 11. Nf1 Bxb3 12. Qxb3 Qd7 13. Be3 Bxe3 14. Nxe3 Ne7 15.
+Nh2 Ng6 16. Nhg4 Nh7 17. Qd1 Nf4 18. h4 d5 19. g3 dxe4 20. dxe4 Qxd1 21. Raxd1
+Ne6 22. Nd5 f6 23. h5 Rad8 24. Kg2 Kf7 25. Nge3 Nhf8 26. Nf5 Rd7 27. Nde3 Red8
+28. Rxd7+ Rxd7 29. Rd1 Rxd1 30. Nxd1 Nc5 31. f3 a5 32. Kf1 Nfe6 33. Ke2 Ke8 34.
+Nde3 Kd7 35. b4 Na4 36. Kd3 axb4 37. cxb4 b5 38. Nd5 Nb2+ 39. Kc3 Na4+ 40. Kd2
+c6 41. Nde3 Nb6 42. Kd3 Na4 43. Nd1 Kc7 44. Ke3 Nb6 45. Nb2 Kd7 46. Nd3 Nc4+
+47. Ke2 Ke8 48. Nc5 Nxc5 49. bxc5 Kf7 50. Kd3 Nb2+ 51. Kc3 Na4+ 52. Kb4 Kf8 53.
+Nd6 Ke7 54. Nc8+ Kd8 55. Nd6 Ke7 56. a3 Ke6 57. Nf5 Kf7 58. f4 Kf8 59. Nh4 Kf7
+60. Ng2 g6 61. hxg6+ Kxg6 62. Nh4+ Kf7 63. fxe5 fxe5 64. Nf3 Kf6 65. g4 Ke6 66.
+Ne1 Kf6 67. Nd3 Ke6 68. Ka5 Nc3 69. Kb6 Nxe4 70. Kxc6 Nc3 71. Kb7 e4 72. Nf4+
+Ke5 73. c6 e3 74. c7 Ne4 75. Ne2 Nd6+ 76. Kc6 Ke6 77. Nd4+ Ke5 78. Nxb5 Nc8 79.
+Nc3 Kd4 80. Ne2+ Kd3 81. Ng3 Kd4 82. Nf5+ Ke4 83. a4 Kf4 84. Nxe3 Kxe3 85. a5
+Kf4 86. Kb7 Nd6+ 87. Kb8 Kxg4 88. a6 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.19"]
+[Round "21"]
+[White "Magnus Carlsen"]
+[Black "Alireza Firouzja"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "C77"]
+[WhiteElo "2835"]
+[BlackElo "2777"]
+[PlyCount "62"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. d3 d6 6. c3 Be7 7. O-O O-O 8. Re1
+Re8 9. Nbd2 h6 10. Nf1 b5 11. Bc2 Bf8 12. Ng3 d5 13. a4 b4 14. a5 Be6 15. Ba4
+Bd7 16. exd5 Nxd5 17. Bd2 bxc3 18. bxc3 Bd6 19. h3 Nf6 20. Ne4 Nxe4 21. Rxe4
+Nb8 22. Bb3 Bf5 23. Re3 Nd7 24. Bc4 Nf6 25. Qe2 e4 26. Nd4 Bg6 27. Re1 exd3 28.
+Bxd3 Rxe3 29. Bxe3 Bxd3 30. Qxd3 c5 31. Bxh6 gxh6 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.19"]
+[Round "21"]
+[White "Alireza Firouzja"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "B12"]
+[WhiteElo "2777"]
+[BlackElo "2835"]
+[PlyCount "78"]
+
+1. e4 c6 2. d4 d5 3. e5 Bf5 4. Nf3 e6 5. Be2 h6 6. O-O Ne7 7. c3 Nd7 8. Nbd2
+Bh7 9. Nb3 Ng6 10. Bd3 Be7 11. Re1 O-O 12. g3 c5 13. Bc2 cxd4 14. cxd4 Rc8 15.
+Bd3 Nb6 16. h4 Re8 17. h5 Nf8 18. Bxh7+ Nxh7 19. Qd3 Qc7 20. Kg2 Qc2 21. Qb5
+Qf5 22. Rh1 Rc6 23. Na5 Rcc8 24. Nxb7 Rf8 25. Nd6 Bxd6 26. exd6 Rc2 27. Bf4 Nc4
+28. b3 Nb2 29. Rac1 Nd3 30. Rxc2 Nxf4+ 31. gxf4 Qg4+ 32. Kf1 Qxf3 33. Rc7 Qxh1+
+34. Ke2 Qe4+ 35. Kf1 Qxf4 36. Qc5 Ng5 37. d7 Ne4 38. Qxf8+ Kh7 39. d8=Q Qxf2#
+0-1
+
+
+
+[Event "St. Louis Rapid & Blitz"]
+[Site "lichess.org INT"]
+[Date "2020.09.19"]
+[Round "11.1"]
+[White "Magnus Carlsen"]
+[Black "Ian Nepomniachtchi"]
+[Result "1/2-1/2"]
+[EventDate "2020.09.18"]
+[ECO "A22"]
+[WhiteElo "2863"]
+[BlackElo "2784"]
+[PlyCount "124"]
+
+1. c4 e5 2. Nc3 Nf6 3. g3 d5 4. cxd5 Nxd5 5. Bg2 Nb6 6. b3 Nc6 7. Bb2 Be6 8.
+Bxc6+ bxc6 9. Nf3 Bd6 10. d4 exd4 11. Qxd4 f6 12. Qe4 Kf7 13. Qxc6 Qe8 14. Qe4
+h5 15. Nd4 Bd7 16. Qxe8+ Rhxe8 17. f3 c5 18. Nc2 Be5 19. Nd1 Bxb2 20. Nxb2 Bb5
+21. e4 f5 22. Ne3 fxe4 23. f4 Red8 24. Rd1 Rd4 25. Nf5 Rad8 26. Nxd4 cxd4 27.
+a4 Ba6 28. a5 Nc8 29. Nc4 Ne7 30. Kf2 Nf5 31. Rhe1 e3+ 32. Kf3 Bb7+ 33. Ke2 Ke6
+34. Rg1 Be4 35. Ne5 Rb8 36. Nf3 Bxf3+ 37. Kxf3 Rxb3 38. Ke4 e2 39. Rd3 Rb5 40.
+Re1 Rxa5 41. Rxe2 g6 42. Kf3+ Kd6 43. h3 Ra4 44. g4 hxg4+ 45. hxg4 Ne7 46. Ke4
+Nc6 47. Rh2 Ra1 48. Rh6 Re1+ 49. Kf3 Rf1+ 50. Kg3 Rg1+ 51. Kh4 Rh1+ 52. Kg5
+Rxh6 53. Kxh6 Kd5 54. Kxg6 Ke4 55. Rd1 Kxf4 56. g5 Ne5+ 57. Kh5 Ke4 58. Re1+
+Kf5 59. Rf1+ Ke4 60. Re1+ Kf5 61. Kh6 Nf7+ 62. Kh5 Ne5 1/2-1/2
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.20"]
+[Round "26"]
+[White "Magnus Carlsen"]
+[Black "Andrew Tang"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "C47"]
+[WhiteElo "2835"]
+[BlackElo "2523"]
+[PlyCount "42"]
+
+1. e4 e5 2. Nc3 Nc6 3. Nf3 Nf6 4. a3 g6 5. Nxe5 Nxe5 6. d4 Nc6 7. d5 Ne7 8. e5
+Nh5 9. d6 Nc6 10. g4 Nxe5 11. gxh5 Bxd6 12. Ne4 Qe7 13. Bg5 Qe6 14. Nxd6+ cxd6
+15. Be3 O-O 16. Be2 b6 17. Qd2 Bb7 18. Rg1 Rac8 19. O-O-O Be4 20. Bd4 Qa2 21.
+Bd3 Qa1# 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Almaty KAZ"]
+[Date "2022.12.29"]
+[Round "2.1"]
+[White "Magnus Carlsen"]
+[Black "Zhamsaran Tsydypov"]
+[Result "1-0"]
+[EventDate "2022.12.29"]
+[ECO "A01"]
+[WhiteElo "2859"]
+[BlackElo "2534"]
+[PlyCount "78"]
+
+1. b3 c5 2. Bb2 Nc6 3. e4 d6 4. Bb5 Bd7 5. Nc3 e5 6. Nge2 g6 7. O-O Bg7 8. f4
+exf4 9. Nxf4 Nge7 10. d3 O-O 11. Qd2 a6 12. Bxc6 Bxc6 13. Rae1 Qd7 14. Nd1 Bxb2
+15. Nxb2 d5 16. Qf2 dxe4 17. dxe4 Qd4 18. Nfd3 Qxf2+ 19. Rxf2 b6 20. Nc4 Rab8
+21. Rf6 Kg7 22. e5 b5 23. Na5 c4 24. Nb4 Ba8 25. Nxa6 Rbd8 26. Nc7 Rd2 27. Rf2
+Rxf2 28. Kxf2 Nf5 29. Nxb5 cxb3 30. axb3 Rd8 31. Nc4 Bc6 32. Nbd6 Nd4 33. Rd1
+Ne6 34. b4 Rb8 35. b5 Ba8 36. Ra1 Bd5 37. Ne3 Ba8 38. Ra7 Nd8 39. c4 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.20"]
+[Round "26"]
+[White "Andrew Tang"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "D31"]
+[WhiteElo "2523"]
+[BlackElo "2835"]
+[PlyCount "114"]
+
+1. d4 a6 2. c4 e6 3. Nc3 d5 4. cxd5 exd5 5. Bf4 c6 6. e3 Bd6 7. Bg3 Ne7 8. Bd3
+Bf5 9. Nge2 Bxd3 10. Qxd3 O-O 11. O-O Bxg3 12. Nxg3 Nd7 13. f3 Qb6 14. Rad1
+Rad8 15. a3 Qxb2 16. Rb1 Qxa3 17. Rxb7 Rfe8 18. Qc2 a5 19. h3 Qd6 20. Nge2 Ng6
+21. e4 dxe4 22. fxe4 c5 23. d5 Nde5 24. Qa4 c4 25. Qxa5 h6 26. Qb5 Rb8 27. Nd4
+Kh7 28. Nf5 Qa3 29. Rxb8 Rxb8 30. Qxb8 Qxc3 31. Qb6 Qd3 32. Qd4 Nf4 33. Rxf4 f6
+34. Qxd3 Nxd3 35. Rf1 c3 36. Ne3 Nc5 37. d6 Kg6 38. Rc1 Kf7 39. Rxc3 Nxe4 40.
+Rc7+ Ke6 41. Re7+ Kxd6 42. Rxe4 g6 43. g4 f5 44. gxf5 gxf5 45. Nxf5+ Kd5 46.
+Re1 h5 47. Kf2 h4 48. Kf3 Kc6 49. Rd1 Kc5 50. Ke4 Kc6 51. Rc1+ Kb5 52. Kd5 Kb4
+53. Nd4 Ka3 54. Kc4 Kb2 55. Rc2+ Kb1 56. Kb3 Ka1 57. Rc1# 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.20"]
+[Round "26"]
+[White "Andrew Tang"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "A40"]
+[WhiteElo "2523"]
+[BlackElo "2835"]
+[PlyCount "72"]
+
+1. d4 a6 2. a4 g6 3. c4 Bg7 4. Nc3 d6 5. e4 Nc6 6. Nge2 Nf6 7. f3 a5 8. Be3 e5
+9. d5 Nb4 10. Qd2 Nd7 11. Nc1 Nc5 12. Be2 f5 13. O-O O-O 14. Ra3 b6 15. Nb5 Bd7
+16. Na2 Nxa2 17. Rxa2 Rf7 18. Ra3 f4 19. Bf2 g5 20. h3 h5 21. Rb1 g4 22. fxg4
+hxg4 23. Bxg4 Nxe4 24. Qe2 Bxg4 25. Qxg4 Nxf2 26. Kxf2 e4 27. Nc3 Qf6 28. Re1
+Qd4+ 29. Kf1 f3 30. Nxe4 Qxc4+ 31. Kg1 Qd4+ 32. Kh1 f2 33. Rf1 Re8 34. Ng3 Qxg4
+35. hxg4 Re1 36. Rf3 Be5 0-1
+
+
+
+[Event "Grand Chess Tour Paris (Blitz)"]
+[Site "Paris FRA"]
+[Date "2017.06.24"]
+[Round "2"]
+[White "Etienne Bacrot"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2017.06.21"]
+[ECO "B52"]
+[WhiteElo "2708"]
+[BlackElo "2832"]
+[PlyCount "76"]
+
+1. e4 c5 2. Nf3 d6 3. Bb5+ Bd7 4. Bxd7+ Qxd7 5. c4 e5 6. Nc3 Nc6 7. d3 Be7 8.
+a3 Bd8 9. O-O Nge7 10. b4 cxb4 11. axb4 Nxb4 12. Ba3 Nbc6 13. d4 exd4 14. Nxd4
+Nxd4 15. Qxd4 O-O 16. e5 Nc6 17. Qxd6 Qxd6 18. exd6 Bf6 19. Rac1 Bxc3 20. Rxc3
+Rfd8 21. Rb1 Rd7 22. Re3 f6 23. c5 Kf7 24. Reb3 Nd8 25. Kf1 Rc8 26. Ke2 Rc6 27.
+Rb5 Ra6 28. R1b3 Ra4 29. Ke3 Ke6 30. R5b4 Rxb4 31. Rxb4 Kd5 32. Re4 Nc6 33. Rh4
+h6 34. Rh5+ Ne5 35. f4 g6 36. fxe5 gxh5 37. exf6 Rf7 38. Bb2 Kxc5 0-1
+
+
+
+[Event "Zurich Chess Challenge (Blitz)"]
+[Site "Zurich SUI"]
+[Date "2014.01.29"]
+[Round "3.2"]
+[White "Levon Aronian"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2014.01.29"]
+[ECO "A46"]
+[WhiteElo "2812"]
+[BlackElo "2872"]
+[PlyCount "166"]
+
+1. d4 Nf6 2. Nf3 b5 3. e4 Nxe4 4. Bxb5 e6 5. O-O Be7 6. Re1 Nf6 7. c4 O-O 8.
+Nc3 Ba6 9. Bf4 c6 10. Bxa6 Nxa6 11. Ne5 Qc8 12. Qf3 Nb4 13. Rad1 d6 14. Ng4
+Nxg4 15. Qxg4 Kh8 16. Re3 f5 17. Qe2 Rf6 18. Re1 Bf8 19. a3 Na6 20. Rxe6 Rxe6
+21. Qxe6 Qxe6 22. Rxe6 Nc7 23. Re2 Kg8 24. f3 Kf7 25. Kf1 g6 26. Bg3 Rd8 27.
+Ke1 Bg7 28. Rd2 Bh6 29. Rd3 Rd7 30. d5 cxd5 31. Nxd5 Nxd5 32. Rxd5 Bc1 33. Rb5
+Rc7 34. Bxd6 Rxc4 35. Be5 Be3 36. Bc3 Bb6 37. Ke2 Ke6 38. Re5+ Kd6 39. Re8 Rc6
+40. Bb4+ Kd5 41. Bc3 Kc4 42. a4 Kb3 43. a5 Bc5 44. Rb8+ Kc2 45. Rb7 h5 46. Be1
+Re6+ 47. Kf1 Bd4 48. b4 Kd3 49. Bf2 Bxf2 50. Kxf2 h4 51. Rxa7 Re2+ 52. Kf1 Rb2
+53. Rd7+ Ke3 54. Re7+ Kd3 55. Re1 h3 56. gxh3 Rxh2 57. Kg1 Ra2 58. h4 Ra4 59.
+b5 Rxa5 60. Rb1 Ra7 61. b6 Rb7 62. Kf2 f4 63. Rb4 Kc3 64. Rxf4 Rxb6 65. Kg3 Kd3
+66. Kg4 Ke3 67. Re4+ Kf2 68. Ra4 Rb1 69. Ra2+ Ke3 70. Ra3+ Kf2 71. Kg5 Rg1+ 72.
+Kh6 Kg3 73. Kxg6 Kxh4+ 74. Kf5 Rb1 75. Ra5 Kh5 76. f4 Kh6 77. Ra7 Rb5+ 78. Kf6
+Rb6+ 79. Kf7 Rb5 80. Ra6+ Kh5 81. Rf6 Ra5 82. Kg7 Ra7+ 83. Kf8 Kg4 1/2-1/2
+
+
+
+[Event "Grand Chess Tour Paris (Blitz)"]
+[Site "Paris FRA"]
+[Date "2017.06.25"]
+[Round "18.5"]
+[White "Magnus Carlsen"]
+[Black "Wesley So"]
+[Result "1-0"]
+[EventDate "2017.06.24"]
+[ECO "A45"]
+[WhiteElo "2832"]
+[BlackElo "2812"]
+[PlyCount "49"]
+
+1. d4 Nf6 2. Bf4 d5 3. e3 c5 4. Nc3 a6 5. dxc5 e6 6. Na4 Bxc5 7. Nxc5 Qa5+ 8.
+c3 Qxc5 9. Nf3 Nc6 10. Bd3 h6 11. Ne5 O-O 12. O-O Qe7 13. c4 Nxe5 14. Bxe5 dxc4
+15. Bxc4 Rd8 16. Qf3 Nd5 17. e4 Nb6 18. Bb3 f6 19. Bc3 a5 20. a3 Kh8 21. Qe3
+Ra6 22. Rad1 e5 23. Bxa5 Rxd1 24. Rxd1 Be6 25. Bxb6 1-0
+
+
+
+[Event "Superbet Poland Rapid & Blitz"]
+[Site "Warsaw POL"]
+[Date "2024.05.10"]
+[Round "7"]
+[White "M Carlsen"]
+[Black "R Praggnanandhaa"]
+[Result "1/2-1/2"]
+[EventDate "2024.05.08"]
+[ECO "C50"]
+[WhiteElo "2830"]
+[BlackElo "2747"]
+[PlyCount "98"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6 5. d3 d6 6. c3 a6 7. a4 Ba7 8. Nbd2
+O-O 9. h3 h6 10. b4 Ne7 11. Re1 Ng6 12. d4 c6 13. Bf1 Re8 14. Qc2 d5 15. exd5
+exd4 16. Rxe8+ Qxe8 17. c4 cxd5 18. c5 Ne4 19. Nxd4 a5 20. Nxe4 dxe4 21. Nb5
+Bb8 22. Bb2 axb4 23. Re1 Bf5 24. Qb3 Bf4 25. Qxb4 Qd7 26. Qd4 Qxd4 27. Nxd4 Bd7
+28. Bb5 Bxb5 29. axb5 Ra2 30. Bc3 Ra4 31. c6 Rc4 32. Ba1 bxc6 33. Nxc6 Bc7 34.
+Bd4 Nf4 35. Kf1 Nd5 36. Rxe4 Kh7 37. Re1 Nb4 38. Be5 Bb6 39. Nxb4 Rxb4 40. g3
+Rxb5 41. Bf4 Rb2 42. Be3 Bxe3 43. Rxe3 Rb1+ 44. Kg2 g6 45. h4 h5 46. Rf3 Kg7
+47. Re3 Kh7 48. Rf3 Kg7 49. Re3 Kh7 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.10"]
+[Round "27"]
+[White "Magnus Carlsen"]
+[Black "Teimour Radjabov"]
+[Result "1-0"]
+[EventDate "2012.07.01"]
+[ECO "A00"]
+[WhiteElo "2837"]
+[BlackElo "2788"]
+[PlyCount "63"]
+
+1. a4 e5 2. e4 Nf6 3. Nc3 Nc6 4. Nf3 Bb4 5. Bb5 O-O 6. O-O d6 7. d3 Bg4 8. Ne2
+a6 9. Bxc6 bxc6 10. Ng3 Nh5 11. h3 Nxg3 12. fxg3 Bd7 13. g4 Bc5+ 14. Kh1 Qe7
+15. Qe1 f6 16. Nh4 g6 17. Bh6 Rf7 18. Rb1 Bb6 19. b3 d5 20. Nf3 Re8 21. Qg3 Bc5
+22. Rbe1 dxe4 23. dxe4 Bd6 24. Re2 c5 25. Nd2 Be6 26. Qd3 g5 27. Qxa6 Kh8 28.
+Nc4 Bxc4 29. Qxc4 Rg8 30. h4 gxh4 31. g5 Rg6 32. Ref2 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2009.11.17"]
+[Round "15"]
+[White "Arkadij Naiditsch"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2009.11.16"]
+[ECO "C69"]
+[WhiteElo "2689"]
+[BlackElo "2801"]
+[PlyCount "127"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O Ne7 6. Nxe5 Qd4 7. Qh5 g6 8.
+Nf3 Qxe4 9. Qa5 Bg4 10. Re1 Qd5 11. Qxd5 cxd5 12. Ne5 Be6 13. d4 Nf5 14. c3 Bg7
+15. Nd2 O-O 16. Ndf3 Nd6 17. Bf4 Rac8 18. Nd3 Ne4 19. Ng5 Nxg5 20. Bxg5 b6 21.
+Nf4 Rce8 22. Nxe6 Rxe6 23. Bf4 Rc8 24. f3 c5 25. dxc5 bxc5 26. Rad1 a5 27. Kf2
+d4 28. c4 a4 29. b3 Ra8 30. Rxe6 fxe6 31. Bd6 Bf8 32. Bxf8 Kxf8 33. Rd2 Ke7 34.
+Ke2 Kd6 35. Kd3 axb3 36. axb3 Ra1 37. Rb2 Rd1+ 38. Ke4 Rc1 39. Kd3 Rc3+ 40. Kd2
+g5 41. Rb1 h5 42. h3 Ke5 43. Re1+ Kf5 44. g4+ hxg4 45. fxg4+ Kf6 46. Rf1+ Ke7
+47. Rh1 Rxb3 48. h4 gxh4 49. Rxh4 Kd6 50. Rh5 Rg3 51. Rg5 e5 52. Rg6+ Ke7 53.
+Rc6 Rxg4 54. Rxc5 Ke6 55. Rc8 Rg2+ 56. Kd3 Rg3+ 57. Kd2 Rc3 58. Rc6+ Kf5 59.
+Rc8 Ke4 60. Ke2 Rc2+ 61. Kd1 d3 62. c5 Ke3 63. c6 e4 64. c7 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2010.11.16"]
+[Round "11.1"]
+[White "Peter Svidler"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2010.11.16"]
+[ECO "A29"]
+[WhiteElo "2722"]
+[BlackElo "2802"]
+[PlyCount "54"]
+
+1. c4 e5 2. Nc3 Nc6 3. Nf3 Nf6 4. g3 d5 5. cxd5 Nxd5 6. Bg2 Nb6 7. O-O Be7 8.
+a3 O-O 9. b4 Re8 10. d3 Bf8 11. Bb2 Nd4 12. Nd2 c6 13. e3 Nf5 14. Qc2 Nd6 15.
+Rad1 Bg4 16. Bf3 Bxf3 17. Nxf3 a5 18. Qb3 Qd7 19. bxa5 Nbc8 20. d4 e4 21. Ne5
+Qe6 22. Qxe6 Rxe6 23. Nd7 Nc4 24. Bc1 Rxa5 25. d5 cxd5 26. Nxd5 Rd6 27. Nxf8
+Raxd5 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Almaty KAZ"]
+[Date "2022.12.29"]
+[Round "7.1"]
+[White "Anish Giri"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2022.12.29"]
+[ECO "C18"]
+[WhiteElo "2764"]
+[BlackElo "2859"]
+[PlyCount "82"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 4. e5 c5 5. a3 Bxc3+ 6. bxc3 Nc6 7. Qg4 g6 8. h4
+h6 9. h5 g5 10. f4 f5 11. Qg3 g4 12. dxc5 Qa5 13. Ne2 Nge7 14. a4 b6 15. cxb6
+axb6 16. Kf2 Ba6 17. Qe3 Kf7 18. Bd2 Bc4 19. Nd4 Qc5 20. Nb5 Bxb5 21. Qxc5 bxc5
+22. Bxb5 Na7 23. Rhb1 Rhb8 24. Be2 Rxb1 25. Rxb1 c4 26. Be3 Nac6 27. Ra1 Ke8
+28. Ke1 Kd7 29. Bf2 Nc8 30. Bc5 Kc7 31. a5 Rxa5 32. Rxa5 Nxa5 33. Bf8 Kd7 34.
+Bxh6 Ke8 35. Kd2 Kf7 36. Bg5 Nc6 37. Kc1 Nb6 38. Kd2 Na4 39. Bh6 Na7 40. Bg5
+Kg7 41. Bf1 0-1
+
+
+
+[Event "World Blitz KO Finals"]
+[Site "Doha QAT"]
+[Date "2025.12.30"]
+[Round "1.1"]
+[White "Fabiano Caruana"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2025.12.30"]
+[ECO "B40"]
+[WhiteElo "2751"]
+[BlackElo "2881"]
+[PlyCount "94"]
+
+1. e4 c5 2. Nf3 e6 3. d3 Nc6 4. g3 d5 5. Qe2 Nf6 6. Bg2 Be7 7. O-O O-O 8. e5
+Ne8 9. c4 b5 10. Nc3 Nc7 11. Nxb5 Nxb5 12. cxb5 Na5 13. d4 c4 14. Bd2 a6 15.
+bxa6 Bxa6 16. Bc3 Nc6 17. a3 Na7 18. h4 Nb5 19. Qc2 Nxc3 20. bxc3 Bb5 21. a4
+Bd7 22. Rfb1 h6 23. Nh2 Qa5 24. Ng4 Rfb8 25. Qd2 Rb3 26. Rc1 Rab8 27. Ra2 Rb1
+28. Rxb1 Rxb1+ 29. Kh2 Rb3 30. Rc2 Bxa4 31. Ra2 Ba3 32. Nxh6+ gxh6 33. Qxh6 Qd8
+34. Qd2 Bd7 35. Bf3 Bf8 36. Bd1 Ra3 37. Rb2 Ra7 38. Bc2 Bg7 39. Kg2 Ba4 40. Ra2
+Qd7 41. Bb1 Bb3 42. Rxa7 Qxa7 43. Qg5 Qa1 44. Qd8+ Bf8 45. Qg5+ Bg7 46. Qd8+
+Bf8 47. Qg5+ 1/2-1/2
+
+
+
+[Event "SuperUnited Blitz Croatia"]
+[Site "Zagreb CRO"]
+[Date "2025.07.05"]
+[Round "8.4"]
+[White "R Praggnanandhaa"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2025.07.05"]
+[ECO "A01"]
+[WhiteElo "2779"]
+[BlackElo "2839"]
+[PlyCount "120"]
+
+1. b3 e5 2. Bb2 Nc6 3. e3 g6 4. c4 Bg7 5. Nf3 Nge7 6. d4 exd4 7. Nxd4 O-O 8.
+Be2 Nxd4 9. Bxd4 Bxd4 10. Qxd4 d5 11. Nc3 dxc4 12. Qxd8 Rxd8 13. Bxc4 Nf5 14.
+Ke2 Nd6 15. Bd3 Be6 16. Rhd1 f5 17. Rac1 c6 18. h4 Kf7 19. h5 Kf6 20. hxg6 hxg6
+21. Rh1 Nf7 22. Rcd1 Rd7 23. Bc2 Rxd1 24. Rxd1 Rh8 25. f4 g5 26. Kf3 gxf4 27.
+exf4 a5 28. Bd3 b5 29. Kf2 a4 30. b4 a3 31. Be2 Rc8 32. Rd2 Ke7 33. Bf3 Nd6 34.
+Ne2 c5 35. bxc5 Rxc5 36. Nd4 Bc4 37. Nc6+ Kd7 38. Nb4 Ke6 39. Rc2 Rc8 40. Rc3
+Rd8 41. Rxa3 Rh8 42. Ra6 Rh1 43. a3 Ra1 44. Ke3 Kd7 45. Kd4 Re1 46. Ra7+ Ke6
+47. Nc6 Kf6 48. Ra6 b4 49. Rb6 bxa3 50. Nb4 Ke7 51. Bd5 Rd1+ 52. Ke5 Re1+ 53.
+Kd4 a2 54. Nxa2 Rd1+ 55. Ke3 Bxd5 56. Nc3 Nc4+ 57. Ke2 Rd2+ 58. Ke1 Nxb6 59.
+Kxd2 Bxg2 60. Ke3 Nd5+ 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2019.12.29"]
+[Round "9.2"]
+[White "Baadur Jobava"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2019.12.29"]
+[ECO "A01"]
+[WhiteElo "2604"]
+[BlackElo "2872"]
+[PlyCount "112"]
+
+1. b3 g6 2. Bb2 Nf6 3. Bxf6 exf6 4. c4 d5 5. cxd5 Qxd5 6. Nc3 Qa5 7. a3 c6 8.
+e3 f5 9. g3 Bd6 10. Bg2 Nd7 11. Nge2 Nf6 12. O-O O-O 13. b4 Qd8 14. d4 Qe7 15.
+Rb1 a5 16. b5 Bxa3 17. bxc6 bxc6 18. Bxc6 Ra6 19. Nd5 Nxd5 20. Bxd5 Bb4 21. Nf4
+Bd6 22. Qf3 a4 23. Rfc1 a3 24. Ba2 Ra7 25. Nd5 Qd8 26. h4 Be6 27. Kg2 h5 28.
+Nc3 Bxa2 29. Nxa2 Rc7 30. Qd5 Qa8 31. Qxa8 Rxa8 32. Rxc7 Bxc7 33. Kf3 Kf8 34.
+Ke2 Bd6 35. Kd3 Ke7 36. Rb7+ Ke6 37. Rb6 Ra7 38. Kc2 Kd7 39. Kb1 Kc7 40. Rb3
+Rb7 41. Kc2 Rxb3 42. Kxb3 Kc6 43. Nc3 f6 44. Kc4 g5 45. f4 g4 46. Kb3 Bf8 47.
+Nb1 Bb4 48. Nc3 a2 49. Nxa2 Be1 50. Kc4 Bxg3 51. Nb4+ Kd6 52. Kd3 Bxh4 53. e4
+fxe4+ 54. Kxe4 Bg3 55. f5 h4 56. Nd5 h3 0-1
+
+
+
+[Event "World Blitz 2021"]
+[Site "Warsaw POL"]
+[Date "2021.12.29"]
+[Round "2.1"]
+[White "Magnus Carlsen"]
+[Black "Sanan Sjugirov"]
+[Result "1-0"]
+[EventDate "2021.12.29"]
+[ECO "C65"]
+[WhiteElo "2856"]
+[BlackElo "2680"]
+[PlyCount "148"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. d3 Bc5 5. Bxc6 dxc6 6. O-O Nd7 7. c3 O-O 8.
+d4 Bd6 9. Bg5 Qe8 10. Re1 h6 11. Bh4 c5 12. Bg3 Qe7 13. d5 Re8 14. a4 a5 15.
+Na3 Nf8 16. Nd2 Ng6 17. Ndc4 b6 18. Nb5 Rb8 19. b4 cxb4 20. Ncxd6 cxd6 21. cxb4
+axb4 22. Qb3 Bd7 23. Qxb4 Bxb5 24. Qxb5 Rec8 25. Rec1 Qd8 26. Rab1 Ne7 27. Rxc8
+Rxc8 28. h3 Ra8 29. f3 Nc8 30. Bf2 Qc7 31. Bxb6 Nxb6 32. Qxb6 Qc2 33. Ra1 Qc3
+34. Ra2 Qc4 35. Qb2 Kh7 36. Kh2 Rxa4 37. Rxa4 Qxa4 38. Qb7 f6 39. Qe7 Qa3 40.
+h4 h5 41. Qe8 Kh6 42. Qh8+ Kg6 43. Qf8 Qb4 44. Qe8+ Kh6 45. Qc8 Qd2 46. Qf5 Qe3
+47. Kh3 Qc1 48. Kh2 Qd2 49. Qc8 Qf4+ 50. Kh3 Qd2 51. Qd8 Qb4 52. g4 hxg4+ 53.
+Kxg4 Kh7 54. Qe8 Qd2 55. Qh5+ Kg8 56. Kf5 Qc3 57. Ke6 Qc8+ 58. Kxd6 Qd8+ 59.
+Kc6 Qc8+ 60. Kb5 Qb7+ 61. Kc4 Qa6+ 62. Kc3 Qa3+ 63. Kd2 Qb4+ 64. Ke2 Qb2+ 65.
+Kf1 Qc1+ 66. Kg2 Qd2+ 67. Kh3 Qd1 68. Qf5 Kf7 69. Qe6+ Kg6 70. Qg4+ Kf7 71. Qg2
+f5 72. h5 Kf8 73. Kh4 Qd2 74. Qxd2 1-0
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.26"]
+[Round "12.3"]
+[White "Magnus Carlsen"]
+[Black "Hikaru Nakamura"]
+[Result "1/2-1/2"]
+[EventDate "2019.11.25"]
+[ECO "C67"]
+[WhiteElo "2870"]
+[BlackElo "2741"]
+[PlyCount "40"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. Re1 Nd6 6. Nxe5 Be7 7. Bf1 Nxe5
+8. Rxe5 O-O 9. d4 Ne8 10. Re1 d5 11. Bf4 Bd6 12. Be5 c6 13. c3 Bxe5 14. Rxe5
+Nd6 15. Bd3 g6 16. Nd2 f6 17. Re3 Bf5 18. Nb3 b6 19. Bxf5 Nxf5 20. Re2 Qd7
+1/2-1/2
+
+
+
+[Event "Grand Chess Tour Cote dIvoire (Rapid & Blitz)"]
+[Site "Abidjan CIV"]
+[Date "2019.05.12"]
+[Round "18.1"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2019.05.11"]
+[ECO "D30"]
+[WhiteElo "2761"]
+[BlackElo "2861"]
+[PlyCount "90"]
+
+1. d4 d5 2. c4 e6 3. Nf3 a6 4. Bg5 Be7 5. Bxe7 Qxe7 6. e3 Nf6 7. Nc3 O-O 8. Rc1
+Rd8 9. Qc2 dxc4 10. Bxc4 c5 11. dxc5 Qxc5 12. Bd3 Nc6 13. a3 Ne5 14. Nxe5 Qxe5
+15. Ne4 Bd7 16. Nxf6+ Qxf6 17. O-O Rac8 18. Qb1 Rxc1 19. Rxc1 g6 20. Be4 Bb5
+21. Qc2 b6 22. g3 Qe5 23. Bf3 a5 24. h4 h6 25. Qc7 Qxc7 26. Rxc7 Rd6 27. Rb7
+Kg7 28. Kg2 Kf6 29. g4 g5 30. hxg5+ hxg5 31. Kg3 a4 32. Bg2 Bc4 33. Be4 b5 34.
+f4 e5 35. Rc7 exf4+ 36. exf4 Rd2 37. Rc6+ Kg7 38. fxg5 Rxb2 39. g6 Rb3+ 40. Kf4
+Rxa3 41. gxf7 Ra1 42. Rc8 Bxf7 43. Rc7 a3 44. Kg5 Rd1 45. Bc2 Rc1 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Dubai UAE"]
+[Date "2014.06.19"]
+[Round "5.1"]
+[White "Magnus Carlsen"]
+[Black "Pentala Harikrishna"]
+[Result "1-0"]
+[EventDate "2014.06.19"]
+[ECO "B51"]
+[WhiteElo "2881"]
+[BlackElo "2726"]
+[PlyCount "79"]
+
+1. e4 c5 2. Nf3 d6 3. Bb5+ Nd7 4. O-O Nf6 5. d4 a6 6. Bxd7+ Nxd7 7. Nc3 e6 8.
+d5 e5 9. a4 Be7 10. Nd2 O-O 11. Nc4 Nb6 12. Ne3 Bg5 13. b3 Bxe3 14. Bxe3 f5 15.
+f4 Nd7 16. a5 Qe7 17. Qd2 fxe4 18. fxe5 Qxe5 19. Rxf8+ Nxf8 20. Bf4 Qe7 21. Na4
+Bf5 22. Nb6 Rd8 23. Bg5 e3 24. Bxe7 exd2 25. Bxd8 Bxc2 26. Be7 d1=Q+ 27. Rxd1
+Bxd1 28. Bxd6 Bxb3 29. Bxc5 Kf7 30. Bxf8 Kxf8 31. Kf2 Ke7 32. Ke3 Kd6 33. Kd4
+g5 34. g3 g4 35. Nc4+ Bxc4 36. Kxc4 Kd7 37. Kc5 Kc7 38. d6+ Kd7 39. Kd5 h6 40.
+Ke5 1-0
+
+
+
+[Event "Your Next Move (Blitz)"]
+[Site "Leuven BEL"]
+[Date "2016.06.20"]
+[Round "13.5"]
+[White "Maxime Vachier-Lagrave"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2016.06.19"]
+[ECO "E11"]
+[WhiteElo "2789"]
+[BlackElo "2855"]
+[PlyCount "68"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 Bb4+ 4. Nbd2 O-O 5. a3 Be7 6. e4 d6 7. Bd3 c5 8. d5
+Nbd7 9. O-O e5 10. b4 a5 11. bxa5 Rxa5 12. Nb3 Ra6 13. a4 Nh5 14. g3 g6 15. Ne1
+Ng7 16. Ng2 Nf6 17. f3 Bh3 18. Rf2 Nd7 19. Ne3 f5 20. Bf1 Bxf1 21. Qxf1 Bg5 22.
+exf5 Bxe3 23. Bxe3 Nxf5 24. Bd2 Nd4 25. Nxd4 cxd4 26. Bb4 Qb6 27. Rb2 d3+ 28.
+Kh1 Qd4 29. Rb3 e4 30. Bc3 Qxc4 31. Rxb7 Qxc3 32. Rxd7 e3 33. Rb1 Rb6 34. Rxb6
+e2 0-1
+
+
+
+[Event "World Blitz 2023"]
+[Site "Samarkand UZB"]
+[Date "2023.12.30"]
+[Round "14.1"]
+[White "Magnus Carlsen"]
+[Black "Alexey Sarana"]
+[Result "1-0"]
+[EventDate "2023.12.29"]
+[ECO "B50"]
+[WhiteElo "2887"]
+[BlackElo "2707"]
+[PlyCount "72"]
+
+1. e4 c5 2. Nf3 d6 3. Nc3 Nf6 4. Be2 a6 5. O-O b5 6. d4 cxd4 7. Nxd4 Bb7 8. Bf3
+Nbd7 9. a4 bxa4 10. Rxa4 e6 11. Rb4 Nc5 12. Rxb7 Nxb7 13. e5 dxe5 14. Bc6+ Nd7
+15. Nxe6 fxe6 16. Qh5+ Ke7 17. Bxb7 Rb8 18. Rd1 Qc7 19. Bxa6 Nf6 20. Qe2 Kf7
+21. Ne4 Nxe4 22. Qxe4 Be7 23. Bd3 Rb4 24. Qf3+ Bf6 25. c3 Ra4 26. Bc2 Ra1 27.
+g3 Rd8 28. Re1 h6 29. Kg2 Qd7 30. h4 Ke7 31. Be4 Qb5 32. g4 Bxh4 33. Bg5+ hxg5
+34. Rxa1 Rd2 35. Ra7+ Rd7 36. Bc6 1-0
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2013.06.12"]
+[Round "1"]
+[White "Magnus Carlsen"]
+[Black "Dmitry Andreikin"]
+[Result "1/2-1/2"]
+[EventDate "2013.06.12"]
+[ECO "E15"]
+[WhiteElo "2864"]
+[BlackElo "2713"]
+[PlyCount "112"]
+
+1. d4 Nf6 2. Nf3 e6 3. c4 b6 4. g3 Bb4+ 5. Bd2 Bxd2+ 6. Qxd2 Ba6 7. b3 c6 8.
+Bg2 d5 9. Qc2 O-O 10. Nbd2 Nbd7 11. e4 c5 12. O-O cxd4 13. exd5 d3 14. Qxd3
+exd5 15. Rfe1 Rc8 16. Nd4 Qc7 17. Rac1 dxc4 18. Nxc4 Ne5 19. Qb1 Bxc4 20. bxc4
+Rfd8 21. Rcd1 Nxc4 22. Nc6 Rxd1 23. Qxd1 Re8 24. Rxe8+ Nxe8 25. Qe2 Ncd6 26.
+Qa6 Kf8 27. Qxa7 Qxa7 28. Nxa7 Ke7 29. Bd5 Nc7 30. Nc6+ Kd7 31. Ne5+ Ke7 32.
+Bb3 f6 33. Nc6+ Kd7 34. Nd4 Ne4 35. Bc2 Nc3 36. Bxh7 Nxa2 37. h4 Ke7 38. Bc2
+Nc3 39. Kg2 b5 40. Kf3 Kf8 41. Bb3 Nb1 42. Kf4 Na3 43. Kf5 Nc4 44. Kg6 Ne5+ 45.
+Kh7 Nd3 46. f4 Nc5 47. Bc2 b4 48. h5 N7e6 49. Nxe6+ Nxe6 50. Kg6 Nd4 51. Bd3 b3
+52. h6 gxh6 53. Kxf6 b2 54. f5 h5 55. Kg5 Ne2 56. Kxh5 Nxg3+ 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Dubai UAE"]
+[Date "2014.06.20"]
+[Round "13.1"]
+[White "Magnus Carlsen"]
+[Black "Viswanathan Anand"]
+[Result "1/2-1/2"]
+[EventDate "2014.06.19"]
+[ECO "C65"]
+[WhiteElo "2881"]
+[BlackElo "2785"]
+[PlyCount "96"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. d3 Bc5 5. Nbd2 Nd4 6. Nxd4 Bxd4 7. c3 Bb6 8.
+O-O c6 9. Ba4 O-O 10. Bb3 d5 11. h3 dxe4 12. dxe4 Qe7 13. Qf3 Be6 14. Nc4 Nd7
+15. Ne3 Bxe3 16. Bxe3 Rfd8 17. Rfd1 a6 18. Bxe6 Qxe6 19. Qg4 Qxg4 20. hxg4 h6
+21. a4 Kf8 22. a5 Ke8 23. f3 Nf8 24. Bb6 Rxd1+ 25. Rxd1 Nd7 26. Be3 Rd8 27. Kf2
+f6 28. Ke2 Nf8 29. Rh1 Ne6 30. g3 Nf8 31. f4 Ng6 32. g5 exf4 33. gxf4 fxg5 34.
+fxg5 hxg5 35. Bxg5 Rd7 36. Rg1 Kf7 37. Be3 Nf8 38. Bd4 Ne6 39. Ke3 Rd8 40. Be5
+Rh8 41. Rg3 Rh1 42. Rf3+ Ke7 43. b4 Re1+ 44. Kd3 Rd1+ 45. Ke2 Rh1 46. Ke3 Re1+
+47. Kd3 Rd1+ 48. Ke2 Rh1 1/2-1/2
+
+
+
+[Event "Norway Chess (Blitz)"]
+[Site "Stavanger NOR"]
+[Date "2017.06.05"]
+[Round "3.1"]
+[White "Magnus Carlsen"]
+[Black "Anish Giri"]
+[Result "1-0"]
+[EventDate "2017.06.05"]
+[ECO "A00"]
+[WhiteElo "2832"]
+[BlackElo "2771"]
+[PlyCount "57"]
+
+1. Nc3 c5 2. Nf3 Nc6 3. e4 g6 4. Bb5 Bg7 5. O-O d6 6. Re1 Bd7 7. a4 Rc8 8. d3
+Nf6 9. Nd5 O-O 10. Bg5 a6 11. Bxf6 exf6 12. Bc4 f5 13. c3 fxe4 14. dxe4 Na5 15.
+Qd3 Re8 16. Ne3 Bc6 17. Bd5 Qb6 18. Qc2 Re7 19. Rad1 Rce8 20. Bxc6 bxc6 21.
+Rxd6 Rxe4 22. Red1 Bh6 23. Nd5 Qb3 24. Nf6+ Kg7 25. Nxe8+ Rxe8 26. Qxb3 Nxb3
+27. Rxc6 Re2 28. g3 Rxb2 29. Rd7 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.20"]
+[Round "26"]
+[White "Magnus Carlsen"]
+[Black "Andrew Tang"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "C33"]
+[WhiteElo "2835"]
+[BlackElo "2523"]
+[PlyCount "84"]
+
+1. e4 e5 2. f4 exf4 3. Nc3 Ne7 4. d4 d5 5. Bxf4 dxe4 6. Nxe4 Ng6 7. Bg3 Be7 8.
+Nf3 O-O 9. Bc4 Nd7 10. O-O Nb6 11. Bb3 c6 12. Qd3 Nd5 13. Rae1 Bf5 14. Qd2 Re8
+15. h3 Qd7 16. Kh2 Rad8 17. Nc5 Qc8 18. Qf2 Bf6 19. Ne5 Bxe5 20. dxe5 Be6 21.
+Nxe6 Qxe6 22. c4 Nb4 23. Qxa7 Nd3 24. c5 Rd5 25. Re3 Nxc5 26. Rc1 Nxb3 27. Rxb3
+b5 28. Re3 Ne7 29. Qc7 Nf5 30. Rxc6 Nxe3 31. Rxe6 fxe6 32. Qc6 Kf7 33. Bh4 Nf5
+34. Qc7+ Kf8 35. Bf2 Re7 36. Bc5 Kf7 37. Bxe7 Nxe7 38. b3 Ke8 39. a4 bxa4 40.
+bxa4 Ng6 41. a5 Nxe5 42. a6 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.10"]
+[Round "25"]
+[White "Magnus Carlsen"]
+[Black "Le Quang Liem"]
+[Result "1-0"]
+[EventDate "2012.07.01"]
+[ECO "A17"]
+[WhiteElo "2837"]
+[BlackElo "2693"]
+[PlyCount "80"]
+
+1. Nf3 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 c5 5. d4 cxd4 6. Nxd4 Nc6 7. Nc2 O-O 8.
+Be2 d6 9. Be3 Nd7 10. Qd2 a5 11. O-O Nc5 12. f3 a4 13. Rab1 Qa5 14. Kh1 Be6 15.
+Rfc1 Rfc8 16. Na3 h5 17. Bf1 Ne5 18. Qd1 Kh7 19. Bd2 Qd8 20. Be3 Qa5 21. Nd5
+Bxd5 22. exd5 Ned7 23. Nb5 Qd8 24. Rc2 Be5 25. f4 Bg7 26. f5 Ne5 27. Be2 Qd7
+28. Nd4 gxf5 29. Bxh5 Ng6 30. Qf3 e6 31. dxe6 fxe6 32. Qh3 Qe7 33. Rf1 Rh8 34.
+Nxf5 exf5 35. Bxg6+ Kg8 36. Qxf5 Be5 37. Bf7+ Kf8 38. Bd5+ Ke8 39. Qg6+ Kd7 40.
+Rf7 Raf8 1-0
+
+
+
+[Event "St. Louis Rapid & Blitz"]
+[Site "lichess.org INT"]
+[Date "2020.09.19"]
+[Round "16.1"]
+[White "Magnus Carlsen"]
+[Black "Alireza Firouzja"]
+[Result "1/2-1/2"]
+[EventDate "2020.09.18"]
+[ECO "B13"]
+[WhiteElo "2863"]
+[BlackElo "2728"]
+[PlyCount "75"]
+
+1. e4 c6 2. d4 d5 3. exd5 cxd5 4. Bd3 Nc6 5. c3 Nf6 6. Bf4 Bg4 7. Qb3 Qd7 8.
+Nd2 e6 9. Ngf3 Bd6 10. Bxd6 Qxd6 11. O-O O-O 12. Rfe1 Ne7 13. Ne5 Bf5 14. a4
+Bxd3 15. Nxd3 Rab8 16. a5 Ng6 17. g3 Rfc8 18. Qb4 Qxb4 19. Nxb4 Ne7 20. Nd3 Nf5
+21. Ra4 Nd6 22. Kf1 Rc7 23. Ke2 g6 24. Rb4 Kg7 25. Ra1 Nfe4 26. Nxe4 Nxe4 27.
+Ra3 Nd6 28. Nc5 Re8 29. Rab3 Ree7 30. f4 h6 31. Kf3 Kf6 32. g4 Kg7 33. Kg3 Kf6
+34. h3 Kg7 35. Kg2 Kf6 36. Kg3 Kg7 37. Kg2 Kf6 38. Kg3 1/2-1/2
+
+
+
+[Event "Your Next Move (Blitz)"]
+[Site "Leuven BEL"]
+[Date "2017.07.01"]
+[Round "6"]
+[White "Magnus Carlsen"]
+[Black "Levon Aronian"]
+[Result "1-0"]
+[EventDate "2017.06.28"]
+[ECO "A45"]
+[WhiteElo "2832"]
+[BlackElo "2793"]
+[PlyCount "119"]
+
+1. d4 Nf6 2. Bf4 c5 3. d5 d6 4. Nc3 e5 5. Bd2 Be7 6. e4 O-O 7. Be2 Nbd7 8. Nf3
+Ne8 9. a4 g6 10. Bh6 Ng7 11. Nd2 Kh8 12. h4 Nf6 13. h5 Nfxh5 14. Bxh5 Nxh5 15.
+Bxf8 Qxf8 16. g3 Nf6 17. Qe2 Kg7 18. Nc4 b6 19. a5 Ba6 20. axb6 axb6 21. O-O h5
+22. Rxa6 Rxa6 23. Nxd6 Ra8 24. Nc4 Qb8 25. Rd1 b5 26. d6 bxc4 27. dxe7 Qc7 28.
+Qxc4 Qxe7 29. Nd5 Nxd5 30. Rxd5 Qf6 31. Qc3 h4 32. Qxe5 hxg3 33. fxg3 Ra2 34.
+Qxf6+ Kxf6 35. Rxc5 Rxb2 36. Kf2 Ke6 37. Ke3 f5 38. Kd4 fxe4 39. Kxe4 Rb4+ 40.
+c4 Rb3 41. g4 Rg3 42. Rc6+ Kf7 43. Kf4 Ra3 44. Kg5 Ra5+ 45. c5 Ra4 46. Rf6+ Ke7
+47. Rxg6 Rc4 48. Rc6 Kd7 49. Rd6+ Ke7 50. Rd5 Ke6 51. Rf5 Ke7 52. Kh4 Ke6 53.
+Kh5 Rd4 54. Rf1 Rd5+ 55. g5 Rxc5 56. Kh6 Rc2 57. g6 Rh2+ 58. Kg7 Rg2 59. Kh7
+Rh2+ 60. Kg8 1-0
+
+
+
+[Event "Superbet Poland Blitz 2024"]
+[Site "Warsaw POL"]
+[Date "2024.05.11"]
+[Round "8.5"]
+[White "Magnus Carlsen"]
+[Black "Anish Giri"]
+[Result "1-0"]
+[EventDate "2024.05.11"]
+[ECO "C65"]
+[WhiteElo "2830"]
+[BlackElo "2745"]
+[PlyCount "90"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. d3 Bc5 5. c3 O-O 6. O-O d5 7. Nbd2 dxe4 8.
+dxe4 a5 9. Qc2 Qe7 10. a4 Nb8 11. h3 h6 12. Re1 Rd8 13. Bf1 Nbd7 14. Nc4 b6 15.
+Rb1 Bb7 16. Bd2 Qe6 17. b4 axb4 18. cxb4 Bd4 19. a5 Rdc8 20. Nxd4 exd4 21. f3
+Nh5 22. Qd3 Ng3 23. Qxd4 Nxf1 24. Rxf1 c5 25. bxc5 bxc5 26. Qc3 Ba6 27. Rfc1
+Bxc4 28. Qxc4 Qxc4 29. Rxc4 Ne5 30. Ra4 Ra6 31. Bc3 Nd3 32. Rc4 Nf4 33. Kf2 Ne6
+34. Ke3 g5 35. g3 Rca8 36. f4 Rc6 37. f5 Nc7 38. Rb6 Ra6 39. Rxa6 Nxa6 40. e5
+Rc8 41. Ra4 Rd8 42. Ra2 Nb4 43. Rd2 Ra8 44. Rd6 Rxa5 45. Rd8+ 1-0
+
+
+
+[Event "SuperUnited Blitz Croatia"]
+[Site "Zagreb CRO"]
+[Date "2023.07.08"]
+[Round "13"]
+[White "Magnus Carlsen"]
+[Black "Ivan Saric"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "B50"]
+[WhiteElo "2835"]
+[BlackElo "2657"]
+[PlyCount "118"]
+
+1. e4 c5 2. Nf3 d6 3. Bc4 Nf6 4. d3 Nc6 5. O-O e6 6. Bb3 Be7 7. c3 O-O 8. Re1
+b5 9. d4 Bb7 10. Nbd2 cxd4 11. cxd4 Rc8 12. Nf1 Qc7 13. Bg5 h6 14. Bd2 Na5 15.
+Bxa5 Qxa5 16. Ng3 Rc7 17. d5 e5 18. Nf5 Rfc8 19. Nxe5 dxe5 20. d6 Bxd6 21. Qxd6
+Kh7 22. Qxe5 Re8 23. Qg3 g6 24. Qh4 Nh5 25. Nd6 Ree7 26. h3 Qb4 27. Rad1 a5 28.
+Re3 a4 29. a3 Qc5 30. Rc3 Qb6 31. Rxc7 Qxc7 32. Bxf7 Rxf7 33. Nxf7 Qxf7 34. Qd8
+Bc6 35. Rd6 Be8 36. e5 Ng7 37. Qf6 Qc4 38. Rd8 Qc1+ 39. Kh2 Qc5 40. Qf4 Qe7 41.
+Rd6 h5 42. Qf6 Qc7 43. Rd8 Qc5 44. e6 Qc7+ 45. f4 Qc6 46. Qe5 h4 47. e7 Nf5 48.
+Qb8 Ng7 49. Qe5 Nf5 50. Qb8 Ng7 51. Rc8 Qd7 52. Qc7 Qd3 53. Qc3 Qd6 54. Qe5 Qd7
+55. Rd8 Qc6 56. Qe1 Nf5 57. Qc3 Nxe7 58. Qe5 Nf5 59. Rxe8 1-0
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.25"]
+[Round "4.3"]
+[White "Pentala Harikrishna"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2019.11.25"]
+[ECO "D31"]
+[WhiteElo "2731"]
+[BlackElo "2870"]
+[PlyCount "134"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Bb4 4. Bd2 Nf6 5. Nf3 O-O 6. e3 Nbd7 7. Rc1 Be7 8. Qc2
+a6 9. a4 c5 10. cxd5 exd5 11. Be2 b6 12. O-O Bb7 13. Rfd1 Re8 14. Ne5 Rc8 15.
+Bf3 Bd6 16. Nxd7 Qxd7 17. dxc5 bxc5 18. Be1 d4 19. Bxb7 Qxb7 20. exd4 Qb8 21.
+d5 Bxh2+ 22. Kf1 Be5 23. Rd3 Bd4 24. Rcd1 h6 25. Rg3 Rcd8 26. Bd2 Kh8 27. Bc1
+Qe5 28. Qd2 Bxc3 29. Rxc3 Ne4 30. Qd3 Nxc3 31. bxc3 c4 32. Qf3 Qe4 33. Qxe4
+Rxe4 34. Ba3 Re5 35. d6 Rd7 36. Rd4 Kg8 37. Rxc4 f6 38. Rc6 Ra5 39. Rc7 Rd8 40.
+c4 Rxa4 41. d7 Kf7 42. c5 Rxa3 43. c6 Rc3 44. Ke2 Ke7 45. Kd2 Rc5 46. Kd3 a5
+47. Kd4 Rc1 48. Kd5 a4 49. Ra7 Rd1+ 50. Kc5 R8xd7 51. cxd7 Rxd7 52. Rxa4 Rd2
+53. Rf4 g5 54. Rf3 h5 55. Kc4 Ke6 56. Kc3 Ra2 57. Re3+ Kf5 58. Rf3+ Kg6 59. Kd4
+f5 60. g3 Re2 61. Kd3 Re4 62. Kd2 h4 63. gxh4 gxh4 64. Ra3 Kg5 65. f3 Re8 66.
+Ra7 Kf4 67. Rh7 Kg3 0-1
+
+
+
+[Event "Chess.com Semifinal Blitz"]
+[Site "chess.com INT"]
+[Date "2016.08.23"]
+[Round "8"]
+[White "Magnus Carlsen"]
+[Black "Alexander Grischuk"]
+[Result "0-1"]
+[EventDate "2016.08.23"]
+[ECO "A49"]
+[WhiteElo "2857"]
+[BlackElo "2754"]
+[PlyCount "134"]
+
+1. d4 Nf6 2. Nf3 g6 3. g3 c5 4. c3 b6 5. Bg2 Bb7 6. Bg5 Bg7 7. Nbd2 O-O 8. O-O
+d6 9. Bxf6 Bxf6 10. e3 Nd7 11. a4 d5 12. b4 a5 13. b5 Rc8 14. Rc1 Qc7 15. c4
+Rfd8 16. cxd5 Bxd5 17. Qe2 e6 18. Rfd1 Qb8 19. e4 Bb7 20. e5 Bg7 21. Ng5 Bxg2
+22. Kxg2 cxd4 23. f4 Nc5 24. Rc4 d3 25. Qf3 Rd5 26. Rdc1 Rcd8 27. h4 Rd4 28. h5
+Nxa4 29. Rc7 R4d7 30. Rxd7 Rxd7 31. Qc6 Qd8 32. hxg6 hxg6 33. Nxe6 fxe6 34.
+Qxe6+ Kf8 35. Rc6 Nc5 36. Qxg6 a4 37. e6 Ra7 38. Qf5+ Kg8 39. e7 Qxe7 40. Rc8+
+Bf8 41. Qg6+ Qg7 42. Qxb6 Nb3 43. Ne4 Rf7 44. Qe6 d2 45. Rd8 Nd4 46. Rxd4 Qxd4
+47. Ng5 Qf6 48. Qd5 a3 49. Nxf7 Qxf7 50. Qxd2 a2 51. Qd4 Bg7 52. Qd8+ Bf8 53.
+Qa8 Kg7 54. b6 Qb3 55. Qb7+ Kg8 56. Qa8 Qb2+ 57. Kh3 a1=Q 58. Qd5+ Kh8 59. Qh5+
+Kg7 60. Qg5+ Kf7 61. Qd5+ Ke7 62. Qc5+ Kd7 63. Qc7+ Ke6 64. Qc6+ Bd6 65. Qe4+
+Kd7 66. Qb7+ Kd8 67. Kg4 Qg7+ 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "30"]
+[White "Magnus Carlsen"]
+[Black "Hikaru Nakamura"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "B06"]
+[WhiteElo "2835"]
+[BlackElo "2787"]
+[PlyCount "112"]
+
+1. e4 g6 2. d4 Bg7 3. Nf3 d6 4. Bc4 Nf6 5. Qe2 O-O 6. Bb3 Nc6 7. h3 e5 8. dxe5
+dxe5 9. c3 Qe7 10. O-O Be6 11. Bg5 h6 12. Bxf6 Bxf6 13. Nbd2 Rfd8 14. Rfd1 Na5
+15. Bxe6 Qxe6 16. Qb5 b6 17. b4 a6 18. Qe2 Nb7 19. Qc4 Qe7 20. Qc6 Nd6 21. Nc4
+Nb5 22. Ne3 Qe6 23. Qxe6 fxe6 24. Rxd8+ Rxd8 25. Rc1 Nd6 26. Ng4 Kg7 27. Nxf6
+Kxf6 28. Nd2 Nb5 29. Nb1 Nd6 30. f3 Nc4 31. Kf2 Rc8 32. Ke2 c5 33. Nd2 Nd6 34.
+bxc5 Rxc5 35. c4 b5 36. Kd3 bxc4+ 37. Nxc4 Rc8 38. Rc2 Nb5 39. a4 Rd8+ 40. Ke3
+Nd4 41. Rd2 Rc8 42. Nxe5 Nc2+ 43. Kf4 g5+ 44. Kg4 Kxe5 45. Kh5 Ne3 46. Kxh6 Kf6
+47. e5+ Kf5 48. Rd6 Nxg2 49. Rxa6 Nf4 50. Ra7 Rh8+ 51. Kg7 Rxh3 52. a5 Rxf3 53.
+a6 Ra3 54. Ra8 g4 55. a7 Ke4 56. Kh6 g3 0-1
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2008.08.30"]
+[Round "33"]
+[White "Sergei Mushegovic Movsesian"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2008.08.29"]
+[ECO "A07"]
+[WhiteElo "2723"]
+[BlackElo "2775"]
+[PlyCount "92"]
+
+1. e4 c5 2. d3 Nc6 3. g3 d5 4. Nd2 Nf6 5. Bg2 e5 6. Ngf3 Be7 7. O-O O-O 8. c3
+d4 9. Nc4 Qc7 10. cxd4 cxd4 11. a4 Be6 12. b3 a6 13. a5 Bxc4 14. bxc4 Nxa5 15.
+Nh4 g6 16. f4 Nc6 17. f5 b5 18. cxb5 axb5 19. Rxa8 Rxa8 20. Bg5 Ne8 21. f6 Bf8
+22. Nf5 gxf5 23. exf5 Qd7 24. h3 b4 25. Re1 Rb8 26. Qg4 Kh8 27. Qh5 b3 28. Bxc6
+Qxc6 29. Qxf7 Nd6 30. Qe6 Qf3 31. Qxe5 Qxf5 32. Bf4 Qxe5 33. Bxe5 Kg8 34. Bxd4
+Kf7 35. Kf2 Nf5 36. Bb2 Bc5+ 37. Kf3 Bd4 38. Rb1 Bxb2 39. Rxb2 Kxf6 40. g4 Nd6
+41. Ke3 Ke5 42. h4 Kd5 43. g5 Nf5+ 44. Kd2 Nxh4 45. Kc3 Nf3 46. Rf2 b2 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Doha QAT"]
+[Date "2016.12.29"]
+[Round "8.1"]
+[White "Magnus Carlsen"]
+[Black "Daniil Dubov"]
+[Result "1-0"]
+[EventDate "2016.12.29"]
+[ECO "A46"]
+[WhiteElo "2840"]
+[BlackElo "2660"]
+[PlyCount "89"]
+
+1. d4 Nf6 2. Nf3 e6 3. Bg5 h6 4. Bh4 d5 5. e3 Be7 6. Nbd2 Nbd7 7. Bd3 b6 8. O-O
+Bb7 9. a4 a6 10. c3 Ne4 11. Bxe7 Qxe7 12. Qc2 Nxd2 13. Nxd2 e5 14. a5 O-O 15.
+axb6 e4 16. Be2 cxb6 17. c4 dxc4 18. Nxc4 Bd5 19. Qd2 Rfc8 20. Rfc1 Rc7 21. h3
+Kh7 22. Na3 Rxc1+ 23. Rxc1 b5 24. Qa5 Nf6 25. Rc5 Qd6 26. Nc2 Qd8 27. Qxd8 Rxd8
+28. Nb4 Bb7 29. Kh2 Kg8 30. Bg4 Rd6 31. Rc7 Rb6 32. Bc8 Bxc8 33. Rxc8+ Kh7 34.
+Ra8 Rb7 35. Nxa6 Nd5 36. Rd8 Nb6 37. Nc5 Ra7 38. b3 Na8 39. Nxe4 Ra2 40. Kg3
+Kg6 41. Rd7 f6 42. Rb7 f5 43. Nc5 Ra5 44. b4 Ra2 45. Nd3 1-0
+
+
+
+[Event "Glitnir Blitz"]
+[Site "Reykjavik ISL"]
+[Date "2006.03.16"]
+[Round "6.2"]
+[White "Magnus Carlsen"]
+[Black "Hannes Hlifar Stefansson"]
+[Result "1-0"]
+[EventDate "2006.03.16"]
+[ECO "B66"]
+[WhiteElo "2625"]
+[BlackElo "2585"]
+[PlyCount "111"]
+
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 d6 6. Bg5 e6 7. Qd2 Be7 8.
+O-O-O Nxd4 9. Qxd4 a6 10. f4 b5 11. Bxf6 gxf6 12. Be2 Qc7 13. Bh5 Qc5 14. Qxc5
+dxc5 15. e5 f5 16. g4 fxg4 17. Rhg1 Bb7 18. Bxg4 h5 19. Bh3 Rd8 20. Rxd8+ Kxd8
+21. Bg2 Bc8 22. Bf3 Bd7 23. Ne4 c4 24. Kd2 h4 25. h3 Kc7 26. Ke3 Be8 27. b3
+cxb3 28. cxb3 Ba3 29. Rg7 Bc1+ 30. Nd2 Kb6 31. Rg1 Ba3 32. Ke2 Ka5 33. Ne4 Kb4
+34. Rd1 Bc6 35. Rd6 Rc8 36. Rd4+ Ka5 37. Nd6 Bxf3+ 38. Kxf3 Rc2 39. Nxf7 Rxa2
+40. Ng5 Bc5 41. Rd3 Rf2+ 42. Ke4 Kb4 43. Nxe6 Bb6 44. f5 a5 45. f6 a4 46. bxa4
+bxa4 47. Rd6 Ka5 48. Nf4 Rc2 49. f7 Rc8 50. e6 a3 51. e7 a2 52. f8=Q a1=Q 53.
+Qxc8 Qb1+ 54. Kd5 Qb5+ 55. Ke6 Qb3+ 56. Rd5+ 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "St Petersburg RUS"]
+[Date "2018.12.30"]
+[Round "13.1"]
+[White "Magnus Carlsen"]
+[Black "Anish Giri"]
+[Result "1-0"]
+[EventDate "2018.12.29"]
+[ECO "A28"]
+[WhiteElo "2835"]
+[BlackElo "2783"]
+[PlyCount "48"]
+
+1. c4 e5 2. Nc3 Nf6 3. Nf3 Nc6 4. e4 Bc5 5. Nxe5 Nxe5 6. d4 Bb4 7. dxe5 Nxe4 8.
+Qf3 Nxc3 9. bxc3 Be7 10. Qg3 g6 11. Bh6 d6 12. Be2 Be6 13. Rd1 Qd7 14. exd6
+cxd6 15. O-O O-O-O 16. Be3 Qa4 17. Qf3 Qc6 18. Qf4 b6 19. a4 Rd7 20. a5 bxa5
+21. Rb1 Rc7 22. c5 dxc5 23. Bf3 Qd6 24. Qe4 Rd8 1-0
+
+
+
+[Event "Your Next Move (Blitz)"]
+[Site "Leuven BEL"]
+[Date "2017.07.01"]
+[Round "9"]
+[White "Magnus Carlsen"]
+[Black "Wesley So"]
+[Result "1-0"]
+[EventDate "2017.06.28"]
+[ECO "D02"]
+[WhiteElo "2832"]
+[BlackElo "2812"]
+[PlyCount "81"]
+
+1. d4 d5 2. Bf4 c5 3. e3 Nc6 4. c3 Qb6 5. Qb3 Nf6 6. Nd2 c4 7. Qc2 Nh5 8. Bg5
+h6 9. Bh4 g5 10. Be2 Ng7 11. Bg3 Bf5 12. Qc1 e6 13. Ngf3 Qa5 14. e4 Bh7 15. O-O
+Be7 16. Re1 O-O 17. Ne5 Nxe5 18. Bxe5 f6 19. Bg3 Rfe8 20. h4 b5 21. b4 Qd8 22.
+a4 a5 23. axb5 axb4 24. Rxa8 Qxa8 25. exd5 exd5 26. Bf3 Qd8 27. hxg5 hxg5 28.
+b6 bxc3 29. Qxc3 Qxb6 30. Bxd5+ Kf8 31. Nxc4 Qb5 32. Ne3 Rd8 33. Qc7 Qd7 34.
+Qa5 Nh5 35. Bc7 Rc8 36. Bh2 Nf4 37. Bxf4 gxf4 38. Nc4 Qf5 39. Qa7 Qxd5 40.
+Qxe7+ Kg8 41. Nb6 1-0
+
+
+
+[Event "Norway Chess (Blitz)"]
+[Site "Hidle NOR"]
+[Date "2014.06.02"]
+[Round "4.3"]
+[White "Magnus Carlsen"]
+[Black "Levon Aronian"]
+[Result "1/2-1/2"]
+[EventDate "2014.06.02"]
+[ECO "D38"]
+[WhiteElo "2881"]
+[BlackElo "2815"]
+[PlyCount "88"]
+
+1. d4 Nf6 2. Nf3 d5 3. c4 e6 4. Nc3 Bb4 5. cxd5 exd5 6. Bg5 h6 7. Bh4 g5 8. Bg3
+Ne4 9. Nd2 Nxc3 10. bxc3 Bxc3 11. Rc1 Bb2 12. Rxc7 Na6 13. Rc2 Bxd4 14. e3 Bg7
+15. h4 Nb4 16. Rc7 O-O 17. hxg5 Qxg5 18. Bd6 Nc6 19. Bxf8 Kxf8 20. Qf3 Be6 21.
+Rxb7 Rc8 22. Qf4 Qxf4 23. exf4 Nd4 24. Nb3 Nxb3 25. axb3 Rc2 26. Kd1 Rxf2 27.
+Be2 Rxf4 28. Rxa7 Rd4+ 29. Kc1 Rb4 30. Bh5 Bd4 31. Ra4 Be3+ 32. Kb2 Rb6 33. Be2
+Bd7 34. Ra5 Be6 35. Rh5 Kg7 36. Raxd5 Bxd5 37. Rxd5 Bf4 38. Bf3 Bd6 39. Kc3
+Bb4+ 40. Kc4 Be7 41. Rd7 Kf6 42. Bd5 Rb4+ 43. Kc3 Rb6 44. Rb7 Rxb7 1/2-1/2
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2013.06.12"]
+[Round "7"]
+[White "Alexander Morozevich"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2013.06.12"]
+[ECO "B32"]
+[WhiteElo "2760"]
+[BlackElo "2864"]
+[PlyCount "105"]
+
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 5. Nc3 Bg7 6. Be3 Nf6 7. Bc4 Qa5 8.
+O-O O-O 9. Bb3 d6 10. h3 Bd7 11. f4 Nxd4 12. Bxd4 Bc6 13. Qd3 Nd7 14. Bxg7 Kxg7
+15. Nd5 Qc5+ 16. Kh1 e6 17. Nc3 Nf6 18. Rad1 Rad8 19. f5 Qe5 20. Rde1 b5 21.
+Nd5 Nh5 22. Re3 a5 23. f6+ Kh8 24. a3 Qxb2 25. Ne7 Ba8 26. Qxb5 Nxf6 27. Qg5
+Nxe4 28. Qh4 Qe5 29. Rxf7 Qa1+ 30. Kh2 Qe5+ 31. Kh1 Qa1+ 32. Kh2 Qe5+ 33. Kh1
+Qa1+ 34. Re1 Qxe1+ 35. Qxe1 Rxf7 36. Nxg6+ Kg7 37. Qxa5 Re8 38. Nh4 Kh8 39. Kh2
+d5 40. Qb6 Rfe7 41. Nf3 e5 42. Qh6 Nc5 43. Ng5 Nxb3 44. cxb3 e4 45. Qf6+ Kg8
+46. Qf4 d4 47. Qg4 Kh8 48. Qf5 e3 49. Nf7+ Kg7 50. Nd6 e2 51. Qg5+ Kh8 52. Qf6+
+Kg8 53. Nf5 1-0
+
+
+
+[Event "World Blitz 2023"]
+[Site "Samarkand UZB"]
+[Date "2023.12.30"]
+[Round "19.1"]
+[White "Magnus Carlsen"]
+[Black "Richard Rapport"]
+[Result "1-0"]
+[EventDate "2023.12.29"]
+[ECO "C01"]
+[WhiteElo "2887"]
+[BlackElo "2748"]
+[PlyCount "114"]
+
+1. e4 e6 2. d4 d5 3. exd5 exd5 4. Nf3 Bd6 5. h3 Ne7 6. c4 c6 7. Nc3 O-O 8. Bd3
+dxc4 9. Bxc4 Nd7 10. O-O Nb6 11. Bb3 Ned5 12. Bg5 f6 13. Bd2 Be6 14. Re1 Bf7
+15. Ne4 Re8 16. a4 a5 17. Nxd6 Qxd6 18. Rxe8+ Bxe8 19. Qe1 Bh5 20. Nh4 Re8 21.
+Qc1 Ra8 22. Nf5 Qd7 23. Qc5 Kh8 24. Ng3 Bf7 25. Bxa5 Nc8 26. Re1 Nd6 27. Bb4
+Nxb4 28. Qxb4 Bxb3 29. Qxb3 b5 30. Qe6 Qd8 31. axb5 cxb5 32. Ne4 Nxe4 33. Rxe4
+h6 34. g3 Ra1+ 35. Kg2 Rd1 36. Qc6 Kh7 37. Qc2 Qd5 38. f3 f5 39. Qxd1 fxe4 40.
+Qc2 Kh8 41. Qxe4 Qb3 42. Qe2 b4 43. Qd2 Kg8 44. d5 Kf7 45. d6 Ke8 46. Qe2+ Kd7
+47. Qe7+ Kc6 48. Qc7+ Kb5 49. h4 Qxb2+ 50. Kh3 Qe5 51. Qb7+ Kc5 52. d7 Qe6+ 53.
+g4 Qf6 54. Qc7+ Kb5 55. Kg3 Qa1 56. d8=Q Qg1+ 57. Kf4 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.09"]
+[Round "14"]
+[White "Sergey Karjakin"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2012.07.01"]
+[ECO "C67"]
+[WhiteElo "2779"]
+[BlackElo "2837"]
+[PlyCount "94"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. d4 Nd6 6. Bxc6 dxc6 7. dxe5 Nf5
+8. Qxd8+ Kxd8 9. Nc3 h6 10. Rd1+ Ke8 11. h3 a6 12. Bf4 Bd7 13. Rd3 Ne7 14. Rad1
+Be6 15. Nd4 Bc4 16. R3d2 c5 17. Nb3 b6 18. e6 fxe6 19. Bxc7 Nd5 20. Nxd5 Bxd5
+21. Bxb6 c4 22. Nc1 c3 23. bxc3 Rc8 24. Ba5 Be7 25. Nb3 Bf6 26. Bb4 Kf7 27. Rd3
+Rc7 28. Na5 Rhc8 29. c4 Bxc4 30. Rd7+ Rxd7 31. Rxd7+ Ke8 32. Rd6 Bxa2 33. Rxa6
+Rxc2 34. Rc6 Rb2 35. Ba3 Rb1+ 36. Rc1 Rxc1+ 37. Bxc1 Bd5 38. Be3 Kd7 39. Kf1
+Kc7 40. Bd2 Kb6 41. f3 Kb5 42. Ke2 Bd8 43. Bc3 g6 44. Ke3 Bxa5 45. Bg7 h5 46.
+g4 Bc7 47. f4 Kc4 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "St Petersburg RUS"]
+[Date "2018.12.30"]
+[Round "20.1"]
+[White "Ian Nepomniachtchi"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2018.12.29"]
+[ECO "B33"]
+[WhiteElo "2763"]
+[BlackElo "2835"]
+[PlyCount "26"]
+
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e5 6. Ndb5 d6 7. Bg5 a6 8.
+Na3 b5 9. Nd5 Be7 10. Bxf6 Bxf6 11. c4 b4 12. Nc2 a5 13. g3 1/2-1/2
+
+
+
+[Event "Norway Chess (Blitz)"]
+[Site "Stavanger NOR"]
+[Date "2016.04.18"]
+[Round "5.1"]
+[White "Veselin Topalov"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2016.04.18"]
+[ECO "C76"]
+[WhiteElo "2754"]
+[BlackElo "2851"]
+[PlyCount "88"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 g6 5. c3 d6 6. d4 Bd7 7. O-O Bg7 8. Re1
+Nf6 9. Bg5 h6 10. Bh4 O-O 11. dxe5 dxe5 12. Nbd2 Qe7 13. Nf1 b5 14. Bc2 Rad8
+15. Ne3 Be6 16. Qc1 Qc5 17. Re2 Rd7 18. Qe1 Nh5 19. b4 Qb6 20. Bb3 Nf4 21. Rd2
+Rxd2 22. Qxd2 a5 23. Bxe6 fxe6 24. a3 g5 25. Bg3 Rd8 26. Qa2 Kf7 27. h4 Bf6 28.
+hxg5 hxg5 29. Ng4 Rd3 30. Qc2 Rxc3 31. Qb2 axb4 32. axb4 Rc4 33. Bxf4 gxf4 34.
+Rd1 Ke7 35. Nxf6 Kxf6 36. Rd7 Nd4 37. Nxd4 Rxd4 38. Rh7 Qc6 39. Qe2 Qc1+ 40.
+Kh2 Rd1 41. Rh6+ Ke7 42. Rh7+ Kd6 43. Kh3 Rh1+ 44. Kg4 Rxh7 0-1
+
+
+
+[Event "Grand Chess Tour Cote dIvoire (Rapid & Blitz)"]
+[Site "Abidjan CIV"]
+[Date "2019.05.09"]
+[Round "4"]
+[White "Sergey Karjakin"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2019.05.08"]
+[ECO "B30"]
+[WhiteElo "2752"]
+[BlackElo "2861"]
+[PlyCount "70"]
+
+1. e4 c5 2. Nf3 Nc6 3. Nc3 e5 4. Bc4 Be7 5. d3 d6 6. Nd2 Nf6 7. Nf1 Nd7 8. a3
+Nb6 9. Ba2 O-O 10. Ne3 Be6 11. Ncd5 Bg5 12. O-O Bxe3 13. fxe3 Ne7 14. c4 f5 15.
+Bd2 Bxd5 16. exd5 Nd7 17. b4 b6 18. Bb3 Ng6 19. Ba4 Qe7 20. Bc6 Rad8 21. Qa4
+Nf6 22. bxc5 bxc5 23. Rxf5 e4 24. Qc2 Ng4 25. Raf1 Rxf5 26. Rxf5 Qh4 27. h3
+Nxe3 28. Bxe3 Qe1+ 29. Kh2 Qxe3 30. dxe4 Nf4 31. Qb2 Qxe4 32. Bd7 g6 33. Rf6
+Nd3 34. Qc3 Rxd7 35. Re6 Qf4+ 0-1
+
+
+
+[Event "World Blitz Finals KO"]
+[Site "New York USA"]
+[Date "2024.12.31"]
+[Round "1.2"]
+[White "Hans Moke Niemann"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2024.12.31"]
+[ECO "B30"]
+[WhiteElo "2709"]
+[BlackElo "2890"]
+[PlyCount "82"]
+
+1. e4 c5 2. Nf3 Nc6 3. Bb5 e5 4. Nc3 d6 5. Bc4 Be7 6. d3 Nf6 7. h3 O-O 8. Nh2
+Be6 9. Ng4 Nd4 10. a4 a6 11. Nxf6+ Bxf6 12. Nd5 b5 13. axb5 Nxb5 14. Bd2 Bg5
+15. Ba5 Qb8 16. O-O Kh8 17. Qh5 Bd8 18. Bxd8 Qxd8 19. f4 f6 20. fxe5 dxe5 21.
+Kh2 Nd6 22. b3 a5 23. Nc3 Nxc4 24. dxc4 Qd2 25. Na4 Qxc2 26. Nxc5 Bf7 27. Qd1
+Qxd1 28. Rfxd1 Rfb8 29. Ra3 Rc8 30. Nb7 Rab8 31. Nd6 Rc7 32. Rxa5 Kg8 33. Rb5
+Ra8 34. Nxf7 Kxf7 35. c5 Ra2 36. b4 Rb2 37. Rb8 Rxc5 38. Rd7+ Ke6 39. Rxg7 Rc6
+40. b5 Rd6 41. Re8# 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2010.11.17"]
+[Round "15.1"]
+[White "Shakhriyar Mamedyarov"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2010.11.16"]
+[ECO "E15"]
+[WhiteElo "2763"]
+[BlackElo "2802"]
+[PlyCount "56"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 b6 4. g3 Ba6 5. b3 Bb7 6. Bg2 Bb4+ 7. Bd2 c5 8. Bxb4
+cxb4 9. a3 Na6 10. O-O O-O 11. Qd2 Qe7 12. axb4 Nxb4 13. Nc3 Ne4 14. Nxe4 Bxe4
+15. Ne5 Bxg2 16. Kxg2 a5 17. e4 d6 18. Nf3 Rac8 19. h4 Qb7 20. d5 Rfe8 21. Nd4
+Na6 22. h5 h6 23. Rh1 Nc5 24. Rh4 exd5 25. exd5 Re5 26. Nf3 Nxb3 27. Qf4 Nxa1
+28. Rg4 Qd7 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Berlin GER"]
+[Date "2015.10.14"]
+[Round "12.1"]
+[White "Vladimir Kramnik"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2015.10.13"]
+[ECO "A07"]
+[WhiteElo "2777"]
+[BlackElo "2850"]
+[PlyCount "101"]
+
+1. Nf3 d5 2. g3 g6 3. c4 c6 4. Qa4 Nd7 5. cxd5 cxd5 6. Bg2 Bg7 7. Nc3 Nf6 8.
+O-O O-O 9. d4 b6 10. Bf4 Bb7 11. Rfc1 a6 12. Ne5 e6 13. Qb3 Rc8 14. e3 Qe7 15.
+Bg5 Qd6 16. Bxf6 Nxf6 17. Na4 Rxc1+ 18. Rxc1 b5 19. Nc5 Rc8 20. Rc3 Qb6 21. a4
+Bf8 22. Ned3 Bc6 23. Bf1 Rb8 24. Ne5 bxa4 25. Qxb6 Rxb6 26. Nxe6 Be8 27. Nxf8
+Rxb2 28. Nxh7 Kxh7 29. Bxa6 Rxf2 30. Kxf2 Ne4+ 31. Ke2 Nxc3+ 32. Kd3 Ne4 33.
+Bb7 Nf6 34. Kc3 Kg7 35. Kb4 Kf8 36. g4 g5 37. h3 Kg7 38. Bc6 Bxc6 39. Nxc6 Ne4
+40. Ne7 Nf2 41. Nxd5 Nxh3 42. Nb6 Nf2 43. d5 Nxg4 44. d6 Kf6 45. Nxa4 Nxe3 46.
+Kc5 Nf5 47. d7 Ke7 48. Kc6 Kd8 49. Nc5 Nd4+ 50. Kd6 Nb5+ 51. Ke5 1/2-1/2
+
+
+
+[Event "World Blitz 2023"]
+[Site "Samarkand UZB"]
+[Date "2023.12.29"]
+[Round "3.1"]
+[White "Maksim Tsaruk"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2023.12.29"]
+[ECO "C00"]
+[WhiteElo "2378"]
+[BlackElo "2887"]
+[PlyCount "62"]
+
+1. e4 a6 2. d4 e6 3. Bd3 d5 4. e5 c5 5. c3 Bd7 6. Nf3 cxd4 7. cxd4 Bb5 8. O-O
+Nc6 9. a3 Nge7 10. Nc3 Bxd3 11. Qxd3 Nf5 12. Bg5 Be7 13. Bxe7 Qxe7 14. Rac1 Nh4
+15. Nxh4 Qxh4 16. f4 O-O 17. Rf3 g6 18. Rcf1 Rac8 19. Rh3 Qd8 20. f5 Qb6 21.
+Rxh7 Kxh7 22. Qh3+ Kg8 23. fxg6 Qxd4+ 24. Kh1 fxg6 25. Qxe6+ Kg7 26. Qd7+ Kh6
+27. Qh3+ Kg5 28. Qg3+ Qg4 29. Qe3+ Kh5 30. Rxf8 Rxf8 31. h3 Rf1+ 0-1
+
+
+
+[Event "Grand Chess Tour Cote dIvoire (Rapid & Blitz)"]
+[Site "Abidjan CIV"]
+[Date "2019.05.12"]
+[Round "17.2"]
+[White "Magnus Carlsen"]
+[Black "Wei Yi"]
+[Result "1-0"]
+[EventDate "2019.05.11"]
+[ECO "A45"]
+[WhiteElo "2861"]
+[BlackElo "2736"]
+[PlyCount "81"]
+
+1. d4 Nf6 2. Bg5 d5 3. e3 c5 4. Nd2 cxd4 5. exd4 Qb6 6. Ngf3 Nc6 7. Nb3 Ne4 8.
+Bf4 Bg4 9. Be2 e6 10. O-O Be7 11. c3 O-O 12. a4 a6 13. a5 Qd8 14. Nfd2 Bxe2 15.
+Qxe2 Nxd2 16. Qxd2 Rc8 17. Rfe1 Re8 18. Re3 Bd6 19. Bxd6 Qxd6 20. Nc5 Rc7 21.
+b4 Ne7 22. Rae1 Nf5 23. Re5 Qd8 24. Qf4 Rce7 25. R1e2 Kh8 26. Nxb7 Rxb7 27.
+Qxf5 Rc7 28. Qd3 Qc8 29. R5e3 Rc6 30. Rh3 h6 31. Qd2 Kh7 32. Re5 Re7 33. Reh5
+Qf8 34. f4 f5 35. Re3 Qf7 36. Rhh3 Rec7 37. Re5 Qf8 38. Rd3 Qc8 39. Ree3 Rc4
+40. h3 Qf8 41. Rxe6 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.09"]
+[Round "12"]
+[White "Teimour Radjabov"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2012.07.01"]
+[ECO "A04"]
+[WhiteElo "2788"]
+[BlackElo "2837"]
+[PlyCount "56"]
+
+1. Nf3 c5 2. c4 Nf6 3. Nc3 e6 4. g3 b6 5. Bg2 Bb7 6. O-O a6 7. Re1 d6 8. e4 Be7
+9. d4 cxd4 10. Nxd4 Qc7 11. b3 O-O 12. Bb2 Nbd7 13. Rc1 Rac8 14. Qe2 Rfe8 15.
+h3 Bf8 16. g4 g6 17. f4 Qb8 18. Qf2 e5 19. Nde2 d5 20. fxe5 Bc5 21. Nd4 Nxe5
+22. Na4 Nxe4 23. Rxe4 dxe4 24. Nxc5 bxc5 25. Ne2 Nf3+ 26. Bxf3 exf3 27. Ng3
+Rcd8 28. Bc3 Rd3 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.18"]
+[Round "15"]
+[White "Tuan Minh Le"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "A48"]
+[WhiteElo "2557"]
+[BlackElo "2835"]
+[PlyCount "114"]
+
+1. d4 Nf6 2. Nf3 g6 3. Bg5 Bg7 4. Nbd2 h6 5. Bh4 d6 6. c3 g5 7. Bg3 Nh5 8. e4
+e6 9. Bd3 Nd7 10. Nc4 Nxg3 11. hxg3 b5 12. Ne3 Rb8 13. Qe2 a6 14. Nd2 c5 15. d5
+c4 16. Bc2 Qe7 17. O-O h5 18. f4 g4 19. dxe6 fxe6 20. f5 Ne5 21. fxe6 Bxe6 22.
+Nf5 Qa7+ 23. Kh2 Bf8 24. Nh4 Be7 25. Rf2 Bxh4 26. gxh4 g3+ 27. Kxg3 Rg8+ 28.
+Kh2 Ng4+ 29. Kg1 Nxf2 30. Qxf2 Qxf2+ 31. Kxf2 Ke7 32. Nf3 Rbf8 33. Rg1 Bg4 34.
+Bd1 Rf4 35. Ke3 Rgf8 36. Ng5 Rf1 37. Rxf1 Rxf1 38. Bxg4 hxg4 39. h5 Kf6 40.
+Nh7+ Kg7 41. Ng5 Kh6 42. Ne6 Kxh5 43. Nd4 g3 44. Nf5 Kg4 45. Nxd6 Rf2 46. Nf7
+Rxg2 47. Ne5+ Kh3 48. Nf3 Rxb2 49. e5 g2 50. e6 Rb1 51. e7 Re1+ 52. Nxe1 g1=Q+
+53. Ke2 Qg4+ 54. Nf3 Qe6+ 55. Kf2 Qxe7 56. Nd4 Qe4 57. Nf5 Qxf5+ 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "30"]
+[White "Magnus Carlsen"]
+[Black "Hikaru Nakamura"]
+[Result "1/2-1/2"]
+[EventDate "?"]
+[ECO "B06"]
+[WhiteElo "2835"]
+[BlackElo "2787"]
+[PlyCount "106"]
+
+1. e4 d6 2. Nf3 g6 3. d4 Bg7 4. Bd3 Nf6 5. O-O Nbd7 6. Re1 e5 7. c3 O-O 8. h3
+Re8 9. Nbd2 b6 10. Nf1 Bb7 11. Ng3 exd4 12. cxd4 c5 13. d5 a6 14. a4 Rc8 15.
+Bf4 c4 16. Bc2 Nc5 17. Qd2 b5 18. axb5 axb5 19. Nd4 Qb6 20. Ngf5 Nfxe4 21. Qe3
+gxf5 22. Nxf5 Bxb2 23. Bxe4 Rxe4 24. Qg3+ Kh8 25. Nxd6 Rf8 26. Nxe4 Nxe4 27.
+Be5+ f6 28. Rxe4 Bxe5 29. Rxe5 fxe5 30. Rb1 Qd4 31. Rxb5 Bxd5 32. Kh2 c3 33.
+Ra5 c2 34. Ra4 c1=Q 35. Rxd4 exd4 36. Qe5+ Kg8 37. Qxd5+ Rf7 38. Qd8+ Kg7 39.
+Qxd4+ Rf6 40. Qd7+ Kh6 41. Qa7 Qf4+ 42. Kg1 Rc6 43. g3 Qf3 44. Kh2 Rf6 45. Kg1
+Re6 46. Kh2 Re2 47. Qb6+ Kg7 48. Qc7+ Kf6 49. Qd6+ Kg7 50. Qd7+ Kg6 51. Qd6+
+Kg7 52. Qd7+ Kg6 53. Qd6+ Kg7 1/2-1/2
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.24"]
+[Round "9.4"]
+[White "Magnus Carlsen"]
+[Black "Ding Liren"]
+[Result "1-0"]
+[EventDate "2019.11.22"]
+[ECO "C89"]
+[WhiteElo "2870"]
+[BlackElo "2801"]
+[PlyCount "118"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 O-O 8. c3
+d5 9. exd5 Nxd5 10. Nxe5 Nxe5 11. Rxe5 c6 12. d3 Bd6 13. Re1 Bf5 14. Qf3 Qh4
+15. g3 Qh3 16. Be3 Bxd3 17. Bxd5 cxd5 18. Qxd5 Rad8 19. Qg2 Qc8 20. Nd2 Bf5 21.
+Bd4 Rfe8 22. f3 Bf8 23. a3 Re6 24. Rxe6 Qxe6 25. Qf2 Re8 26. Nf1 h5 27. Ne3 Bh3
+28. Re1 Qc6 29. Ng2 Rxe1+ 30. Nxe1 Qg6 31. Qc2 Bf5 32. Qd2 Be6 33. Qd3 Bf5 34.
+Qe3 Be6 35. Bc5 Bxc5 36. Qxc5 Qb1 37. Qf2 Bd5 38. Kg2 a5 39. Qe2 Qf5 40. Kf2
+Be6 41. Nc2 Qh3 42. Kg1 Bc4 43. Qe8+ Kh7 44. Ne3 Qe6 45. Qxe6 Bxe6 46. b4 axb4
+47. axb4 g5 48. h4 gxh4 49. gxh4 Kg6 50. Kf2 Kf6 51. Nf1 Ke5 52. Ng3 f5 53.
+Nxh5 f4 54. Ng7 Bf7 55. h5 Kf6 56. h6 Kg6 57. Nh5 Kxh6 58. Nxf4 Kg5 59. Ne2 Kf5
+1-0
+
+
+
+[Event "Grand Chess Tour Paris Blitz"]
+[Site "Paris FRA"]
+[Date "2016.06.12"]
+[Round "16"]
+[White "Magnus Carlsen"]
+[Black "Veselin Topalov"]
+[Result "0-1"]
+[EventDate "2016.06.08"]
+[ECO "B51"]
+[WhiteElo "2855"]
+[BlackElo "2761"]
+[PlyCount "92"]
+
+1. e4 c5 2. Nf3 d6 3. Bb5+ Nd7 4. a4 Nf6 5. Nc3 g6 6. a5 Bg7 7. O-O a6 8. Bc4
+O-O 9. d3 Nb8 10. Nd5 Nc6 11. Nb6 Rb8 12. Bd2 Bg4 13. h3 Bxf3 14. Qxf3 Nd7 15.
+Nxd7 Qxd7 16. Rab1 Qd8 17. h4 Nxa5 18. Ba2 Nc6 19. h5 e6 20. g3 b5 21. Kg2 Qf6
+22. Qd1 a5 23. hxg6 hxg6 24. Rh1 Nb4 25. Bc3 Qg5 26. f4 Qe7 27. Qg4 Nxa2 28.
+Qh3 f6 29. Qh7+ Kf7 30. Rh6 Rg8 31. Bxa5 Kf8 32. Rh3 Qf7 33. c3 Ra8 34. Bb6 Ra6
+35. Bd8 Ke8 36. Bc7 Kd7 37. e5 Rh8 38. Qxh8 Bxh8 39. Rxh8 Kxc7 40. Rbh1 dxe5
+41. R1h7 Qxh7 42. Rxh7+ Kd6 43. Kf3 exf4 44. gxf4 b4 45. c4 Nc1 46. Ke3 Nb3 0-1
+
+
+
+[Event "World Blitz KO Finals"]
+[Site "Doha QAT"]
+[Date "2025.12.30"]
+[Round "1.3"]
+[White "Fabiano Caruana"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2025.12.30"]
+[ECO "C20"]
+[WhiteElo "2751"]
+[BlackElo "2881"]
+[PlyCount "124"]
+
+1. e4 e5 2. d3 Nc6 3. Nc3 Bc5 4. Nf3 d6 5. Na4 a5 6. Nxc5 dxc5 7. c3 Nge7 8.
+Be2 O-O 9. O-O b6 10. Be3 f5 11. exf5 Nxf5 12. Nd2 Be6 13. Bf3 Qd7 14. Qe2 Bd5
+15. Be4 h6 16. f3 Rad8 17. Rfd1 a4 18. Bf2 Nce7 19. Nc4 Ng6 20. g3 Qf7 21. Rf1
+Nd6 22. Bxg6 Qxg6 23. Nxe5 Qe6 24. Rae1 Bxf3 25. Nxf3 Qxe2 26. Rxe2 Rxf3 27.
+Be3 Rxf1+ 28. Kxf1 Kf7 29. g4 a3 30. bxa3 Nb5 31. c4 Nxa3 32. Rd2 Nb1 33. Rd1
+Nc3 34. Rd2 Ke6 35. Ke1 Ra8 36. Bf4 c6 37. Rb2 b5 38. cxb5 cxb5 39. Bd2 b4 40.
+Bxc3 bxc3 41. Rb3 Rxa2 42. Rxc3 Kd5 43. h3 Rh2 44. Ra3 Kd4 45. Ra7 g5 46. Rd7+
+Ke3 47. Kf1 Rxh3 48. Kg2 Rh4 49. Kg3 Rh1 50. Rd5 Rg1+ 51. Kh3 Rc1 52. Kg3 Rc3
+53. Rd6 Rxd3 54. Rxh6 c4 55. Re6+ Kd2+ 56. Kf2 c3 57. Re2+ Kc1 58. Re5 c2 59.
+Ke2 Rc3 60. Rb5 Rc4 61. Kf3 Kd2 62. Rd5+ Kc3 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "30"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "C25"]
+[WhiteElo "2787"]
+[BlackElo "2835"]
+[PlyCount "84"]
+
+1. e4 e5 2. Nc3 Nc6 3. Bc4 Bc5 4. d3 d6 5. Nf3 Be6 6. Bb3 Nf6 7. O-O h6 8. Be3
+Bxe3 9. fxe3 Qd7 10. Nh4 Ne7 11. Qf3 c6 12. Qg3 Nh5 13. Qf3 Nf6 14. Qg3 Nh5 15.
+Qf2 Nf6 16. d4 O-O 17. Rad1 Qc7 18. Qg3 Nh5 19. Qf3 Nf6 20. Qg3 Nh5 21. Qf3 Nf6
+22. Bxe6 fxe6 23. Qh3 Qc8 24. dxe5 dxe5 25. Nf3 Ng6 26. Qg3 Kh7 27. Nxe5 Nxe5
+28. Qxe5 Ng4 29. Qg3 Rxf1+ 30. Rxf1 e5 31. h3 Nf6 32. Qxe5 Qe8 33. Qf5+ Qg6 34.
+e5 Qxf5 35. Rxf5 Kg6 36. g4 Nd7 37. e6 Nb6 38. Ne2 Nd5 39. e4 Nc7 40. Nf4+ Kh7
+41. Rf7 Nb5 42. Nh5 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "30"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "B23"]
+[WhiteElo "2787"]
+[BlackElo "2835"]
+[PlyCount "106"]
+
+1. e4 c5 2. Nc3 e6 3. f4 d5 4. Nf3 dxe4 5. Nxe4 Nc6 6. Bb5 Bd7 7. O-O Nf6 8. d3
+Qb6 9. Bc4 Na5 10. Ne5 Nxc4 11. Nxc4 Qc7 12. f5 Nxe4 13. dxe4 e5 14. Ne3 Bc6
+15. f6 g6 16. Qf3 O-O-O 17. c4 Rd4 18. Nd5 Bxd5 19. cxd5 c4 20. Kh1 Bc5 21. Be3
+Rd3 22. Qg4+ Kb8 23. Bxc5 Qxc5 24. Rac1 Rc8 25. Qd7 Qc7 26. Qb5 a6 27. Qb4 Rd4
+28. Rfe1 Qc5 29. Qc3 h5 30. Qg3 Qd6 31. Qf2 Rd3 32. Rc2 Rd4 33. Rcc1 h4 34.
+Qxh4 Rd2 35. Rb1 Ka8 36. Qg3 c3 37. bxc3 Rxa2 38. Qe3 Rc2 39. Rb6 Qc5 40. Qxc5
+Rxc5 41. d6 Rd2 42. h3 Rxc3 43. Rbb1 Rxd6 44. Rbd1 Rxd1 45. Rxd1 Rc6 46. Rd5
+Rxf6 47. Rxe5 Re6 48. Rd5 Rxe4 49. Rd7 f5 50. Rd6 a5 51. Rxg6 a4 52. Rb6 a3 53.
+Rb4 Rxb4 0-1
+
+
+
+[Event "World Blitz 2021"]
+[Site "Warsaw POL"]
+[Date "2021.12.29"]
+[Round "7.1"]
+[White "Alexandr Predke"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2021.12.29"]
+[ECO "D36"]
+[WhiteElo "2682"]
+[BlackElo "2856"]
+[PlyCount "60"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 d5 4. cxd5 exd5 5. Bg5 c6 6. Qc2 h6 7. Bh4 Be7 8. e3
+O-O 9. Bd3 Ne8 10. Bg3 Nd6 11. Nf3 Be6 12. O-O Nd7 13. a4 a5 14. b3 Re8 15. Ne5
+Qc8 16. f3 Nxe5 17. Bxe5 Nf5 18. Bxf5 Bxf5 19. e4 Bg6 20. Qb2 dxe4 21. fxe4 Bb4
+22. Rae1 f6 23. Bf4 Bxc3 24. Qxc3 Bxe4 25. Qg3 Kh7 26. Bxh6 gxh6 27. Rxf6 Qd7
+28. Ref1 Qxd4+ 29. Kh1 Rad8 30. Qh4 Bxg2+ 0-1
+
+
+
+[Event "Champions Showdown: Carlsen - Ding (Blitz)"]
+[Site "St Louis, MO USA"]
+[Date "2017.11.14"]
+[Round "11"]
+[White "Magnus Carlsen"]
+[Black "Ding Liren"]
+[Result "1-0"]
+[EventDate "2017.11.14"]
+[ECO "A05"]
+[WhiteElo "2837"]
+[BlackElo "2774"]
+[PlyCount "79"]
+
+1. Nf3 Nf6 2. g3 g6 3. b3 Bg7 4. Bb2 O-O 5. Bg2 d6 6. d4 c5 7. c4 Qa5+ 8. Bc3
+Qc7 9. Nbd2 Re8 10. O-O e5 11. d5 e4 12. Ng5 Bf5 13. Bxf6 Bxf6 14. Ngxe4 Bxa1
+15. Qxa1 Bxe4 16. Nxe4 Nd7 17. f4 Re7 18. g4 Rae8 19. Ng3 b5 20. e4 bxc4 21.
+bxc4 Qa5 22. Qc1 Nf6 23. e5 dxe5 24. f5 Nxg4 25. Qg5 e4 26. d6 Re5 27. Qxg4 Qc3
+28. fxg6 hxg6 29. d7 Rd8 30. Nxe4 Qd4+ 31. Kh1 Kg7 32. Nf6 Qxg4 33. Nxg4 Rg5
+34. Nf6 Rf5 35. Rxf5 gxf5 36. Ne8+ Kf8 37. Bc6 Ke7 38. h4 Rb8 39. h5 Rb4 40.
+Nd6 1-0
+
+
+
+[Event "World Blitz 2021"]
+[Site "Warsaw POL"]
+[Date "2021.12.30"]
+[Round "17.1"]
+[White "Magnus Carlsen"]
+[Black "Dimitrios Mastrovasilis"]
+[Result "1-0"]
+[EventDate "2021.12.29"]
+[ECO "B46"]
+[WhiteElo "2856"]
+[BlackElo "2627"]
+[PlyCount "46"]
+
+1. e4 c5 2. Nc3 Nc6 3. Nf3 e6 4. d4 cxd4 5. Nxd4 a6 6. g4 Nxd4 7. Qxd4 b5 8.
+Be3 Bb7 9. O-O-O Rc8 10. f3 Bc5 11. Qd2 Bxe3 12. Qxe3 Ne7 13. Qd4 f6 14. Be2
+Qc7 15. Kb1 Ng6 16. a4 Bc6 17. axb5 axb5 18. Qb4 Qe5 19. Nxb5 Rb8 20. Nd6+ Ke7
+21. Bb5 Bxb5 22. Nc4+ d6 23. Nxe5 1-0
+
+
+
+[Event "Tata Steel India Blitz"]
+[Site "Kolkata IND"]
+[Date "2024.11.16"]
+[Round "4.2"]
+[White "Magnus Carlsen"]
+[Black "Nodirbek Abdusattorov"]
+[Result "1-0"]
+[EventDate "2024.11.16"]
+[ECO "A36"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[PlyCount "72"]
+
+1. c4 c5 2. g3 g6 3. Bg2 Bg7 4. Nc3 Nc6 5. d3 d6 6. Qd2 Nf6 7. b3 O-O 8. Bb2
+Rb8 9. e3 a6 10. Nge2 Bd7 11. O-O b5 12. Nd5 e6 13. Nxf6+ Bxf6 14. Bxf6 Qxf6
+15. Rac1 Rfc8 16. Rfd1 Ne5 17. f4 Nc6 18. Nc3 Qe7 19. Qb2 Qf6 20. Rd2 Kf8 21.
+d4 cxd4 22. Ne4 Qe7 23. exd4 Na5 24. d5 e5 25. c5 Bf5 26. Nxd6 Rxc5 27. Rxc5
+Qxd6 28. Qc3 Re8 29. Re2 b4 30. Qxb4 Nb7 31. Rc4 exf4 32. Rxe8+ Kxe8 33. Qxb7
+Qe5 34. Qa8+ Ke7 35. Qa7+ Kf8 36. Rxf4 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2010.11.16"]
+[Round "5.1"]
+[White "Maxime Vachier-Lagrave"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2010.11.16"]
+[ECO "C69"]
+[WhiteElo "2703"]
+[BlackElo "2802"]
+[PlyCount "149"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxc6 dxc6 5. O-O Qf6 6. d4 exd4 7. Bg5 Qd6 8.
+Nxd4 Be7 9. Bxe7 Nxe7 10. Nc3 Bd7 11. Nb3 O-O-O 12. Qh5 Ng6 13. Rad1 Qe5 14.
+Qxe5 Nxe5 15. Nc5 Rhe8 16. b3 a5 17. f3 b6 18. Nxd7 Rxd7 19. Kf2 Rde7 20. Rd2
+Kb7 21. Rfd1 c5 22. Nd5 Rd7 23. Ne3 Rxd2+ 24. Rxd2 Nc6 25. Rd7 Ne5 26. Rd5 Nc6
+27. c3 a4 28. Nc4 axb3 29. axb3 Ne7 30. Rd7 Kc8 31. Rd2 f6 32. g4 Kb7 33. h4
+Kc6 34. h5 Ra8 35. e5 b5 36. exf6 gxf6 37. Ne3 Ra3 38. Rb2 Kd6 39. f4 Ke6 40.
+Kf3 c6 41. g5 f5 42. Nc2 Ra8 43. Ne1 Nd5 44. c4 bxc4 45. bxc4 Ra3+ 46. Kf2 Nxf4
+47. Rb7 Nh3+ 48. Ke2 Nxg5 49. Nd3 Ra2+ 50. Ke3 Rh2 51. Nxc5+ Kd6 52. Nd3 Rh3+
+53. Ke2 Rh4 54. Rg7 Ne6 55. Rxh7 Rxc4 56. h6 Rh4 57. Ne1 Ng5 58. Rg7 Ne6 59.
+Rh7 Rh2+ 60. Kd3 Rh3+ 61. Ke2 c5 62. Rh8 Ng5 63. Nd3 c4 64. Nf4 Rh2+ 65. Ke3 c3
+66. Rd8+ Ke7 67. Rc8 Ne4 68. h7 c2 69. Rxc2 Rxc2 70. h8=Q Rc6 71. Qe5+ Kd8 72.
+Ne6+ Kd7 73. Nd4 Rc5 74. Qe6+ Kc7 75. Nxf5 1-0
+
+
+
+[Event "Carlsen-Nakamura Chess.com Blitz Battle"]
+[Site "chess.com INT"]
+[Date "2016.10.27"]
+[Round "7"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2016.10.27"]
+[ECO "E46"]
+[WhiteElo "2787"]
+[BlackElo "2853"]
+[PlyCount "107"]
+
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. e3 O-O 5. Ne2 Re8 6. a3 Bf8 7. g3 d5 8. cxd5
+exd5 9. Bg2 a5 10. O-O Na6 11. Nf4 c6 12. f3 c5 13. Kh1 Nc7 14. g4 h6 15. Nce2
+b6 16. Bd2 Bd6 17. Ng3 a4 18. Rc1 Nb5 19. dxc5 bxc5 20. Qc2 Bxf4 21. exf4 Nd4
+22. Qb1 Nb3 23. Rcd1 Ba6 24. Rg1 Be2 25. Nxe2 Rxe2 26. Be1 d4 27. Bf1 Re3 28.
+Bc4 Ne8 29. g5 hxg5 30. Rxg5 Nd6 31. Bh4 Nxc4 32. Rxg7+ Kxg7 33. Bxd8 Rxd8 34.
+Qf5 Rd6 35. Rg1+ Rg6 36. Rxg6+ fxg6 37. Qd7+ Kf6 38. Qd8+ Ke6 39. Qg8+ Kd6 40.
+Qxc4 d3 41. Qa6+ Ke7 42. Qb7+ Kf6 43. Qc6+ Re6 44. Qc8 Re1+ 45. Kg2 d2 46. Qf8+
+Ke6 47. Qg8+ Kd7 48. Qd5+ Kc7 49. Qf7+ Kb6 50. Qxg6+ Ka5 51. Qc6 d1=Q 52. Qc7+
+Kb5 53. Qb7+ Kc4 54. Qf7+ 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2007.11.21"]
+[Round "6"]
+[White "Magnus Carlsen"]
+[Black "Sergei Vladimirovich Rublevsky"]
+[Result "0-1"]
+[EventDate "2007.11.21"]
+[ECO "A50"]
+[WhiteElo "2714"]
+[BlackElo "2676"]
+[PlyCount "120"]
+
+1. c4 Nf6 2. d4 c6 3. Bf4 d6 4. Nc3 Nbd7 5. Nf3 Qa5 6. Bd2 e5 7. e3 Qc7 8. Qc2
+Be7 9. g4 Nxg4 10. Rg1 Nf8 11. h3 Nf6 12. Rxg7 Ng6 13. Ng5 Rf8 14. Nxh7 Nxh7
+15. Rxh7 Bd7 16. O-O-O O-O-O 17. Bd3 Nh4 18. Kb1 Nf3 19. Bc1 exd4 20. Ne2 dxe3
+21. Bxe3 Kb8 22. Bf5 Ng5 23. Bxg5 Bxg5 24. Ng3 Bf4 25. Bxd7 Qxd7 26. Qf5 Qxf5+
+27. Nxf5 Kc7 28. h4 Kd7 29. Re1 Rde8 30. Rxe8 Rxe8 31. Nd4 Ke7 32. Rh5 Be5 33.
+Nf3 Bf6 34. Rf5 Rh8 35. Rf4 Rh5 36. Kc2 Be5 37. Rg4 Ke6 38. a4 Kf5 39. Rg8 Kf4
+40. Ne1 Rh7 41. b3 a5 42. Kd3 Bf6 43. Rb8 Bxh4 44. Ng2+ Kf3 45. Nxh4+ Rxh4 46.
+Rxb7 f5 47. Ra7 Kxf2 48. Rxa5 c5 49. Ra6 Rd4+ 50. Kc3 f4 51. Ra8 f3 52. a5 Rd1
+53. Kb2 Re1 54. a6 Re7 55. b4 cxb4 56. Kb3 Ke2 57. Kxb4 f2 58. Rf8 f1=Q 59.
+Rxf1 Kxf1 60. Kb5 Rc7 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2007.11.22"]
+[Round "34"]
+[White "Alexander Morozevich"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2007.11.21"]
+[ECO "B33"]
+[WhiteElo "2755"]
+[BlackElo "2714"]
+[PlyCount "81"]
+
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e5 6. Ndb5 d6 7. Bg5 a6 8.
+Na3 b5 9. Nd5 Be7 10. Bxf6 Bxf6 11. c4 b4 12. Nc2 a5 13. Qf3 Bg5 14. h4 Bh6 15.
+g4 f6 16. Rg1 O-O 17. Qg3 g6 18. g5 fxg5 19. hxg5 Bg7 20. O-O-O a4 21. c5 b3
+22. axb3 axb3 23. Qxb3 Be6 24. Bh3 Bf7 25. Qb6 Qxb6 26. Nxb6 dxc5 27. Nxa8 Rxa8
+28. Rg3 Nd4 29. Ra3 Rb8 30. Bg4 h5 31. gxh6 Bxh6+ 32. Kb1 Bb3 33. Nxd4 Bxd1 34.
+Nc6 Bxg4 35. Nxb8 Bf4 36. Rc3 Be2 37. b3 Bd2 38. Rxc5 Bd3+ 39. Kb2 Bf4 40. Nd7
+Bxe4 41. Nf6+ 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "28"]
+[White "Daniel Naroditsky"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "E92"]
+[WhiteElo "2619"]
+[BlackElo "2835"]
+[PlyCount "128"]
+
+1. Nf3 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. d4 O-O 6. Be2 e5 7. dxe5 dxe5 8.
+Qxd8 Rxd8 9. Nd5 Na6 10. Bg5 Rd6 11. c5 Nxc5 12. Nxc7 Rb8 13. Be3 Nfxe4 14. b4
+Rc6 15. Nd5 Rd6 16. Ne7+ Kf8 17. Nxc8 Rxc8 18. bxc5 Nxc5 19. O-O e4 20. Rac1 b6
+21. Nd2 f5 22. Nb3 Rdc6 23. Bb5 R6c7 24. Nxc5 bxc5 25. Bf4 Bd4 26. Bxc7 Rxc7
+27. Rfd1 Rb7 28. Bc4 Rb2 29. Rf1 Ke7 30. g3 Kf6 31. h4 h6 32. Rb1 Rc2 33. Bb3
+Rd2 34. Rbd1 Rb2 35. Rb1 Rd2 36. Kg2 g5 37. hxg5+ hxg5 38. Rbd1 Rb2 39. Rc1 f4
+40. gxf4 gxf4 41. Rc2 Rxc2 42. Bxc2 Ke5 43. f3 e3 44. Bd3 Bc3 45. Be2 Kd4 46.
+Rc1 Bd2 47. Rc4+ Kd5 48. Rxf4 Ke5 49. Rc4 Kd5 50. f4 Kd6 51. Kf3 Kd5 52. f5 Ke5
+53. Bd3 Kf6 54. Rxc5 Bb4 55. Rc6+ Bd6 56. Rxd6+ Ke5 57. Re6+ Kd4 58. Rxe3 Kd5
+59. f6 Kd4 60. f7 Kd5 61. f8=Q Kd4 62. Qd6+ Kc3 63. Ba6+ Kb2 64. Qd2+ 1-0
+
+
+
+[Event "World Blitz KO Finals"]
+[Site "Doha QAT"]
+[Date "2025.12.30"]
+[Round "2.3"]
+[White "Magnus Carlsen"]
+[Black "Nodirbek Abdusattorov"]
+[Result "1/2-1/2"]
+[EventDate "2025.12.30"]
+[ECO "D00"]
+[WhiteElo "2840"]
+[BlackElo "2732"]
+[PlyCount "62"]
+
+1. d4 d5 2. Nc3 Nf6 3. Bf4 c5 4. e3 cxd4 5. exd4 a6 6. Nf3 Nc6 7. Ne5 Bd7 8.
+Ne2 e6 9. c3 Nxe5 10. Bxe5 Qb6 11. Qb3 Qc6 12. Ng3 h5 13. Bd3 h4 14. Ne2 Bd6
+15. h3 Qc7 16. Bxd6 Qxd6 17. a4 b6 18. a5 Rb8 19. Qc2 O-O 20. O-O bxa5 21. Rxa5
+Bb5 22. Nc1 Nh5 23. Bxb5 Rxb5 24. Rxb5 axb5 25. Nd3 Nf4 26. Nxf4 Qxf4 27. Qb3
+Rb8 28. Qb4 g6 29. Ra1 Kg7 30. Qc5 Ra8 31. Rxa8 Qc1+ 1/2-1/2
+
+
+
+[Event "Superbet Blitz Croatia"]
+[Site "Zagreb CRO"]
+[Date "2023.07.09"]
+[Round "18.2"]
+[White "Magnus Carlsen"]
+[Black "Constantin Lupulescu"]
+[Result "1-0"]
+[EventDate "2023.07.08"]
+[ECO "B40"]
+[WhiteElo "2835"]
+[BlackElo "2584"]
+[PlyCount "58"]
+
+1. e4 c5 2. Nf3 e6 3. Bd3 Nc6 4. O-O d5 5. Bb5 Bd6 6. e5 Bc7 7. Bxc6+ bxc6 8.
+b3 f6 9. Re1 fxe5 10. Nxe5 Nf6 11. Bb2 O-O 12. d3 Qe8 13. Nd2 a5 14. a4 Ba6 15.
+Qe2 Rb8 16. Ndf3 c4 17. Ba3 cxb3 18. cxb3 Rxb3 19. Bxf8 Qxf8 20. Rac1 Ne4 21.
+Rxc6 Bb6 22. Rxb6 Rxb6 23. Nd7 Qd8 24. Nxb6 Qxb6 25. Qe3 Qxe3 26. Rxe3 Nc5 27.
+d4 Nxa4 28. Rxe6 Bb5 29. Re3 1-0
+
+
+
+[Event "11th Norway Blitz 2023"]
+[Site "Stavanger NOR"]
+[Date "2023.05.29"]
+[Round "4.1"]
+[White "Magnus Carlsen"]
+[Black "Nodirbek Abdusattorov"]
+[Result "1-0"]
+[EventDate "2023.05.29"]
+[ECO "D36"]
+[WhiteElo "2853"]
+[BlackElo "2731"]
+[PlyCount "68"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. cxd5 exd5 5. Bg5 c6 6. Qc2 h6 7. Bh4 Be6 8. e3
+Nbd7 9. f3 c5 10. Bd3 Rc8 11. Nge2 Bd6 12. O-O O-O 13. Kh1 Qb6 14. Qd2 cxd4 15.
+exd4 Rfe8 16. Rad1 a6 17. Bb1 Qc7 18. f4 Bg4 19. Rc1 Qa5 20. Ng3 Nh5 21. Nxh5
+Bxh5 22. Bf5 Rc7 23. Rce1 Rxe1 24. Qxe1 Nf8 25. Bd8 Bg6 26. Bxg6 Nxg6 27. f5
+Nf8 28. f6 g6 29. Qe8 Qb4 30. Bxc7 Qc4 31. Qe2 Qxc7 32. Nxd5 Qd8 33. Qe7 Qa5
+34. Qxd6 1-0
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.26"]
+[Round "13.2"]
+[White "Magnus Carlsen"]
+[Black "Pentala Harikrishna"]
+[Result "1-0"]
+[EventDate "2019.11.25"]
+[ECO "D42"]
+[WhiteElo "2870"]
+[BlackElo "2731"]
+[PlyCount "131"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 d5 4. Nc3 c5 5. e3 Nc6 6. cxd5 Nxd5 7. Bd3 Be7 8. O-O
+O-O 9. Qe2 cxd4 10. exd4 Nf6 11. Rd1 b6 12. a3 Bb7 13. Bg5 Re8 14. h4 g6 15.
+Rac1 Rc8 16. Bb1 Na5 17. Ne5 Nd7 18. b4 Bxg5 19. hxg5 Nb3 20. Rc2 Na1 21. Nxd7
+Qxd7 22. Ne4 Bxe4 23. Rxc8 Rxc8 24. Bxe4 Nb3 25. Qe3 Qa4 26. Rb1 Nxd4 27. Qxd4
+Qxa3 28. b5 Rc1+ 29. Kh2 Rxb1 30. Bxb1 Qc1 31. Qd8+ Kg7 32. Bd3 Qf4+ 33. Kg1 h6
+34. gxh6+ Qxh6 35. Qd4+ Kg8 36. Bf1 Qc1 37. Qd7 Qa1 38. g3 Kg7 39. Kg2 Qa4 40.
+Qd2 Qe4+ 41. Kg1 Qa4 42. Be2 Kg8 43. Kg2 Kg7 44. Qb2+ Kg8 45. Bf3 a6 46. bxa6
+Qxa6 47. Bc6 Qa7 48. Qe5 Qa6 49. Qc7 Kg7 50. Kh2 Kf8 51. Qd8+ Kg7 52. Qd4+ Kg8
+53. Be8 Qa7 54. Qd7 Qxd7 55. Bxd7 Kf8 56. Kg2 Ke7 57. Ba4 Kd6 58. Kf3 g5 59.
+Kg4 f6 60. Kh5 Ke5 61. Kg6 g4 62. Bd7 f5 63. Kf7 Ke4 64. Kxe6 b5 65. Bxb5 Kf3
+66. Kxf5 1-0
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.21"]
+[Round "29"]
+[White "Alireza Firouzja"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "C55"]
+[WhiteElo "2777"]
+[BlackElo "2835"]
+[PlyCount "64"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. d3 d5 5. exd5 Nxd5 6. O-O Be7 7. Re1 Nb6 8.
+Bb5 f6 9. d4 O-O 10. Bxc6 bxc6 11. dxe5 Qxd1 12. Rxd1 fxe5 13. Nxe5 Bf6 14.
+Nxc6 Bf5 15. Nc3 Bxc2 16. Re1 Rfe8 17. Bf4 Nc4 18. Bxc7 Kf7 19. Bg3 Rxe1+ 20.
+Rxe1 Nxb2 21. Ne5+ Bxe5 22. Bxe5 Nd3 23. Re3 Nxe5 24. Rxe5 Rc8 25. Re3 a5 26.
+f3 Bf5 27. Kf2 Be6 28. g4 h6 29. Kg3 Rc4 30. Ne4 Ra4 31. a3 Rc4 32. Nd6+ 1-0
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.25"]
+[Round "7.4"]
+[White "Magnus Carlsen"]
+[Black "Levon Aronian"]
+[Result "1-0"]
+[EventDate "2019.11.25"]
+[ECO "A28"]
+[WhiteElo "2870"]
+[BlackElo "2772"]
+[PlyCount "111"]
+
+1. c4 Nf6 2. Nc3 e5 3. Nf3 Nc6 4. d3 d5 5. cxd5 Nxd5 6. e4 Nb6 7. Be2 Be7 8.
+Be3 O-O 9. O-O Be6 10. a4 a6 11. a5 Nd7 12. d4 exd4 13. Nxd4 Nxd4 14. Bxd4 Nc5
+15. Be3 Qxd1 16. Rfxd1 Rfd8 17. Nd5 Bxd5 18. exd5 Nd7 19. Bf4 Bd6 20. Bxd6 cxd6
+21. Rac1 Nf6 22. Rc7 Rab8 23. Bf3 b6 24. b4 bxa5 25. bxa5 Rb5 26. Ra1 Nxd5 27.
+Bxd5 Rxd5 28. Ra7 g6 29. h3 Rb8 30. Rxa6 Kg7 31. Rc6 Rb2 32. a6 Rdd2 33. a7
+Rxf2 34. Rc2 Rbxc2 35. a8=Q h5 36. Qe4 Rce2 37. Qd4+ Rf6 38. Rf1 Re5 39. Rxf6
+Kxf6 40. Qxd6+ Re6 41. Qf8 Re5 42. Kf2 Rf5+ 43. Ke3 Re5+ 44. Kd4 Re2 45. g4
+hxg4 46. hxg4 Rg2 47. Qh8+ Ke7 48. Qh3 Rd2+ 49. Ke5 Re2+ 50. Kf4 Re6 51. Kg5
+Re5+ 52. Kh6 g5 53. Kg7 Re6 54. Qa3+ Ke8 55. Qa8+ Ke7 56. Qb7+ 1-0
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2008.08.29"]
+[Round "15"]
+[White "Vladislav Ivanovich Tkachiev"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2008.08.29"]
+[ECO "B22"]
+[WhiteElo "2664"]
+[BlackElo "2775"]
+[PlyCount "75"]
+
+1. e4 c5 2. c3 Nf6 3. e5 Nd5 4. Nf3 Nc6 5. Bc4 Nb6 6. Bb3 d5 7. exd6 Qxd6 8.
+O-O Be6 9. Bxe6 Qxe6 10. a4 Qd7 11. a5 Nd5 12. d4 e6 13. a6 b5 14. Ne5 Nxe5 15.
+dxe5 Qc6 16. Re1 Rd8 17. Qg4 h5 18. Qh3 Be7 19. Qf3 h4 20. h3 c4 21. Nd2 g6 22.
+Qg4 Rh5 23. Nf3 Kf8 24. Bg5 Bxg5 25. Nxg5 Ne7 26. Ne4 Rxe5 27. Qxh4 Rh5 28. Qg3
+Kg7 29. Qe3 Rd7 30. Rad1 Rxd1 31. Rxd1 Re5 32. f3 Qxa6 33. Rd7 Nd5 34. Qd4 Qb6
+35. Nc5 Kg8 36. Qxe5 Qxc5+ 37. Kh2 a5 38. Rb7 1-0
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2008.08.30"]
+[Round "26"]
+[White "Peter Svidler"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2008.08.29"]
+[ECO "A29"]
+[WhiteElo "2738"]
+[BlackElo "2775"]
+[PlyCount "85"]
+
+1. c4 Nf6 2. Nc3 e5 3. Nf3 Nc6 4. g3 Nd4 5. Bg2 Nxf3+ 6. Bxf3 Bb4 7. Qb3 Bc5 8.
+O-O O-O 9. d3 h6 10. Bg2 c6 11. Bd2 Re8 12. h3 Rb8 13. Rac1 a6 14. Na4 Ba7 15.
+c5 d6 16. cxd6 Qxd6 17. Bb4 Qc7 18. Qa3 Qd8 19. Bd6 Ra8 20. Bc5 Bxc5 21. Nxc5
+a5 22. b4 Ra7 23. Nb3 a4 24. Na5 Be6 25. Rfd1 Bd5 26. e4 Be6 27. Nc4 Qd4 28.
+Nd2 Qd6 29. Nf3 Qc7 30. d4 exd4 31. Nxd4 Qb6 32. e5 Nd5 33. Nxe6 fxe6 34. Rc4
+Rf8 35. Rd2 Raa8 36. Qd3 Rad8 37. Qg6 Nf4 38. Rxf4 Rxf4 39. Rxd8+ Qxd8 40. gxf4
+Qd1+ 41. Kh2 Qd4 42. Qxe6+ Kf8 43. Qd6+ 1-0
+
+
+
+[Event "Early Titled Tuesday Blitz"]
+[Site "chess.com INT"]
+[Date "2024.09.17"]
+[Round "9"]
+[White "Andrew Hong"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "D00"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[Source "'Mouse-slip Ruins Brilliancy!' + chess.com"]
+[PlyCount "76"]
+
+1. d4 d5 2. Nc3 e6 3. Bf4 Bd6 4. e3 Nf6 5. Qf3 O-O 6. O-O-O Bxf4 7. exf4 c5 8.
+dxc5 Qa5 9. Kb1 Nbd7 10. Nge2 Nxc5 11. Nd4 Bd7 12. g4 b5 13. g5 b4 14. Nce2
+Nfe4 15. Nc1 Na4 16. Bd3 Nac3+ 17. bxc3 bxc3 18. Bxe4 Qa3 19. Nd3 Rab8+ 20. Nb3
+Bb5 21. Bxh7+ Kxh7 22. Ka1 Rb6 23. Rb1 Bc4 24. Ndc1 a5 25. Qxc3 a4 26. Qh3+ Kg8
+27. Qe3 Rfb8 28. h4 d4 29. Qxd4 axb3 30. cxb3 Bd5 31. Rh3 Rc6 32. Rc3 Rbc8 33.
+Rxc6 Rxc6 34. Qd2 Be4 35. Rb2 Qc5 36. Nd3 Qd4 37. Ne5 Rc1+ 38. Qxc1 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2009.11.17"]
+[Round "26"]
+[White "Magnus Carlsen"]
+[Black "Evgeny Ilgizovich Bareev"]
+[Result "1-0"]
+[EventDate "2009.11.16"]
+[ECO "B12"]
+[WhiteElo "2801"]
+[BlackElo "2634"]
+[PlyCount "51"]
+
+1. e4 c6 2. d4 d5 3. e5 Bf5 4. Be3 e6 5. Nd2 Nd7 6. Ngf3 f6 7. Be2 Ne7 8. O-O
+Qc7 9. c4 fxe5 10. dxe5 Nxe5 11. Nxe5 Qxe5 12. Nf3 Qd6 13. Qb3 b6 14. Rac1 Bg4
+15. cxd5 exd5 16. Rfe1 Bxf3 17. Bxf3 O-O-O 18. Bxb6 axb6 19. Qxb6 h6 20. Rxe7
+Bxe7 21. Rxc6+ Kd7 22. Rxd6+ Bxd6 23. Bxd5 Rc8 24. g3 h5 25. Qb5+ Kd8 26. Bc6
+1-0
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2013.06.12"]
+[Round "9"]
+[White "Shakhriyar Mamedyarov"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2013.06.12"]
+[ECO "D37"]
+[WhiteElo "2753"]
+[BlackElo "2864"]
+[PlyCount "77"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 d5 4. Nc3 Be7 5. Bf4 O-O 6. Rc1 b6 7. e3 Ba6 8. Qa4
+Bxc4 9. Bxc4 dxc4 10. Qxc4 c5 11. dxc5 Bxc5 12. O-O Nbd7 13. Rfd1 Qc8 14. Nb5
+Qb7 15. Ne5 Rfc8 16. Nxd7 Nxd7 17. Nc7 Rxc7 18. Bxc7 Qxc7 19. b4 Rc8 20. Qb5
+Rd8 21. Rd2 h6 22. Rcd1 a6 23. Qc4 Kf8 24. bxc5 bxc5 25. h3 Ke7 26. Qh4+ Ke8
+27. Qg4 g6 28. Qh4 h5 29. Qc4 Qc6 30. Rd6 Qb5 31. Qf4 c4 32. Qd4 Ke7 33. Qc3 a5
+34. R6d4 Qb4 35. Qxb4+ axb4 36. Rxc4 Ke8 37. Rcd4 e5 38. Rd6 Ke7 39. R1d5 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Berlin GER"]
+[Date "2015.10.14"]
+[Round "14.1"]
+[White "Magnus Carlsen"]
+[Black "Peter Svidler"]
+[Result "1/2-1/2"]
+[EventDate "2015.10.13"]
+[ECO "C90"]
+[WhiteElo "2850"]
+[BlackElo "2727"]
+[PlyCount "108"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. d3 b5 7. Bb3 d6 8. c3
+O-O 9. Re1 Na5 10. Bc2 c5 11. Nbd2 Nc6 12. Nf1 h6 13. Ne3 Be6 14. d4 cxd4 15.
+cxd4 Nxd4 16. Nxd4 exd4 17. Qxd4 Rc8 18. Bb3 Nd7 19. Nd5 Bxd5 20. Qxd5 Nc5 21.
+Bf4 Nxb3 22. axb3 Qb6 23. Be3 Qc6 24. Qf5 Rfe8 25. Rac1 Qb7 26. Bd4 Bf8 27. f3
+a5 28. h3 a4 29. b4 d5 30. exd5 Rxe1+ 31. Rxe1 Bxb4 32. Qg4 f5 33. Qxf5 Bxe1
+34. Qe6+ Kh7 35. Qe4+ Kh8 36. Qxe1 Qxd5 37. Qe3 Kg8 38. Kh2 b4 39. Be5 a3 40.
+bxa3 bxa3 41. f4 a2 42. Qa7 Qf7 43. Qa4 Rd8 44. Qa5 Rd1 45. Qa8+ Kh7 46. Qa4
+Rd2 47. Qe4+ Kh8 48. Qa8+ Qg8 49. Qc6 Kh7 50. Qe4+ Kh8 51. Qg6 Qh7 52. Qe8+ Qg8
+53. Qg6 Qh7 54. Qe8+ Qg8 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2009.11.18"]
+[Round "38"]
+[White "Viswanathan Anand"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2009.11.16"]
+[ECO "D35"]
+[WhiteElo "2788"]
+[BlackElo "2801"]
+[PlyCount "92"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Be7 4. cxd5 exd5 5. Bf4 Nf6 6. e3 Bf5 7. h3 c6 8. Nf3
+Nbd7 9. g4 Be4 10. Bg2 O-O 11. O-O Re8 12. Nxe4 Nxe4 13. Nd2 Nxd2 14. Qxd2 Nf8
+15. b4 Ng6 16. Bg3 Bd6 17. Bxd6 Qxd6 18. Rab1 a6 19. a4 Nh4 20. b5 axb5 21.
+axb5 Qg6 22. bxc6 bxc6 23. Rfc1 h5 24. Qc2 Qg5 25. Qxc6 Nxg2 26. Kxg2 hxg4 27.
+h4 Qf5 28. Qd6 Qf3+ 29. Kg1 Ra2 30. Rf1 Rxe3 31. Qd8+ Kh7 32. Qg5 g3 33. Qxe3
+gxf2+ 34. Qxf2 Rxf2 35. Rxf2 Qg4+ 36. Rg2 Qxd4+ 37. Kh1 Qe4 38. Rf1 f5 39. Kg1
+d4 40. Rgf2 d3 41. h5 Qg4+ 42. Rg2 Qd4+ 43. Kh1 d2 44. Rgg1 f4 45. Kg2 Qe3 46.
+Rh1 Qg3# 0-1
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.20"]
+[Round "26"]
+[White "Magnus Carlsen"]
+[Black "Andrew Tang"]
+[Result "1-0"]
+[EventDate "?"]
+[ECO "D02"]
+[WhiteElo "2835"]
+[BlackElo "2523"]
+[PlyCount "36"]
+
+1. d4 d5 2. Nf3 e6 3. g3 Nf6 4. Bg2 Be7 5. O-O O-O 6. b3 b6 7. Bb2 Bb7 8. c4
+Nbd7 9. cxd5 Nxd5 10. Nc3 Nxc3 11. Bxc3 c5 12. Qd2 Nf6 13. Qb2 Ne4 14. Ne5 Nxc3
+15. Bxb7 Qxd4 16. Nc6 Qf6 17. Nxe7+ Qxe7 18. Bxa8 1-0
+
+
+
+[Event "Carlsen-Nakamura Chess.com Blitz Battle"]
+[Site "Chess.com"]
+[Date "2016.10.27"]
+[Round "?"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "E17"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[PlyCount "164"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 b6 4. g3 Bb7 5. Bg2 Be7 6. O-O O-O 7. Re1 Na6 8. Nc3
+d5 9. cxd5 exd5 10. Bf4 Re8 11. Rc1 c5 12. dxc5 Nxc5 13. Nd4 a6 14. a3 Bf8 15.
+b4 Ne6 16. Nxe6 fxe6 17. Na4 Rc8 18. Rxc8 Qxc8 19. Qd4 b5 20. Rc1 Qd8 21. Nc5
+Bxc5 22. Qxc5 Qd7 23. Qb6 Rc8 24. Rxc8+ Bxc8 25. Bh3 Kf7 26. Be5 Qe7 27. Qc6
+Qd7 28. Qc3 Bb7 29. f3 Ne8 30. Qd3 Kg8 31. Qe3 Bc8 32. Qc5 Nf6 33. Kf2 Kf7 34.
+Ke3 Qb7 35. Qc3 Bd7 36. Kf2 Qb6+ 37. Bd4 Qd6 38. Qe3 h6 39. Be5 Qc6 40. Qa7 Ne8
+41. Qb8 Qc8 42. Qxc8 Bxc8 43. Ke3 Nf6 44. Kd4 Nd7 45. Bc7 Bb7 46. e3 Ke7 47.
+Bf1 Nf6 48. g4 h5 49. g5 Nd7 50. Bd3 Kf7 51. h4 g6 52. Bd6 Bc6 53. f4 Bb7 54.
+Bc2 Nb6 55. Kc5 Nd7+ 56. Kd4 Nb6 57. Bd3 Nd7 58. Bc7 Bc6 59. Bc2 Kg7 60. Bd1
+Kf7 61. Be2 Kg7 62. Bf3 Kf7 63. f5 exf5 64. Bxd5+ Bxd5 65. Kxd5 Ke7 66. Kc6 Ke6
+67. Bf4 Ne5+ 68. Kb6 Nc4+ 69. Kxa6 Nxa3 70. Kb6 Kd5 71. Kc7 Ke4 72. Kc6 Nc4 73.
+Kxb5 Nxe3 74. Bxe3 Kxe3 75. Kc5 f4 76. b5 f3 77. b6 f2 78. b7 f1=Q 79. b8=Q
+Qf5+ 80. Kc6 Kf3 81. Qb4 Kg3 82. Kd6 Qf8+ 0-1
+
+
+
+[Event "GCT Kolkata Rapid & Blitz"]
+[Site "Kolkata IND"]
+[Date "2019.11.23"]
+[Round "5"]
+[White "Anish Giri"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2019.11.22"]
+[ECO "B31"]
+[WhiteElo "2776"]
+[BlackElo "2870"]
+[PlyCount "110"]
+
+1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 4. O-O Bg7 5. Bxc6 bxc6 6. Re1 Qc7 7. h3 d6 8. c3
+Nf6 9. d4 cxd4 10. cxd4 O-O 11. Nc3 Bb7 12. e5 dxe5 13. dxe5 Rfd8 14. Qc2 Nd5
+15. Nxd5 Rxd5 16. e6 f6 17. Be3 a5 18. Bc5 Ba6 19. Rac1 Bh6 20. Be3 Bxe3 21.
+Rxe3 c5 22. Rd1 Rad8 23. Rxd5 Rxd5 24. Qa4 Qd8 25. Re1 Kg7 26. Qc6 Bd3 27. Nd2
+g5 28. Nb3 c4 29. Nc5 Qd6 30. Qxd6 Rxd6 31. Rd1 f5 32. f3 Rd5 33. Nxd3 cxd3 34.
+Kf2 f4 35. Ke1 Re5+ 36. Kf1 Re3 37. Re1 Kf6 38. Kf2 Rxe6 39. Rxe6+ Kxe6 40. Ke1
+Kd5 41. b3 Kd4 42. Kd2 e5 43. a3 h6 44. b4 a4 45. Kd1 Kc4 46. Kd2 h5 47. Kd1
+Kd4 48. Kd2 h4 49. b5 Kc5 50. Kxd3 Kxb5 51. Ke4 Kc4 52. Kxe5 Kb3 53. Kd4 Kxa3
+54. Kc3 Ka2 55. Kc2 a3 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Almaty KAZ"]
+[Date "2022.12.29"]
+[Round "10.1"]
+[White "Magnus Carlsen"]
+[Black "Shakhriyar Mamedyarov"]
+[Result "1/2-1/2"]
+[EventDate "2022.12.29"]
+[ECO "C80"]
+[WhiteElo "2859"]
+[BlackElo "2740"]
+[PlyCount "76"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Nxe4 6. Re1 Nc5 7. Bxc6 dxc6 8.
+Nxe5 Be7 9. d4 Ne6 10. Be3 O-O 11. c4 Bf6 12. Nc3 c5 13. Nd5 cxd4 14. Bxd4 Nxd4
+15. Qxd4 Be6 16. Nxf6+ Qxf6 17. Rad1 Rad8 18. Qc5 Rxd1 19. Rxd1 Rd8 20. Rf1 c6
+21. b3 h6 22. Qe3 Qf5 23. h3 Qc2 24. Qb6 Rd1 25. Rxd1 Qxd1+ 26. Kh2 Qd6 27. f4
+f6 28. Nf3 Qxf4+ 29. Kh1 Bxh3 30. Qxb7 Qg3 31. gxh3 Qxf3+ 32. Kh2 Qf2+ 33. Kh1
+Qf1+ 34. Kh2 Qe2+ 35. Kg3 Qxa2 36. Qc8+ Kf7 37. Qd7+ Kg6 38. Qg4+ 1/2-1/2
+
+
+
+[Event "Casual odds blitz game"]
+[Site "Las Vegas, Nevada, USA"]
+[Date "2025.07.15"]
+[Round "?"]
+[White "Pia Cramling"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "E71"]
+[WhiteElo "2403"]
+[BlackElo "2839"]
+[Source "https://www.youtube.com/watch?v=hmYvlQGr0QU"]
+[PlyCount "58"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. h3 e5 6. d5 Nbd7 7. Be3 Nc5 8. Qc2 a5
+9. Nf3 Nfd7 10. Be2 O-O 11. g4 c6 12. Rg1 Qe7 13. h4 Nf6 14. Nd2 cxd5 15. cxd5
+Bd7 16. a4 Rfc8 17. Nc4 Ncxe4 18. Nxe4 Nxd5 19. Bg5 Qe6 20. Qb3 Nf4 21. Nexd6
+Rc5 22. Qb6 Nxe2 23. Qxc5 Nxg1 24. Qe3 Qxg4 25. Nd2 h6 26. Be7 Qe6 27. Kf1 Qxe7
+28. N6c4 Nh3 29. Nb6 Rd8 0-1
+
+
+
+[Event "GCT St. Louis Rapid & Blitz"]
+[Site "St Louis, MO USA"]
+[Date "2019.08.13"]
+[Round "8.1"]
+[White "Levon Aronian"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2019.08.13"]
+[ECO "A13"]
+[WhiteElo "2765"]
+[BlackElo "2882"]
+[PlyCount "79"]
+
+1. c4 e6 2. g3 g6 3. Bg2 Bg7 4. Nc3 Ne7 5. e4 c5 6. d3 Nbc6 7. Be3 d6 8. h4 h6
+9. f4 h5 10. Nf3 Nd4 11. O-O Nec6 12. Rb1 b6 13. Ne2 Nxf3+ 14. Bxf3 e5 15. Bf2
+exf4 16. gxf4 Bg4 17. Nc3 Bd4 18. e5 Rc8 19. exd6 Qxh4 20. Qe1+ Kd7 21. Bxc6+
+Rxc6 22. Bxd4 Qxe1 23. Rbxe1 cxd4 24. Nb5 a6 25. Re7+ Kd8 26. Nc7 Rxd6 27. Rxf7
+Bf5 28. Re1 Rd7 29. Rxd7+ Kxd7 30. Nd5 Bxd3 31. Rd1 Bf5 32. Rxd4 Kd6 33. b4 Kc6
+34. Ne7+ Kc7 35. Nxf5 gxf5 36. Rd5 Re8 37. Rxf5 Re4 38. c5 Rxb4 39. cxb6+ Kxb6
+40. Kg2 1/2-1/2
+
+
+
+[Event "St. Louis Rapid & Blitz"]
+[Site "lichess.org INT"]
+[Date "2020.09.19"]
+[Round "13.1"]
+[White "Levon Aronian"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2020.09.18"]
+[ECO "C53"]
+[WhiteElo "2773"]
+[BlackElo "2863"]
+[PlyCount "37"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4 exd4 6. e5 d5 7. Bb5 Ne4 8. cxd4
+Bb6 9. Nc3 O-O 10. Be3 Bg4 11. h3 Bh5 12. Qc2 f5 13. Nxd5 Ba5+ 14. Ke2 Nxd4+
+15. Bxd4 Nd2 16. Qc5 Ne4 17. Qc2 Nd2 18. Qc5 Ne4 19. Qc2 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.10"]
+[Round "26"]
+[White "Alexander Grischuk"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2012.07.01"]
+[ECO "C90"]
+[WhiteElo "2763"]
+[BlackElo "2837"]
+[PlyCount "186"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3
+O-O 9. a3 h6 10. h3 Re8 11. d4 Bf8 12. Nbd2 Nb8 13. Bc2 Nbd7 14. Nf1 c5 15. Ng3
+g6 16. a4 Rb8 17. Be3 Qc7 18. Qd2 Kh7 19. d5 Nb6 20. Qe2 Bd7 21. b3 Bg7 22. a5
+Nc8 23. b4 c4 24. Nh2 Ng8 25. Rf1 Qd8 26. Qd2 Qh4 27. Nf3 Qe7 28. Nh2 Qh4 29.
+Nf3 Qe7 30. Nh2 Rb7 31. Rae1 Qf6 32. Re2 Nce7 33. Qc1 Nc8 34. Bd2 Qe7 35. Kh1
+Rf8 36. Bb1 Kh8 37. f4 exf4 38. Bxf4 Be5 39. Ref2 h5 40. Nf3 f6 41. Nxe5 dxe5
+42. Be3 Qg7 43. Bc5 Rf7 44. Qe3 Kh7 45. Ne2 Qh6 46. Ng1 Qxe3 47. Bxe3 Nd6 48.
+Bc5 Ne8 49. Nf3 Rg7 50. Kh2 Bc8 51. Ne1 Rbf7 52. Nc2 Bd7 53. Ne3 Nh6 54. Bb6 g5
+55. g3 Kg6 56. Bc5 Rg8 57. Rg1 Rh7 58. Kg2 Nf7 59. Rgf1 Kg7 60. Bc2 Rh6 61. Be7
+Nfd6 62. g4 hxg4 63. hxg4 Rgh8 64. Kf3 Kf7 65. Bd8 Rh3+ 66. Ke2 R8h6 67. Kd2
+Rg3 68. Rf3 Rh2+ 69. Kc1 Rhh3 70. Rxg3 Rxg3 71. Kd2 Bxg4 72. Rh1 Kg7 73. Be7
+Bf3 74. Rf1 Bxe4 75. Bd1 Bd3 76. Re1 Ne4+ 77. Kc1 N8d6 78. Bh5 Rh3 79. Bg4 Rh2
+80. Bf3 Ra2 81. Rh1 Ra1+ 82. Kb2 Rxh1 83. Bxh1 Kf7 84. Bd8 Nd2 85. Bc7 Ke7 86.
+Bb6 Be4 87. Bxe4 N2xe4 88. Ng4 Nf5 89. Bc5+ Kf7 90. Kc2 Ne7 91. d6 Nc6 92. d7
+Ke6 93. Bb6 Kxd7 0-1
+
+
+
+[Event "Carlsen-Nakamura Chess.com Blitz Battle"]
+[Site "Chess.com"]
+[Date "2016.10.27"]
+[Round "?"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "?"]
+[ECO "E17"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[PlyCount "120"]
+
+1. d4 Nf6 2. c4 e6 3. Nf3 b6 4. g3 Bb7 5. Bg2 Be7 6. Nc3 Na6 7. O-O O-O 8. d5
+Bb4 9. Bd2 Nc5 10. Nh4 Re8 11. a3 Bxc3 12. Bxc3 exd5 13. cxd5 Nce4 14. Bd4 c5
+15. dxc6 dxc6 16. f3 c5 17. Bxf6 Nxf6 18. e4 Qc7 19. Nf5 Rad8 20. Qc1 h6 21.
+Qc3 Kh7 22. Rfe1 Bc8 23. Ne3 Kg8 24. Rad1 Be6 25. Bf1 Rxd1 26. Rxd1 Rd8 27. Rd2
+Rxd2 28. Qxd2 Qd7 29. Qxd7 Nxd7 30. f4 f6 31. Bb5 Nb8 32. Kf2 Kf7 33. Ke2 a6
+34. Bc4 b5 35. Bxe6+ Kxe6 36. Nf5 Kf7 37. g4 Nc6 38. Kd3 g6 39. Nd6+ Ke7 40.
+Nb7 c4+ 41. Kc3 g5 42. fxg5 hxg5 43. h3 Ne5 44. Nc5 a5 45. Nb7 Kd7 46. Nxa5 Kc7
+47. b4 Kb6 48. a4 Ka6 49. axb5+ Kxb5 50. Nb7 Nf7 51. Na5 Nd6 52. Kd4 Kxb4 53.
+Nxc4 Nxc4 54. Kd5 Nd2 55. e5 fxe5 56. Kxe5 Nf3+ 57. Ke4 Nh4 58. Kd4 Kb3 59. Kd3
+Kb2 60. Kd2 Ng2 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Almaty KAZ"]
+[Date "2022.12.30"]
+[Round "18.1"]
+[White "Magnus Carlsen"]
+[Black "Mukhiddin Madaminov"]
+[Result "1-0"]
+[EventDate "2022.12.29"]
+[ECO "D76"]
+[WhiteElo "2859"]
+[BlackElo "2438"]
+[PlyCount "134"]
+
+1. d4 Nf6 2. c4 g6 3. g3 Bg7 4. Bg2 d5 5. cxd5 Nxd5 6. Nf3 O-O 7. O-O Nb6 8.
+Nc3 Nc6 9. Bf4 Nxd4 10. Nxd4 e5 11. Bxe5 Bxe5 12. e3 c6 13. Qc2 Qe7 14. Rad1
+Bg4 15. Rd3 Rad8 16. h3 Bxd4 17. Rxd4 Rxd4 18. exd4 Bf5 19. Qc1 Rd8 20. Rd1 Qb4
+21. a3 Qb3 22. g4 Bc8 23. Ne4 Nd5 24. Re1 Qb6 25. Nc5 Qc7 26. Qg5 Kg7 27. Nd3
+Be6 28. Nc5 Bc8 29. Nd3 Be6 30. Qd2 b6 31. Rc1 Qd6 32. Ne5 Ne7 33. Nxc6 Nxc6
+34. Rxc6 Qxd4 35. Qxd4+ Rxd4 36. Rc7 Rd1+ 37. Kh2 Rd7 38. Rxd7 Bxd7 39. g5 h6
+40. h4 hxg5 41. hxg5 Kf8 42. Kg3 Ke7 43. Kf4 Kd6 44. Ke3 Kc5 45. Kd3 a5 46. Kc3
+a4 47. Bf1 Be6 48. Be2 Bb3 49. Bg4 Bd5 50. Bd7 b5 51. Be8 Bb3 52. Kd3 Bc4+ 53.
+Ke4 Kd6 54. Kd4 Ke7 55. Bc6 Kd6 56. Be4 Ke6 57. Kc5 Ke5 58. Bc6 Kf4 59. Bxb5
+Bb3 60. Kb4 Kxg5 61. Bxa4 Bd5 62. Bb3 Bxb3 63. Kxb3 Kf4 64. a4 Ke5 65. a5 Kd6
+66. Kc4 f5 67. f4 1-0
+
+
+
+[Event "Open NOR Cafe Championship (blitz)"]
+[Site "Bergen NOR"]
+[Date "2004.08.06"]
+[Round "4"]
+[White "Daniel Hersvik"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2004.08.06"]
+[ECO "B31"]
+[WhiteElo "2266"]
+[BlackElo "2567"]
+[PlyCount "95"]
+
+1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 4. O-O Bg7 5. c3 Nf6 6. Re1 O-O 7. d4 d5 8. exd5
+Qxd5 9. Bxc6 Qxc6 10. Ne5 Qd5 11. dxc5 Qxc5 12. Nd2 Bf5 13. Nb3 Qc7 14. Bf4
+Rad8 15. Qf3 Qc8 16. Nd4 Nd5 17. Bg3 f6 18. Nxf5 Qxf5 19. Qxf5 gxf5 20. Nc4 f4
+21. Bh4 e5 22. Rad1 b5 23. Na3 a6 24. Nc2 Ne7 25. f3 Kf7 26. Bf2 Nd5 27. Kf1 f5
+28. Bc5 Rfe8 29. Nb4 Nxb4 30. cxb4 Bf6 31. g3 fxg3 32. hxg3 h5 33. Ke2 Rxd1 34.
+Rxd1 Rd8 35. Rxd8 Bxd8 36. b3 Ke6 37. Ke3 Kd5 38. Kd3 Bc7 39. Ke3 e4 40. f4 Bd8
+41. Bd4 Be7 42. a3 h4 43. gxh4 Bxh4 44. Be5 Be1 45. Bc7 Bc3 46. Ke2 Bb2 47. a4
+Ba3 48. Ba5 0-1
+
+
+
+[Event "Norway Chess (Blitz)"]
+[Site "Hidle NOR"]
+[Date "2015.06.15"]
+[Round "6.4"]
+[White "Viswanathan Anand"]
+[Black "Magnus Carlsen"]
+[Result "0-1"]
+[EventDate "2015.06.15"]
+[ECO "C60"]
+[WhiteElo "2804"]
+[BlackElo "2876"]
+[PlyCount "96"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 g6 4. O-O Bg7 5. c3 a6 6. Ba4 d6 7. d4 Bd7 8. Bg5 f6
+9. Be3 Nh6 10. dxe5 dxe5 11. h3 Nf7 12. c4 O-O 13. Nc3 f5 14. Re1 Re8 15. Nd5
+f4 16. Bd2 g5 17. Bc3 h5 18. Nh2 g4 19. hxg4 hxg4 20. Nxg4 Qh4 21. Ndf6+ Bxf6
+22. Qxd7 Rad8 23. Qf5 Bg7 24. Bxc6 bxc6 25. Rad1 Rd6 26. Rxd6 cxd6 27. c5 dxc5
+28. Rd1 Rd8 29. Rxd8+ Qxd8 30. Nxe5 Bxe5 31. Bxe5 Nxe5 32. Qxe5 Qd2 33. Qc3
+Qd1+ 34. Kh2 Qe2 35. b3 Qh5+ 36. Qh3 Qe2 37. Qf3 Qd2 38. e5 Kf7 39. Kh3 Ke7 40.
+Kg4 Qxa2 41. Qxf4 Qxb3 42. Qf6+ Ke8 43. e6 Qd1+ 44. f3 Qd4+ 45. Kf5 Qxf6+ 46.
+Kxf6 c4 47. g4 c3 48. g5 c2 0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2009.11.18"]
+[Round "29"]
+[White "Ruslan Ponomariov"]
+[Black "Magnus Carlsen"]
+[Result "1-0"]
+[EventDate "2009.11.16"]
+[ECO "E06"]
+[WhiteElo "2739"]
+[BlackElo "2801"]
+[PlyCount "105"]
+
+1. d4 d5 2. c4 e6 3. Nf3 Nf6 4. g3 Be7 5. Bg2 O-O 6. O-O dxc4 7. Qc2 a6 8. Qxc4
+b5 9. Qc2 Bb7 10. Bd2 Bd6 11. Ng5 Bxg2 12. Kxg2 Qc8 13. e4 Qb7 14. f3 Nc6 15.
+Be3 h6 16. Nh3 e5 17. dxe5 Nxe5 18. Nd2 c5 19. Nf2 Rfd8 20. Nb3 c4 21. Nd4 Bf8
+22. Rad1 b4 23. Nf5 b3 24. Qc3 Re8 25. a3 Nxf3 26. Kxf3 Nxe4 27. Nxe4 Qxe4+ 28.
+Ke2 Rad8 29. Rf4 Qg2+ 30. Rf2 Qe4 31. Rf4 Qg2+ 32. Rf2 Qe4 33. Rd4 Rxd4 34.
+Qxd4 Qxd4 35. Nxd4 c3 36. bxc3 b2 37. Rf1 Bxa3 38. Kd3 a5 39. Rb1 Rb8 40. Nc6
+Ra8 41. c4 Ra6 42. Nd4 Rd6 43. Ke4 Rd8 44. Nb5 Re8+ 45. Kd3 Rd8+ 46. Bd4 Bc5
+47. Rxb2 f6 48. Ra2 Bb4 49. Nc3 Ra8 50. Nd5 Bf8 51. c5 Kf7 52. Kc4 a4 53. Nb6
+1-0
+
+
+
+[Event "Norway Chess (Blitz)"]
+[Site "Stavanger NOR"]
+[Date "2016.04.18"]
+[Round "3.2"]
+[White "Nils Grandelius"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2016.04.18"]
+[ECO "A13"]
+[WhiteElo "2649"]
+[BlackElo "2851"]
+[PlyCount "101"]
+
+1. c4 e6 2. g3 d5 3. Bg2 Nf6 4. Nf3 dxc4 5. Qa4+ Nbd7 6. Qxc4 a6 7. Qc2 c5 8.
+Nc3 Bd6 9. O-O O-O 10. d4 Qe7 11. Rd1 h6 12. Bf4 Bxf4 13. gxf4 cxd4 14. Nxd4
+Rd8 15. e3 Nf8 16. Na4 Rb8 17. Qc5 Qxc5 18. Nxc5 g5 19. fxg5 hxg5 20. Nf3 Rxd1+
+21. Rxd1 b6 22. Nb3 g4 23. Ne5 Bb7 24. Rd4 Bxg2 25. Kxg2 Rc8 26. Nxg4 Nxg4 27.
+Rxg4+ Ng6 28. Rb4 b5 29. a4 bxa4 30. Rxa4 Rc2 31. Nd4 Rxb2 32. Rxa6 Ne5 33. Kg3
+Rb1 34. Nf3 Nxf3 35. Kxf3 Kg7 36. Ra4 Rb2 37. Rg4+ Kh6 38. Kg3 Rb1 39. h3 Rg1+
+40. Kf4 Rf1 41. f3 Ra1 42. e4 Ra3 43. Rg3 Ra5 44. h4 Rb5 45. Rg5 Rb3 46. Ra5
+Kg6 47. h5+ Kf6 48. h6 Kg6 49. Ra7 Rb5 50. h7 Rh5 51. Ra2 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Rishon Le Zion ISR"]
+[Date "2006.09.07"]
+[Round "14"]
+[White "Magnus Carlsen"]
+[Black "Gaby Livshits"]
+[Result "1-0"]
+[EventDate "2006.09.07"]
+[ECO "B27"]
+[WhiteElo "2675"]
+[BlackElo "2406"]
+[PlyCount "89"]
+
+1. e4 c5 2. Nf3 g6 3. d4 Bg7 4. Nc3 cxd4 5. Nxd4 Nc6 6. Be3 Nf6 7. Bc4 O-O 8.
+Bb3 a5 9. O-O a4 10. Nxa4 Nxe4 11. Nb5 d5 12. c3 e6 13. Nc5 Nd6 14. Nxd6 Qxd6
+15. Qd2 Rd8 16. Rad1 b6 17. Ne4 Qc7 18. Ng5 Ne5 19. f4 Nc4 20. Bxc4 Qxc4 21. a3
+Qc7 22. Qf2 Rb8 23. Rfe1 Ba6 24. Bd4 Bxd4 25. Rxd4 h6 26. Nf3 Qe7 27. Ne5 Rbc8
+28. Qg3 Kh7 29. Re3 Qf6 30. Ng4 Qf5 31. h3 Rc4 32. Qh4 Rxd4 33. cxd4 Rh8 34.
+Re5 Qb1+ 35. Re1 Qf5 36. Nxh6 Qh5 37. Qxh5 gxh5 38. Nxf7 Rc8 39. Rxe6 Rc2 40.
+Ng5+ Kg7 41. f5 Bb5 42. f6+ Kf8 43. Rxb6 Rc1+ 44. Kh2 Bd7 45. Rb8+ 1-0
+
+
+
+[Event "World Blitz Championship"]
+[Site "Rishon Le Zion ISR"]
+[Date "2006.09.07"]
+[Round "7"]
+[White "Magnus Carlsen"]
+[Black "Merab Gagunashvili"]
+[Result "0-1"]
+[EventDate "2006.09.07"]
+[ECO "B48"]
+[WhiteElo "2675"]
+[BlackElo "2591"]
+[PlyCount "130"]
+
+1. e4 c5 2. Nf3 e6 3. d4 cxd4 4. Nxd4 Nc6 5. Nc3 Qc7 6. Be3 Nf6 7. Bd3 a6 8.
+O-O Nxd4 9. Bxd4 Bc5 10. Bxc5 Qxc5 11. Kh1 d6 12. Qe1 e5 13. f3 Be6 14. Na4 Qc6
+15. Qb4 O-O 16. c4 Nd7 17. Be2 a5 18. Qa3 Nb6 19. Nxb6 Qxb6 20. Rad1 Rfd8 21.
+Rd2 Qc5 22. Qc3 Rac8 23. b3 Qb4 24. Qe3 Qc5 25. Qc3 Qb4 26. Qb2 a4 27. Rfd1 a3
+28. Qc1 b5 29. Rc2 bxc4 30. Bxc4 Bxc4 31. bxc4 Rc6 32. Rd3 Ra8 33. h3 h6 34.
+Kh2 Qc5 35. Rd5 Qa7 36. Rc3 Qa4 37. Rdd3 Qb4 38. Rb3 Qxc4 39. Rdc3 Qxb3 40.
+axb3 a2 41. Rxc6 a1=Q 42. Qxa1 Rxa1 43. Rxd6 Rb1 44. Rb6 g5 45. b4 Kg7 46. b5
+h5 47. h4 gxh4 48. Rb8 Kh7 49. b6 Kg7 50. Re8 Rxb6 51. Rxe5 Kg6 52. Kh3 Rb2 53.
+Rf5 f6 54. Ra5 Rc2 55. Ra6 Kg5 56. Ra8 Rc1 57. Rg8+ Kf4 58. Kh2 h3 59. Rf8 hxg2
+60. Rxf6+ Kg5 61. Rf5+ Kh4 62. Kxg2 Rc2+ 63. Kf1 Kg3 64. Rxh5 Kxf3 65. e5 Rc1#
+0-1
+
+
+
+[Event "World Blitz Championship"]
+[Site "Moscow RUS"]
+[Date "2007.11.22"]
+[Round "26"]
+[White "Magnus Carlsen"]
+[Black "Etienne Bacrot"]
+[Result "1-0"]
+[EventDate "2007.11.21"]
+[ECO "C41"]
+[WhiteElo "2714"]
+[BlackElo "2695"]
+[PlyCount "53"]
+
+1. e4 e5 2. Nf3 d6 3. d4 exd4 4. Nxd4 Nf6 5. Nc3 Be7 6. g3 d5 7. e5 Ng4 8. Bg2
+c6 9. f4 Nh6 10. O-O Qc7 11. f5 Qxe5 12. Bxh6 O-O 13. Bf4 Qf6 14. g4 Bc5 15.
+Ne2 Nd7 16. Kh1 h6 17. c3 Ne5 18. Ng3 Nc4 19. b3 Nb6 20. Nh5 Qh4 21. Bg3 Qg5
+22. h4 Qd8 23. Qd2 Bd6 24. Bxd6 Qxd6 25. f6 Bxg4 26. fxg7 Bxh5 27. Nf5 1-0
+
+
+
+[Event "Tal Memorial (Blitz)"]
+[Site "Moscow RUS"]
+[Date "2012.06.07"]
+[Round "5"]
+[White "Hikaru Nakamura"]
+[Black "Magnus Carlsen"]
+[Result "1/2-1/2"]
+[EventDate "2012.06.07"]
+[ECO "A30"]
+[WhiteElo "2775"]
+[BlackElo "2835"]
+[PlyCount "93"]
+
+1. c4 c5 2. Nf3 Nc6 3. g3 g6 4. Bg2 Bg7 5. O-O d6 6. Nc3 Qd7 7. e3 Bxc3 8. bxc3
+f5 9. d3 Nf6 10. Nd2 b6 11. f4 Bb7 12. e4 O-O-O 13. Re1 fxe4 14. Nxe4 Nxe4 15.
+Bxe4 Rhe8 16. Qf3 e6 17. Qf2 d5 18. cxd5 exd5 19. Bg2 Rxe1+ 20. Qxe1 d4 21. Qf1
+Ne7 22. c4 Nf5 23. Bd2 Re8 24. Re1 Rxe1 25. Qxe1 Bxg2 26. Kxg2 Kb7 27. Kf2 h5
+28. Qd1 Ka6 29. a4 Qe8 30. Qb3 Qe6 31. a5 Ne3 32. Bxe3 Qxe3+ 33. Kf1 Qf3+ 34.
+Kg1 Qe3+ 35. Kf1 Kb7 36. axb6 axb6 37. Qd1 Kc6 38. Kg2 b5 39. cxb5+ Kxb5 40.
+Qb3+ Kc6 41. Qa4+ Kb6 42. Qb3+ Kc6 43. Qc2 Kd6 44. Kh3 Qe6+ 45. Kg2 Qe3 46. Kh3
+Qe6+ 47. Kg2 1/2-1/2
+
+
+
+[Event "Bullet Chess Championship"]
+[Site "Chess.com INT"]
+[Date "2023.07.17"]
+[Round "5"]
+[White "Magnus Carlsen"]
+[Black "Eric Hansen"]
+[Result "1/2-1/2"]
+[EventDate "?"]
+[ECO "B00"]
+[WhiteElo "2835"]
+[BlackElo "2609"]
+[PlyCount "146"]
+
+1. e4 d6 2. Nc3 e5 3. d4 exd4 4. Qxd4 Nf6 5. Qe3 Be7 6. Bd2 O-O 7. O-O-O Nc6 8.
+f4 Re8 9. Nf3 a6 10. Bc4 b5 11. Bd5 Nxd5 12. Nxd5 Bf8 13. Bc3 Be6 14. f5 Bxd5
+15. Rxd5 Ne7 16. Rdd1 Nxf5 17. Qf4 Ne7 18. e5 Ng6 19. Qg3 Qc8 20. h4 Qf5 21. h5
+Qf4+ 22. Qxf4 Nxf4 23. Rd2 h6 24. b3 Rad8 25. exd6 Bxd6 26. Kb1 Re2 27. Rhd1
+Rde8 28. Nd4 Rxd2 29. Bxd2 Nxh5 30. Nf5 Bf8 31. c4 bxc4 32. bxc4 Re4 33. Bc3
+Rxc4 34. Kb2 Rc5 35. g4 Rb5+ 36. Kc2 Nf6 37. Rd8 Rc5 38. Kb3 Rb5+ 39. Kc2 Nxg4
+40. Ne7+ Kh7 41. Rxf8 f6 42. a4 Rc5 43. a5 h5 44. Rd8 h4 45. Rd4 f5 46. Nxf5
+Rxf5 47. Rxg4 g5 48. Bd2 Kg6 49. Bxg5 Rxg5 50. Rxh4 Rxa5 51. Rc4 c5 52. Kc3 Kf5
+53. Rh4 Ke5 54. Rh5+ Kd6 55. Rh6+ Kd5 56. Rh5+ Kc6 57. Rh6+ Kb5 58. Rh8 Ra3+
+59. Kb2 Ra4 60. Rb8+ Ka5 61. Rh8 Rb4+ 62. Kc3 Kb5 63. Rb8+ Ka5 64. Rc8 Kb5 65.
+Rd8 Ka5 66. Rd1 Kb5 67. Rc1 Rc4+ 68. Kb2 Rxc1 69. Kxc1 Kb4 70. Kb2 c4 71. Kc2
+c3 72. Kc1 a5 73. Kb1 1/2-1/2
+
+
+
+[Event "World Blitz Championship"]
+[Site "Astana KAZ"]
+[Date "2012.07.09"]
+[Round "15"]
+[White "Magnus Carlsen"]
+[Black "Boris Gelfand"]
+[Result "1/2-1/2"]
+[EventDate "2012.07.01"]
+[ECO "B53"]
+[WhiteElo "2837"]
+[BlackElo "2738"]
+[PlyCount "78"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Qxd4 a6 5. c4 Nc6 6. Qe3 Bg4 7. Be2 g6 8. O-O
+Bg7 9. Nc3 Nf6 10. h3 Bxf3 11. Bxf3 Nd7 12. Rd1 O-O 13. Be2 Qa5 14. Nd5 Qc5 15.
+Rb1 e6 16. Nc3 Rac8 17. Bf1 Na5 18. Qxc5 Nxc5 19. Bd2 Nc6 20. f3 Rfd8 21. Be1
+Ne5 22. b3 Kf8 23. Rbc1 Ke7 24. Bh4+ Bf6 25. Bf2 g5 26. Rc2 Ng6 27. Ne2 h5 28.
+Be3 h4 29. Rcd2 Ne5 30. Nd4 Ng6 31. Nc2 Nf4 32. Rb1 Bc3 33. Rdd1 Be5 34. Bf2
+Ng6 35. Be3 Bf4 36. Bf2 Bg3 37. Be3 Bf4 38. Bf2 Bg3 39. Be3 Bf4 1/2-1/2
+
+
+
