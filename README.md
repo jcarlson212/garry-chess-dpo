@@ -1,13 +1,3 @@
-Nice — yeah, you can absolutely do better than *Kasparov-Net*. That name undersells what you’re actually contributing.
-
-Below is a **stronger framing + a rewritten README** that:
-
-* Sounds like a *real ML paper*, not a fan project
-* Scales beyond Kasparov (important for reviewers)
-* Still allows you to *demo* “play like X” later
-* Fits naturally with the repo name **`grandmaster-dpo`**
-
----
 
 # **Grandmaster-DPO**
 
