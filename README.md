@@ -1,19 +1,7 @@
 
 # **Grandmaster-DPO**
 
-### *Preference Optimization for Human-Like Grandmaster Chess*
-
-**Paper title (recommended):**
-
-> **Preference Optimization for Human-Like Grandmaster Chess**
-
-**Alternative paper titles (pick your vibe):**
-
-* *Learning Human-Like Grandmaster Play via Direct Preference Optimization*
-* *Beyond Imitation: Preference-Optimized Policies for Realistic Grandmaster Chess*
-* *Human-Style Chess at Master Level via Preference Optimization and Shallow Search*
-
----
+### *Beyond Imitation: Preference-Optimized Policies for Realistic Grandmaster Chess*
 
 ## Overview
 
