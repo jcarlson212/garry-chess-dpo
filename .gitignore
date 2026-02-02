@@ -58,6 +58,7 @@ checkpoints/
 outputs/
 runs/
 artifacts/
+*.pgn
 
 # =========================
 # OS / editor

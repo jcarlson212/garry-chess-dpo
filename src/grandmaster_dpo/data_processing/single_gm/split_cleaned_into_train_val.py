@@ -94,7 +94,7 @@ def main():
     # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/split_cleaned_into_train_val.py --gm_name magnus
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
-    ap.add_argument("--val_frac", type=float, default=0.1, help="Validation fraction (default 0.1).")
+    ap.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction (default 0.2).")
     ap.add_argument("--seed", type=int, default=7, help="Deterministic split seed.")
     ap.add_argument("--no_dedupe", action="store_true", help="Disable deduplication.")
     args = ap.parse_args()

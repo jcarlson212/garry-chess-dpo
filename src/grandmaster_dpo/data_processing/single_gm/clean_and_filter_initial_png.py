@@ -3,15 +3,26 @@ Preprocess PGN -> (filtered blitz games) -> batches -> Torch-ready tensors.
 
 Assumptions:
 - Input is a single PGN file (e.g., 1.7MB, ~2.3k games).
-- "Blitz" is determined primarily by [TimeControl], falling back to event/site strings.
 - Tokenization is a simple UCI-move vocabulary built from your corpus (good enough to get
   a DataLoader working now; you can swap in Maia's native tokenization later).
 
-Install deps (you already have these):
-  pip install chess torch
 
-Usage:
-    python ./src/grandmaster_dpo/data_processing/single_gm/clean_and_filter_initial_png.py  --pgn ./data/raw/pgndownload_magnus.pgn --gm_name magnus
+Event types are expected to be roughly of the following:
+swiss (rapid)
+match (rapid)
+k.o. (rapid)
+k.o. (blitz)
+tourn (rapid)
+swiss (blitz)
+swiss
+tourn (blitz)
+tourn
+
+To generate the dataset, we assume-after lowercasing- anything with blitz in it is blitz, anything with rapid in it is rapid, and otherwise it's classical.
+We target 60% blitz games, 30% rapid games, and 10% classical games to give a balance between immediate
+stylistic preferences (blitz), interesting middlegame positions (rapid), and purely tactical positions (classical). This is expected 
+to help generalize the model to scale for different time controls and levels of play.
+
 Or import and use PGNBlitzDataset for a DataLoader.
 """
 
@@ -28,7 +39,77 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 import chess
 import chess.pgn
 import torch
+import numpy as np
 from torch.utils.data import Dataset, DataLoader
+
+
+import chess
+
+import chess
+
+def is_variant_game(g: chess.pgn.Game) -> bool:
+    # Many PGNs explicitly mark it:
+    variant = (g.headers.get("Variant") or "").lower()
+    if variant != "":
+        print(f"Skipping variant: {variant}")
+        return True
+    # Some lichess PGNs use:
+    if g.headers.get("FEN") and "960" in (g.headers.get("SetUp") or ""):
+        return True
+    return False
+
+def canonical_uci(board: chess.Board, move_str: str) -> str:
+    """
+    Canonicalize ANY move (UCI or SAN) into a legal, board-consistent UCI.
+
+    - Works for standard chess AND Chess960
+    - Validates legality
+    - Handles castling, promotions, en passant automatically
+    - Raises if the move cannot be interpreted
+    """
+    move_str = move_str.strip()
+
+    # Try UCI first
+    try:
+        mv = chess.Move.from_uci(move_str)
+        if mv in board.legal_moves:
+            return mv.uci()
+    except Exception:
+        pass
+
+    # Try SAN (PGNs often store SAN internally)
+    try:
+        mv = board.parse_san(move_str)
+        if mv in board.legal_moves:
+            return mv.uci()
+    except Exception:
+        pass
+
+    raise ValueError(f"Illegal or unparseable move {move_str!r} for FEN {board.fen()}")
+
+from typing import Optional, List
+
+def game_to_canonical_uci_moves(
+    game: chess.pgn.Game,
+    *,
+    drop_illegal: bool = True,
+) -> Optional[List[str]]:
+    board = game.board()
+    out: List[str] = []
+
+    for node in game.mainline():
+        move = node.move
+        try:
+            uci = canonical_uci(board, move.uci())
+            out.append(uci)
+        except Exception:
+            if drop_illegal:
+                return None   # drop entire game
+            else:
+                pass
+        board.push(move)
+
+    return out
 
 
 # ----------------------------
@@ -72,30 +153,20 @@ def _parse_timecontrol_seconds(tc: str) -> Optional[int]:
     return None
 
 
-def is_blitz_game(
-    headers: Dict[str, str],
-    *,
-    blitz_max_seconds: int = 8 * 60,  # generous: up to ~8 minutes estimated total
-) -> bool:
-    """
-    Decide whether a game is blitz.
-    - First: use TimeControl seconds estimate if present.
-    - Fallback: keyword search in Event/Site.
-    """
-    tc = headers.get("TimeControl", "")
-    secs = _parse_timecontrol_seconds(tc)
-    if secs is not None:
-        return secs <= blitz_max_seconds
+def classify_time_control(headers: Dict[str, str]) -> str:
+    et = headers.get("EventType", "").lower()
 
-    # fallback heuristic if TimeControl missing
-    hay = " ".join(
-        [
-            headers.get("Event", ""),
-            headers.get("Site", ""),
-            headers.get("Round", ""),
-        ]
-    ).lower()
-    return any(k in hay for k in ["blitz", "bullet", "3+0", "5+0", "rapid blitz"])
+    if "bullet" in et:
+        return "bullet"
+
+    if "rapid" in et:
+        return "rapid"
+
+    if "blitz" in et:
+        return "blitz"
+
+    # everything else is slow / classical
+    return "classical"
 
 
 # ----------------------------
@@ -125,23 +196,43 @@ def write_pgn(games: Iterator[chess.pgn.Game], out_path: str) -> int:
     return n
 
 
-def filter_blitz_games(
+def filter_for_game_type(
     pgn_path: str,
     *,
-    blitz_max_seconds: int = 8 * 60,
     require_min_plies: int = 20,  # e.g. >=10 full moves
+    game_type: str = "blitz",
 ) -> Iterator[chess.pgn.Game]:
     """
     Yield blitz games from PGN.
     Also drops very short games (often junk / forfeits / malformed).
     """
     for g in iter_pgn_games(pgn_path):
-        if not is_blitz_game(g.headers, blitz_max_seconds=blitz_max_seconds):
+        if is_variant_game(g):
+            continue # this is a variant of chess where the back rank is not the same as the front rank
+        if classify_time_control(g.headers) != game_type:
             continue
         plies = sum(1 for _ in g.mainline_moves())
         if plies < require_min_plies:
             continue
-        yield g
+
+        uci_moves = game_to_canonical_uci_moves(g)
+        if uci_moves is None:
+            print(f"Dropping game {g.headers['Event']} {g.headers['Site']} {g.headers['Date']} {g.headers['Round']} because it has illegal moves")
+            continue  # drop malformed / illegal games
+
+        # rebuild game with canonical moves
+        new_game = chess.pgn.Game()
+        new_game.headers = g.headers.copy()
+
+        board = new_game.board()
+        node = new_game
+        for u in uci_moves:
+            mv = chess.Move.from_uci(u)
+            node = node.add_variation(mv)
+            board.push(mv)
+
+        yield new_game
+
 
 
 # ----------------------------
@@ -170,8 +261,10 @@ class MoveVocab:
 
         ctr = Counter()
         for g in games:
-            for mv in g.mainline_moves():
-                u = mv.uci()
+            uci_moves = game_to_canonical_uci_moves(g)
+            if not uci_moves:
+                continue
+            for u in uci_moves:
                 ctr[u] += 1
 
         moves = [m for m, c in ctr.items() if c >= min_freq]
@@ -210,61 +303,6 @@ class MoveVocab:
         if add_bos_eos:
             ids.append(self.eos_id)
         return ids
-
-
-def game_to_uci_moves(game: chess.pgn.Game) -> List[str]:
-    return [mv.uci() for mv in game.mainline_moves()]
-
-
-# ----------------------------
-# Dataset + collate -> tensors
-# Autoregressive next-move: x = tokens[:-1], y = tokens[1:]
-# ----------------------------
-
-class PGNBlitzDataset(Dataset):
-    """
-    Loads filtered blitz games into token sequences.
-    For now this keeps sequences in memory (1.7MB PGN is tiny).
-    """
-
-    def __init__(
-        self,
-        pgn_path: str,
-        vocab: MoveVocab,
-        *,
-        blitz_max_seconds: int = 8 * 60,
-        require_min_plies: int = 20,
-        max_seq_len: int = 256,  # truncate long games
-    ):
-        self.vocab = vocab
-        self.max_seq_len = max_seq_len
-
-        games = list(
-            filter_blitz_games(
-                pgn_path,
-                blitz_max_seconds=blitz_max_seconds,
-                require_min_plies=require_min_plies,
-            )
-        )
-
-        self.games_headers: List[Dict[str, str]] = [dict(g.headers) for g in games]
-        self.seqs: List[List[int]] = []
-        for g in games:
-            uci = game_to_uci_moves(g)
-            ids = vocab.encode_moves(uci, add_bos_eos=True)
-            if len(ids) > max_seq_len:
-                ids = ids[: max_seq_len - 1] + [vocab.eos_id]
-            self.seqs.append(ids)
-
-    def __len__(self) -> int:
-        return len(self.seqs)
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        ids = self.seqs[idx]
-        # autoregressive next-token prediction
-        x = torch.tensor(ids[:-1], dtype=torch.long)
-        y = torch.tensor(ids[1:], dtype=torch.long)
-        return {"input_ids": x, "labels": y}
 
 
 def collate_autoreg(batch: List[Dict[str, torch.Tensor]], pad_id: int) -> Dict[str, torch.Tensor]:
@@ -312,7 +350,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pgn", required=True, help="Path to input PGN.")
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
-    ap.add_argument("--blitz_max_seconds", type=int, default=8 * 60)
+    ap.add_argument("--max_games", type=int, default=500, help="Maximum number of games to filter.")
     ap.add_argument("--min_plies", type=int, default=20)
     ap.add_argument("--max_seq_len", type=int, default=256)
     ap.add_argument("--batch_size", type=int, default=32)
@@ -323,52 +361,40 @@ def main():
 
     # 1) Filter blitz games (stream)
     blitz_games = list(
-        filter_blitz_games(
+        filter_for_game_type(
             args.pgn,
-            blitz_max_seconds=args.blitz_max_seconds,
-            require_min_plies=args.min_plies,
+            game_type="blitz",
         )
     )
+
+    rapid_games = list(
+        filter_for_game_type(
+            args.pgn,
+            game_type="rapid",
+        )
+    )
+
+    classical_games = list(
+        filter_for_game_type(
+            args.pgn,
+            game_type="classical",
+        )
+    )
+    games = []
+    games.extend(blitz_games[:int(args.max_games * 0.6)])
+    games.extend(rapid_games[:int(args.max_games * 0.3)])
+    games.extend(classical_games[:int(args.max_games * 0.1)])
+    np.random.shuffle(games)
     print(f"Filtered blitz games: {len(blitz_games)}")
+    print(f"Filtered rapid games: {len(rapid_games)}")
+    print(f"Filtered classical games: {len(classical_games)}")
+    print(f"Total games: {len(blitz_games) + len(rapid_games) + len(classical_games)}")
+    print(f"Total games after filtering to target 60% blitz, 30% rapid, 10% classical (should be {args.max_games}): {len(games)}")
 
     # 2) Optionally write them out as a new PGN
     if out_path:
-        n = write_pgn(iter(blitz_games), out_path)
+        n = write_pgn(iter(games), out_path)
         print(f"Wrote {n} games -> {out_path}")
-
-    # 3) Build move vocab from filtered games
-    vocab = MoveVocab.build_from_games(iter(blitz_games))
-    print(f"Vocab size (incl specials): {len(vocab.itos)}")
-
-    # 4) Torch Dataset + DataLoader smoke test
-    #    (Re-use the original PGN path for simplicity; dataset will re-filter)
-    ds = PGNBlitzDataset(
-        args.pgn,
-        vocab,
-        blitz_max_seconds=args.blitz_max_seconds,
-        require_min_plies=args.min_plies,
-        max_seq_len=args.max_seq_len,
-    )
-    dl = DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=0,
-        collate_fn=lambda b: collate_autoreg(b, pad_id=vocab.pad_id),
-    )
-
-    batch = next(iter(dl))
-    print("Batch shapes:")
-    for k, v in batch.items():
-        print(f"  {k}: {tuple(v.shape)}")
-
-    # Example: how you’d compute loss later
-    # logits = model(batch["input_ids"], attention_mask=batch["attention_mask"])  # (B,T,V)
-    # loss = torch.nn.functional.cross_entropy(
-    #     logits.view(-1, logits.size(-1)),
-    #     batch["labels"].view(-1),
-    #     ignore_index=-100,
-    # )
 
 
 if __name__ == "__main__":
