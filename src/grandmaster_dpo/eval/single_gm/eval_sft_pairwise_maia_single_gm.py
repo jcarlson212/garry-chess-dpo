@@ -352,7 +352,7 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 # ----------------------------
 
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_dpo_maia_single_gm.py --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_sft_pairwise_maia_single_gm.py --gm_name magnus
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--split_name", required=False, default="val", help="train or val")
@@ -364,7 +364,7 @@ def main() -> None:
     
     args = ap.parse_args()
     jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"./processed/single_gm/train_val/{args.gm_name}/policy_best.pt")
+    policy_pt = Path(f"./processed/single_gm/train_val/{args.gm_name}/policy_pairwise_sft_best.pt")
     out_dir = Path(f"./processed/single_gm/train_val/validation_results/{args.gm_name}/")
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_str(args.device)
@@ -627,10 +627,10 @@ def main() -> None:
     }
 
 
-    out_dir.joinpath(f"eval_results_dpo_{args.split_name}.json").write_text(json.dumps(agg))
-    print(f"Eval results saved to {out_dir.joinpath(f'eval_results_dpo_{args.split_name}.json')}")
-    print(f"Eval results saved to {out_dir.joinpath(f'eval_results_dpo_{args.split_name}.json')}")
-    # Now we write csv to out_dir.joinpath(f"eval_results_dpo_{args.split_name}.csv")
+    out_dir.joinpath(f"eval_results_sft_pairwise_{args.split_name}.json").write_text(json.dumps(agg))
+    print(f"Eval results saved to {out_dir.joinpath(f'eval_results_sft_pairwise_{args.split_name}.json')}")
+    print(f"Eval results saved to {out_dir.joinpath(f'eval_results_sft_pairwise_{args.split_name}.json')}")
+    # Now we write csv to out_dir.joinpath(f"eval_results_{args.split_name}.csv")
 
     # 2) Extended JSON: phase tails + CIs + opening dist
     
@@ -646,21 +646,21 @@ def main() -> None:
             "precision_recall_f1_equals_accuracy_for_top1_hit": True,
         },
     }
-    out_ext = out_dir.joinpath(f"eval_results_extended_dpo_{args.split_name}.json")
+    out_ext = out_dir.joinpath(f"eval_results_sft_pairwise_extended_{args.split_name}.json")
     out_ext.write_text(json.dumps(ext, indent=2))
     print(f"Extended eval saved to {out_ext}")
 
 
     import csv
-    with open(out_dir.joinpath(f"eval_results_dpo_{args.split_name}.csv"), "w") as f:
+    with open(out_dir.joinpath(f"eval_results_sft_pairwise_{args.split_name}.csv"), "w") as f:
         writer = csv.writer(f)
         writer.writerow(["dpo_loss", "mean_logp_gap_policy_chosen_rejected", "mean_logp_gap_base_chosen_rejected", "mean_gap_improvement", "top1_accuracy_on_chosen_policy", "top1_accuracy_on_chosen_base", "mean_p_chosen_policy", "mean_p_chosen_base", "mean_kl"])
         writer.writerow([avg(sum_dpo), avg(sum_pi_gap), avg(sum_ref_gap), avg(sum_gap_improvement), avg(sum_top1_pi), avg(sum_top1_ref), avg(sum_p_chosen_pi), avg(sum_p_chosen_ref), avg(sum_kl)])
-    print(f"CSV saved to {out_dir.joinpath(f'eval_results_dpo_{args.split_name}.csv')}")
+    print(f"CSV saved to {out_dir.joinpath(f'eval_results_sft_pairwise_{args.split_name}.csv')}")
 
     # 4) Per-row metrics CSV
     if per_rows:
-        per_csv = out_dir.joinpath(f"eval_per_row_metrics_dpo_{args.split_name}.csv")
+        per_csv = out_dir.joinpath(f"eval_per_row_metrics_sft_pairwise_{args.split_name}.csv")
         fieldnames = list(per_rows[0].keys())
         with open(per_csv, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
