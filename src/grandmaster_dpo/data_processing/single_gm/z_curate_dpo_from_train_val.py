@@ -92,6 +92,32 @@ def pick_maia_rejected_move(
             return uci, float(prob)
     return None
 
+import hashlib
+
+def stable_game_id(headers: dict, gm_name: str) -> str:
+    key = "|".join([
+        gm_name,
+        headers.get("Event",""),
+        headers.get("Site",""),
+        headers.get("Date",""),
+        headers.get("Round",""),
+        headers.get("White",""),
+        headers.get("Black",""),
+        headers.get("Result",""),
+        headers.get("Round","")
+    ])
+    h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    return f"{gm_name}:{h}"
+
+def opening_prefix_uci_from_game(g: chess.pgn.Game, max_plies: int = 20) -> list[str]:
+    out = []
+    b = g.board()
+    for i, mv in enumerate(g.mainline_moves()):
+        if i >= max_plies:
+            break
+        out.append(mv.uci())
+        b.push(mv)
+    return out
 
 def make_pairs_for_game(
     g: chess.pgn.Game,
@@ -127,6 +153,8 @@ def make_pairs_for_game(
     board = g.board()
     pairs_made = 0
 
+    opening_prefix_uci = opening_prefix_uci_from_game(g, max_plies=20)
+
     # Iterate moves with board state before each move
     for ply_idx, mv in enumerate(g.mainline_moves()):
         gm_to_move = (gm_w and board.turn == chess.WHITE) or (gm_b and board.turn == chess.BLACK)
@@ -144,6 +172,13 @@ def make_pairs_for_game(
             if chosen_uci in legal_uci:
                 rejected = pick_maia_rejected_move(move_probs, chosen_uci=chosen_uci, legal_moves_uci=legal_uci)
                 if rejected is not None:
+                    side_to_move = "w" if board.turn == chess.WHITE else "b"
+                    fullmove_number = board.fullmove_number  # python-chess property
+                    chosen_san = board.san(mv)  # BEFORE push
+                    is_capture = board.is_capture(mv)
+                    gives_check = board.gives_check(mv)
+                    is_promo = mv.promotion is not None
+
                     rejected_uci, rejected_prob = rejected
                     chosen_prob = float(move_probs.get(chosen_uci, 0.0))
                     print(f"chosen_prob: {chosen_prob}, rejected_prob: {rejected_prob}, win_prob: {win_prob}")
@@ -179,6 +214,17 @@ def make_pairs_for_game(
                                 "win_prob": float(win_prob) if win_prob is not None else None,
                                 "top1": max(move_probs, key=move_probs.get) if move_probs else None,
                             },
+                            "game_header_hash": stable_game_id(headers, gm_name),
+                                    # opening reconstruction helper
+                            "opening_prefix_uci_20": opening_prefix_uci,
+
+                            # SAN + tactical flags (for sacrifice/volatility proxies later)
+                            "chosen_san": chosen_san,
+                            "is_capture": bool(is_capture),
+                            "gives_check": bool(gives_check),
+                            "is_promotion": bool(is_promo),
+                            "side_to_move": side_to_move,
+                            "fullmove_number": fullmove_number,
                         },
                     }
 
@@ -233,7 +279,7 @@ def process_split(
 
 
 def main():
-    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/z_curate_dpo_from_train_val.py --gm_name magnua --split_dir ./processed/single_gm/train_val/
+    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/z_curate_dpo_from_train_val.py --gm_name magnus --split_dir ./processed/single_gm/train_val/
     # Note: GM name has to be in the PGN file's player names (White or Black)... capitalization doesn't matter
     # If the name is common it will match both, so you need to be careful to use the correct one.
     ap = argparse.ArgumentParser()
