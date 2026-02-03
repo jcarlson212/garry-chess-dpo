@@ -224,6 +224,8 @@ def choose_move_depth_limited_fast(
 def legal_uci_set(b: chess.Board) -> set[str]:
     return {m.uci() for m in b.legal_moves}
 
+import math
+import chess
 
 def choose_move_depth_limited_ab(
     policy,
@@ -231,149 +233,178 @@ def choose_move_depth_limited_ab(
     board: chess.Board,
     elo_self: int,
     elo_oppo: int,
-    *,
     depth: int = 4,
     beam_root: int = 12,
-    beam_sched=(12, 8, 6, 4),   # per ply beams (depth=4 uses 4 plies)
+    beam_sched: tuple[int, ...] = (12, 8, 6, 4),
     inference=None,
-    tt_max: int = 200_000,
-):
-    assert inference is not None
-    es, eo = int(elo_self), int(elo_oppo)
+    style_lambda: float = 0.05,
+) -> tuple[str, str]:
+    """
+    Returns (best_uci, candidates_text) using depth-limited minimax with alpha-beta pruning.
 
-    # Cache inference per fen: returns (top_items, win_prob)
-    @lru_cache(maxsize=tt_max)
-    def infer_cached(fen: str, beam: int):
-        move_probs, wp = inference.inference_each(policy, prepared, fen, es, eo)
-        items = heapq.nlargest(beam, move_probs.items(), key=lambda kv: kv[1])
-        wpv = 0.5 if wp is None else float(wp)
-        return items, wpv
+    - Uses Maia's move_probs to ORDER moves (best-first) and to TRUNCATE branching (beam).
+    - Uses Maia's win_prob as evaluation at leaves.
+    - win_prob is assumed to be "white POV" in [0,1].
 
-    # Cache backed-up value: (fen, d, alpha_bucket, beta_bucket, beam) is too big, so cache just (fen,d,turn,beam)
-    @lru_cache(maxsize=tt_max)
-    def minimax(fen: str, d: int, ply: int) -> float:
-        b = chess.Board(fen)
+    beam_root controls number of root candidates shown/considered.
+    beam_sched controls branching factor by ply under the root, e.g. (12,8,6,4).
+      If depth exceeds len(beam_sched), the last value is reused.
+    """
 
+    if inference is None:
+        raise ValueError("inference must be provided and expose inference_each(...)")
+
+    # --- small caches to avoid repeated model calls within one search ---
+    _infer_cache: dict[str, tuple[dict[str, float], float | None]] = {}
+    _eval_cache: dict[str, float] = {}
+
+    def style_bonus(p: float, lam: float, eps: float = 1e-12) -> float:
+        return lam * math.log(max(p, eps))
+
+    def _cache_key(b: chess.Board) -> str:
+        # include side-to-move etc via full FEN; elos are fixed per call
+        return b.fen()
+
+    def infer_once(b: chess.Board) -> tuple[dict[str, float], float | None]:
+        k = _cache_key(b)
+        if k in _infer_cache:
+            return _infer_cache[k]
+        move_probs, wp = inference.inference_each(policy, prepared, k, int(elo_self), int(elo_oppo))
+        if move_probs is None:
+            move_probs = {}
+        _infer_cache[k] = (move_probs, wp)
+        return _infer_cache[k]
+
+    def leaf_eval(b: chess.Board) -> float:
+        k = _cache_key(b)
+        if k in _eval_cache:
+            return _eval_cache[k]
+
+        # Terminal handling
         if b.is_game_over():
             res = b.result()
-            if res == "1-0": return 1.0
-            if res == "0-1": return 0.0
-            return 0.5
-        if d == 0:
-            # leaf eval = model value
-            _items, wp = infer_cached(fen, 1)  # beam irrelevant for leaf
-            return wp
+            v = 1.0 if res == "1-0" else 0.0 if res == "0-1" else 0.5
+            _eval_cache[k] = v
+            return v
 
-        beam = beam_sched[min(ply, len(beam_sched) - 1)]
-        items, wp_here = infer_cached(fen, beam)
+        _move_probs, wp = infer_once(b)
+        v = 0.5 if wp is None else float(wp)
+        _eval_cache[k] = v
+        return v
 
-        # We'll do alpha-beta *outside* caching to keep cache keys small.
-        # This function is used by ab() below.
-        # Return a tuple would help, but keep float.
-        # wp_here is a good fallback if no moves can be pushed.
-        if b.turn == chess.WHITE:
-            best = -1.0
-            for uci, _p in items:
+    def beam_for_ply(ply_from_root: int) -> int:
+        # ply_from_root = 0 at root children, 1 for grandchildren, ...
+        if not beam_sched:
+            return beam_root
+        idx = min(ply_from_root, len(beam_sched) - 1)
+        return int(beam_sched[idx])
+
+    def ordered_moves(b: chess.Board, k: int) -> list[tuple[chess.Move, float]]:
+        move_probs, _wp = infer_once(b)
+        if not move_probs:
+            return []
+
+        # Order by policy probability desc, then validate legality.
+        # Keep top-k *after* sorting; legality filtering happens as we iterate.
+        items = sorted(move_probs.items(), key=lambda kv: kv[1], reverse=True)
+
+        out: list[tuple[chess.Move, float]] = []
+        for uci, p in items:
+            try:
                 mv = chess.Move.from_uci(uci)
-                try:
-                    b.push(mv)
-                except Exception:
-                    continue
-                v = ab(b, d - 1, ply + 1, -1.0, 2.0)
-                b.pop()
-                if v > best:
-                    best = v
-                    if best >= 1.0:
-                        break
-            return best if best >= 0 else wp_here
-        else:
-            best = 2.0
-            for uci, _p in items:
-                mv = chess.Move.from_uci(uci)
-                try:
-                    b.push(mv)
-                except Exception:
-                    continue
-                v = ab(b, d - 1, ply + 1, -1.0, 2.0)
-                b.pop()
-                if v < best:
-                    best = v
-                    if best <= 0.0:
-                        break
-            return best if best <= 1 else wp_here
+            except Exception:
+                continue
+            if mv in b.legal_moves:
+                out.append((mv, float(p)))
+                if len(out) >= k:
+                    break
+        return out
 
-    def ab(b: chess.Board, d: int, ply: int, alpha: float, beta: float) -> float:
-        fen = b.fen()
+    def alphabeta(b: chess.Board, d: int, alpha: float, beta: float, ply_from_root: int) -> float:
         if d == 0 or b.is_game_over():
-            return minimax(fen, 0, ply)
+            return leaf_eval(b)
 
-        beam = beam_sched[min(ply, len(beam_sched) - 1)]
-        items, wp_here = infer_cached(fen, beam)
+        k = beam_for_ply(ply_from_root)
+        moves = ordered_moves(b, k)
+
+        # If the policy produced no legal moves (or empty dict), fall back to leaf eval.
+        if not moves:
+            return leaf_eval(b)
 
         if b.turn == chess.WHITE:
-            v = -1.0
-            for uci, _p in items:
-                mv = chess.Move.from_uci(uci)
-                try:
-                    b.push(mv)
-                except Exception:
-                    continue
-                v = max(v, ab(b, d - 1, ply + 1, alpha, beta))
+            v = -math.inf
+            for mv, _p in moves:
+                b.push(mv)
+                child = alphabeta(b, d - 1, alpha, beta, ply_from_root + 1)
                 b.pop()
-                alpha = max(alpha, v)
-                if beta <= alpha:
-                    break
-            return v if v >= 0 else wp_here
+                child = child + style_bonus(p, style_lambda)
+
+                if child > v:
+                    v = child
+                if v > alpha:
+                    alpha = v
+                if alpha >= beta:
+                    break  # beta cut
+            return v if v != -math.inf else leaf_eval(b)
         else:
-            v = 2.0
-            for uci, _p in items:
-                mv = chess.Move.from_uci(uci)
-                try:
-                    b.push(mv)
-                except Exception:
-                    continue
-                v = min(v, ab(b, d - 1, ply + 1, alpha, beta))
+            v = math.inf
+            for mv, _p in moves:
+                b.push(mv)
+                child = alphabeta(b, d - 1, alpha, beta, ply_from_root + 1)
                 b.pop()
-                beta = min(beta, v)
-                if beta <= alpha:
-                    break
-            return v if v <= 1 else wp_here
+                child = child + style_bonus(p, style_lambda)
 
-    # root
-    root_fen = board.fen()
-    
-    root_items, root_wp = infer_cached(root_fen, beam_root)
+                if child < v:
+                    v = child
+                if v < beta:
+                    beta = v
+                if alpha >= beta:
+                    break  # alpha cut
+            return v if v != math.inf else leaf_eval(b)
 
-    scored = []
-    for uci, p in root_items:
-        mv = chess.Move.from_uci(uci)
+    # --- root scoring ---
+    root_probs, root_wp = infer_once(board)
+    # root candidates ordered by policy prob, truncated to beam_root
+    root_items = []
+    for uci, p in sorted(root_probs.items(), key=lambda kv: kv[1], reverse=True):
         try:
-            board.push(mv)
+            mv = chess.Move.from_uci(uci)
         except Exception:
             continue
-        v = ab(board, depth - 1, 1, -1.0, 2.0)
+        if mv in board.legal_moves:
+            root_items.append((uci, mv, float(p)))
+            if len(root_items) >= int(beam_root):
+                break
+
+    scored: list[tuple[str, float, float]] = []
+    for uci, mv, p in root_items:
+        board.push(mv)
+        v = alphabeta(board, depth - 1, alpha=-math.inf, beta=math.inf, ply_from_root=0)
         board.pop()
-        scored.append((uci, float(p), float(v)))
+        scored.append((uci, p, float(v)))
 
     if not scored:
-        # fallback: best by policy
-        best_uci = max(root_items, key=lambda kv: kv[1])[0]
-        return best_uci, "fallback: no scored moves"
+        # fallback: argmax prob among whatever we got (even if illegal filter removed all)
+        if root_probs:
+            best = max(root_probs.items(), key=lambda kv: kv[1])[0]
+            return best, "fallback: no scored legal moves"
+        # absolute last resort
+        return "0000", "fallback: no policy moves available"
 
+    # pick best by minimax value (white POV)
     if board.turn == chess.WHITE:
         best_uci, _, _ = max(scored, key=lambda t: t[2])
-        scored_sorted = sorted(scored, key=lambda t: t[2], reverse=True)
     else:
         best_uci, _, _ = min(scored, key=lambda t: t[2])
-        scored_sorted = sorted(scored, key=lambda t: t[2])
 
-    lines = [
-        f"depth={depth} beam_root={beam_root} beam_sched={beam_sched} (alpha-beta + cached)",
-        f"root win_prob (white POV): {root_wp:.4f}",
-        "",
-        "uci     p(policy)   v(lookahead)",
-    ]
-    for uci, p, v in scored_sorted[:8]:
+    # side panel
+    lines = []
+    lines.append(f"depth={depth} beam_root={beam_root} beam_sched={beam_sched}")
+    lines.append(f"root win_prob (white POV): {float(root_wp):.4f}" if root_wp is not None else "root win_prob: None")
+    lines.append("")
+    lines.append("uci     p(policy)   v(ab)")
+    # show top 8 sorted by side-to-move preference
+    for uci, p, v in sorted(scored, key=lambda t: t[2], reverse=(board.turn == chess.WHITE))[:8]:
         lines.append(f"{uci:6s}  {p:8.4f}    {v:8.4f}")
 
     return best_uci, "\n".join(lines)
