@@ -27,6 +27,7 @@ dependencies = [
   "tqdm==4.65.0",
   "maia2",
   "tkinter",
+  "orjson",
 
   # --- Practical additions for a research repo ---
   "tensorboard>=2.0.0",
