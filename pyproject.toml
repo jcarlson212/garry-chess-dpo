@@ -24,10 +24,13 @@ dependencies = [
   "requests==2.32.3",
   "torch==2.4.0; platform_system != 'Darwin' or platform_machine == 'arm64'",
   "torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+
+  # utilities
   "tqdm==4.65.0",
   "maia2",
   "tkinter",
   "orjson",
+  "anyscale",
 
   # --- Practical additions for a research repo ---
   "tensorboard>=2.0.0",

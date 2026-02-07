@@ -19,7 +19,7 @@ import torch
 from maia2 import inference, model as maia_model
 from maia2.utils import mirror_move
 from grandmaster_dpo.tree_search.maia_beam_search_utilities import choose_move_depth_limited
-from tqdm import tqdm
+
 
 # ----------------------------
 # Helpers
