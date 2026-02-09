@@ -540,6 +540,10 @@ def batch_games(games: Sequence[chess.pgn.Game], batch_size: int) -> Iterator[Li
 
 def main() -> None:
     # Example usage: python ./src/grandmaster_dpo/data_processing/large_scale_sft/filter_to_unique_quality_plays.py
+
+    # or this: python ./src/grandmaster_dpo/data_processing/large_scale_sft/filter_to_unique_quality_plays.py \
+    # --pgn_dir=./data/raw/twic/large_scale_finetuning_4k_plus \
+    #--out=./data/processed/large_scale_fine_tuning_4k_plus
     ap = argparse.ArgumentParser(
         description="Read a directory of PGNs, extract unique (position,move) plays, write JSONL for Maia2 finetuning."
     )

@@ -1,0 +1,41 @@
+{
+  "gm": "firouzja",
+  "sf_elo": null,
+  "topk": 10,
+  "base_opening_selected": {
+    "white_ply0": [
+      {
+        "uci": "g1f3",
+        "count": 6
+      }
+    ],
+    "black_ply1": [
+      {
+        "uci": "g8f6",
+        "count": 6
+      },
+      {
+        "uci": "g7g6",
+        "count": 1
+      }
+    ]
+  },
+  "dpo_opening_selected": {
+    "white_ply0": [
+      {
+        "uci": "e2e4",
+        "count": 6
+      }
+    ],
+    "black_ply1": [
+      {
+        "uci": "d7d5",
+        "count": 5
+      },
+      {
+        "uci": "e7e5",
+        "count": 2
+      }
+    ]
+  }
+}

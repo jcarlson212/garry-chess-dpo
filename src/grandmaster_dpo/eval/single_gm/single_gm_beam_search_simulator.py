@@ -27,11 +27,14 @@ from typing import Dict, Optional, Tuple
 
 import chess
 import torch
-import tkinter as tk
-from tkinter import messagebox
+try:
+    import tkinter as tk
+except Exception:  # ImportError or runtime errors
+    tk = Nonefrom tkinter import messagebox
 
 from maia2 import inference, model as maia_model
 from grandmaster_dpo.tree_search.maia_beam_search_utilities import choose_move_depth_limited
+from grandmaster_dpo.eval.stockfish_helpers import batch_choose_moves_sf_topk_biased_by_policy, make_stockfish
 
 #def choose_move_depth_limited(policy, prepared, board: chess.Board, elo_self: int, elo_oppo: int,
 #                             depth: int = 4, beam: int = 12) -> tuple[str, str]:
@@ -209,6 +212,12 @@ class KasparovNetGUI:
 
         btn_row = tk.Frame(self.right)
         btn_row.pack(fill="x", pady=(10, 0))
+
+        self.engine = make_stockfish(
+            "/usr/local/bin/stockfish",
+            threads=8,
+            timeout=30.0,
+        )
 
         self.btn_new = tk.Button(btn_row, text="New Game", command=self.reset_game)
         self.btn_new.pack(side="left")
@@ -539,8 +548,43 @@ class KasparovNetGUI:
 
     def _model_move_worker(self, start_fen: str) -> None:
         try:
+
+            def uci_to_vocab_index(all_moves_dict: Dict[str, int], fen: str, uci: str) -> int:
+                side = fen.split(" ")[1]
+                uci_eff = mirror_uci_like_board_mirror(uci) if side == "b" else uci
+                return int(all_moves_dict.get(uci_eff, -1))
             # Work on a snapshot only (never touch self.board in this thread)
             local_board = chess.Board(start_fen)
+
+            all_moves_dict = self.prepared[0]
+            print(all_moves_dict)
+
+            move_probs, _ = inference.inference_each(
+                self.policy,
+                self.prepared,
+                start_fen,
+                int(self.elo_self),
+                int(self.elo_oppo),
+            )
+            print("inferred")
+
+            move_probs_tensor = torch.zeros((1, len(all_moves_dict)))
+            import numpy as np
+            for uci, prob in move_probs.items():
+                move_probs_tensor[0][uci_to_vocab_index(all_moves_dict, start_fen, uci)] = np.log(prob+1e-12)
+            print(move_probs_tensor.shape)
+            _, uci_selected, _, _, _, _, _ = batch_choose_moves_sf_topk_biased_by_policy(
+                fens=[start_fen],
+                logits_pi_masked=move_probs_tensor,     # [B, V]
+                all_moves_dict=all_moves_dict,
+                engine=self.engine,
+                limit=chess.engine.Limit(depth=10),
+                sample=True,
+            )[0]
+            print("sf chosen")
+
+            """
+            deprecated way of searching:
 
             best, text = choose_move_depth_limited(
                 self.policy, self.prepared, local_board,
@@ -548,11 +592,12 @@ class KasparovNetGUI:
                 depth=5, beam=4,
                 inference=inference,
             )
+            """
 
             # Apply only if we’re still on the same position
             self.root.after(
                 0,
-                lambda u=best, t=text, fen=start_fen: self._apply_model_move(u, t, fen),
+                lambda u=uci_selected, t="picked w/ sf", fen=start_fen: self._apply_model_move(u, t, fen),
             )
         except Exception as e:
             self.root.after(0, lambda err=e: self._handle_model_error(err))
