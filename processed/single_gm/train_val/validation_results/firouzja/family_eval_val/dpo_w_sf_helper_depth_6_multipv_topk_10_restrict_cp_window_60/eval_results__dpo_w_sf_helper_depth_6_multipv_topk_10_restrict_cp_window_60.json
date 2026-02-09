@@ -1,10 +1,10 @@
 {
   "gm": "firouzja",
-  "tag": "dpo_w_sf_helper_depth_10_multipv_topk_10_restrict_cp_window_60",
+  "tag": "dpo_w_sf_helper_depth_6_multipv_topk_10_restrict_cp_window_60",
   "maia_type": "blitz",
   "device": "cpu",
   "n": 4481,
-  "dpo_w_sf_helper_depth_10_multipv_topk_10_restrict_cp_window_60_loss": 0.6730714573628188,
+  "dpo_w_sf_helper_depth_6_multipv_topk_10_restrict_cp_window_60_loss": 0.6730714573628188,
   "mean_logp_gap_pi": 0.4150353964618529,
   "mean_logp_gap_ref": -0.13340683314343219,
   "mean_gap_improve": 0.5484422422684455,
@@ -432,21 +432,21 @@
   "sf_helper": {
     "sf_total_rows": 4481,
     "sf_valid_rows": 4468,
-    "sf_help_top1_acc": 0.5331244404655326,
-    "sf_help_top5_hit_cand": 0.8619068934646374,
-    "sf_help_top10_hit_cand": 0.903088630259624,
-    "sf_help_mean_cp_gap": 9.313115487914056,
-    "sf_help_best_sf_rate": 0.5257385854968666,
-    "sf_help_mean_entropy": 0.8044823866010475,
-    "sf_help_mean_logp_selected_full": -0.9483925901861097,
-    "sf_help_chosen_in_cands": 4035.0,
-    "sf_help_p_chosen_in_cands_sum": 2110.8971652551263,
-    "sf_help_mean_p_chosen_cond": 0.47244788837402113,
-    "sf_help_mean_p_rejected_cond": 0.24315436232774798,
-    "sf_help_mean_logp_chosen_cond": -3.768968906243221,
-    "sf_help_mean_logp_rejected_cond": -11.775451931626943,
-    "sf_help_mean_gap_logp_cond": 8.00648302538366,
-    "sf_help_mean_kl_q_vs_base": 0.6675543572597078,
+    "sf_help_top1_acc": 0.5342435094001791,
+    "sf_help_top5_hit_cand": 0.8399731423455685,
+    "sf_help_top10_hit_cand": 0.8744404655326768,
+    "sf_help_mean_cp_gap": 10.060205908683974,
+    "sf_help_best_sf_rate": 0.5172336615935542,
+    "sf_help_mean_entropy": 0.7831560253778014,
+    "sf_help_mean_logp_selected_full": -0.9820128547292399,
+    "sf_help_chosen_in_cands": 3907.0,
+    "sf_help_p_chosen_in_cands_sum": 2096.165881814956,
+    "sf_help_mean_p_chosen_cond": 0.46915082404094804,
+    "sf_help_mean_p_rejected_cond": 0.24130878306987918,
+    "sf_help_mean_logp_chosen_cond": -4.49046350062937,
+    "sf_help_mean_logp_rejected_cond": -12.320743422044721,
+    "sf_help_mean_gap_logp_cond": 7.830279921415292,
+    "sf_help_mean_kl_q_vs_base": 0.7052008429012833,
     "full_hit1": 0.48366159355416294,
     "full_hit5": 0.8769024171888988,
     "full_hit10": 0.9644136078782453,
@@ -466,11 +466,11 @@
         "count": 23
       }
     ],
-    "sf_help_chosen_in_cands_rate": 0.903088630259624,
-    "sf_help_mean_p_chosen_given_in": 0.5231467571883832,
+    "sf_help_chosen_in_cands_rate": 0.8744404655326768,
+    "sf_help_mean_p_chosen_given_in": 0.5365154547773114,
     "sf_config": {
       "stockfish_path": "/usr/local/bin/stockfish",
-      "depth": 10,
+      "depth": 6,
       "multipv_topk": 10,
       "uci_elo": null,
       "restrict_cp_window": 60,
@@ -482,55 +482,55 @@
       "ply0_white": [
         {
           "uci": "e2e4",
-          "p": 0.9974598205506437
+          "p": 0.9974648773998065
         },
         {
           "uci": "d2d4",
-          "p": 0.002246410813883746
+          "p": 0.002246422084146852
         },
         {
           "uci": "c2c4",
-          "p": 0.00024057034767280914
+          "p": 0.0002360013586589614
         },
         {
           "uci": "e2e3",
-          "p": 4.422540757867737e-05
+          "p": 4.422562673769933e-05
         },
         {
           "uci": "d2d3",
-          "p": 4.746794019268675e-06
+          "p": 4.045169239705617e-06
         },
         {
           "uci": "b1c3",
-          "p": 2.81239185969898e-06
+          "p": 2.92407214931056e-06
         },
         {
           "uci": "g2g3",
-          "p": 6.116311305703462e-07
+          "p": 6.001848899304513e-07
         },
         {
           "uci": "c2c3",
-          "p": 5.384443313394429e-07
-        },
-        {
-          "uci": "g1f3",
-          "p": 1.3489562373009335e-07
+          "p": 5.384469987347665e-07
         },
         {
           "uci": "f2f4",
-          "p": 1.0276010052345425e-07
+          "p": 2.0552053257645105e-07
+        },
+        {
+          "uci": "g1f3",
+          "p": 1.3489629495040633e-07
         },
         {
           "uci": "a2a3",
-          "p": 1.7629288584828966e-08
+          "p": 1.696585893200365e-08
         },
         {
           "uci": "b2b3",
-          "p": 8.154882863699786e-09
+          "p": 8.155362722079357e-09
         },
         {
           "uci": "h2h3",
-          "p": 1.7898445856367058e-10
+          "p": 1.1932303739424656e-10
         },
         {
           "uci": "a1c3",
@@ -684,59 +684,55 @@
       "ply1_black": [
         {
           "uci": "e7e5",
-          "p": 0.46813535594203903
+          "p": 0.46983659712281206
         },
         {
           "uci": "d7d5",
-          "p": 0.41892595842012803
+          "p": 0.42240378329349254
         },
         {
           "uci": "c7c5",
-          "p": 0.08383964597610385
+          "p": 0.07822750466273626
         },
         {
           "uci": "e7e6",
-          "p": 0.02061235199167425
+          "p": 0.020943704195421096
         },
         {
           "uci": "d7d6",
-          "p": 0.002708693571172207
+          "p": 0.002744725326979107
         },
         {
           "uci": "b8c6",
-          "p": 0.002133864395454293
+          "p": 0.002134271080416731
         },
         {
           "uci": "g7g6",
-          "p": 0.001652313674289779
+          "p": 0.001650371638302618
         },
         {
           "uci": "g8f6",
-          "p": 0.0010959529490410212
+          "p": 0.0011145824021555333
         },
         {
           "uci": "c7c6",
-          "p": 0.00048536232601892554
+          "p": 0.0005261907721896059
         },
         {
           "uci": "f7f5",
-          "p": 0.00034890388003154505
+          "p": 0.00033640927831282995
         },
         {
           "uci": "b7b6",
-          "p": 3.7484351807474105e-05
+          "p": 7.141179898238606e-05
         },
         {
           "uci": "h7h6",
-          "p": 1.1776138650839457e-05
-        },
-        {
-          "uci": "g8h6",
-          "p": 8.628616312960066e-06
+          "p": 7.340303690180791e-06
         },
         {
           "uci": "a7a6",
-          "p": 3.707767275680171e-06
+          "p": 3.108124509026093e-06
         },
         {
           "uci": "a8c6",
@@ -880,6 +876,10 @@
         },
         {
           "uci": "b8a6",
+          "p": 0.0
+        },
+        {
+          "uci": "b8d7",
           "p": 0.0
         }
       ]
