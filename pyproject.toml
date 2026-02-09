@@ -28,7 +28,7 @@ dependencies = [
   # utilities
   "tqdm==4.65.0",
   "maia2",
-  "tkinter",
+  # "tkinter", -- isn't compatible w/ all platforms and isn't required for most functionality
   "orjson",
   "anyscale",
 

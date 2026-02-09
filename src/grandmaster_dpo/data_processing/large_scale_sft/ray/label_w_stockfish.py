@@ -200,7 +200,8 @@ class LabelOpts:
     multipv: int = 10
     threads: int = 1
     hash_mb: int = 128
-    log_interval: int = 50_000
+    log_interval: int = 1_000  # Log every 1k lines for faster feedback
+    output_splits: int = 10  # Split each input partition into N output files
 
 
 @ray.remote
@@ -209,23 +210,22 @@ class StockfishLabeler:
     One actor == one persistent Stockfish engine.
     Process one or more partitions sequentially inside the actor.
     """
-
     def __init__(self, stockfish_path: str, opts: Dict[str, Any]):
-        self.stockfish_path = stockfish_path
-        self.opts = LabelOpts(**opts)
-
-        if self.opts.nodes is not None and self.opts.nodes > 0:
-            self.limit = chess.engine.Limit(nodes=int(self.opts.nodes))
-        else:
-            self.limit = chess.engine.Limit(depth=int(self.opts.depth or _DEFAULT_DEPTH))
-
-        self.eng = _make_stockfish(
-            stockfish_path,
-            threads=int(self.opts.threads),
-            hash_mb=int(self.opts.hash_mb),
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            force=True,  # <-- key: overrides Ray's default logging config in worker proc
         )
         self.pid = os.getpid()
-        logging.info("[actor pid=%s] Stockfish ready (threads=%s hash_mb=%s)", self.pid, self.opts.threads, self.opts.hash_mb)
+        logging.info("[actor pid=%s] starting, stockfish_path=%s exists=%s",
+                     self.pid, stockfish_path, os.path.exists(stockfish_path))
+
+        self.opts = LabelOpts(**opts)
+        self.limit = chess.engine.Limit(nodes=int(self.opts.nodes)) if self.opts.nodes else chess.engine.Limit(depth=int(self.opts.depth or _DEFAULT_DEPTH))
+
+        self.eng = _make_stockfish(stockfish_path, threads=int(self.opts.threads), hash_mb=int(self.opts.hash_mb))
+        logging.info("[actor pid=%s] Stockfish ready", self.pid)
 
     def close(self) -> None:
         try:
@@ -233,23 +233,49 @@ class StockfishLabeler:
         except Exception:
             pass
 
-    def process_partition(self, partition_id: int, input_uri: str, output_uri: str) -> Tuple[int, int]:
+    def process_partition(
+        self,
+        partition_id: int,
+        input_uri: str,
+        output_uri_base: str,
+        output_splits: int,
+    ) -> Tuple[int, int, int]:
         """
-        Returns (lines_written, errors)
+        Process one input partition and write to multiple output sub-partitions.
+        
+        Returns (lines_written, errors, files_written)
         """
         total = 0
         errors = 0
+        files_written = 0
         start = time.perf_counter()
-
-        # Stream read + stream write (works for local and s3://)
+        
+        # First, count total lines to determine split sizes
+        logging.info("[partition %s | actor pid=%s] Counting lines in input...", partition_id, self.pid)
+        line_count = 0
         with fsspec.open(input_uri, "rb") as fin:
-            # fsspec write buffering varies by backend; still keep a Python-side buffer
-            with fsspec.open(output_uri, "wb") as fout:
-                last_log = start
+            for _ in fin:
+                line_count += 1
+        
+        lines_per_split = max(1, line_count // output_splits)
+        logging.info(
+            "[partition %s | actor pid=%s] Input has %d lines, splitting into %d files (~%d lines each)",
+            partition_id, self.pid, line_count, output_splits, lines_per_split
+        )
+
+        # Process and write to sub-partitions
+        current_split = 0
+        lines_in_current_split = 0
+        current_output_uri = f"{output_uri_base}_split{current_split:03d}.jsonl"
+        fout = fsspec.open(current_output_uri, "wb").__enter__()
+        
+        try:
+            with fsspec.open(input_uri, "rb") as fin:
                 for raw in fin:
                     if not raw:
                         continue
-                    # Fast-path: avoid decode unless needed for json fallback
+                    
+                    # Parse JSON
                     try:
                         row = _json_loads(raw)
                     except Exception as e:
@@ -269,6 +295,7 @@ class StockfishLabeler:
                         errors += 1
                         continue
 
+                    # Analyze position
                     if board.is_game_over(claim_draw=True):
                         row["top_moves"] = []
                         active_win = row.get("active_win", 0)
@@ -297,35 +324,70 @@ class StockfishLabeler:
                             row["value_cp"] = 0
                             row["value_wdl"] = 0.0
 
+                    # Write to current split
                     fout.write(_json_dumps_line(row))
                     total += 1
+                    lines_in_current_split += 1
 
+                    # Progress logging
                     if total % int(self.opts.log_interval) == 0:
                         now = time.perf_counter()
                         elapsed = now - start
                         rate = total / elapsed if elapsed > 0 else 0.0
+                        pct = 100.0 * total / line_count if line_count > 0 else 0
                         logging.info(
-                            "[partition %s | actor pid=%s] %s lines | %.1f lines/s | errors=%s | elapsed=%.1fs",
+                            "[partition %s | actor pid=%s] %s/%s lines (%.1f%%) | %.1f lines/s | errors=%s | split %d | elapsed=%.1fs",
                             partition_id,
                             self.pid,
                             total,
+                            line_count,
+                            pct,
                             rate,
                             errors,
+                            current_split,
                             elapsed,
                         )
+
+                    # Check if we should start a new split
+                    if lines_in_current_split >= lines_per_split and current_split < output_splits - 1:
+                        # Close current file
+                        fout.__exit__(None, None, None)
+                        files_written += 1
+                        logging.info(
+                            "[partition %s | actor pid=%s] Wrote split %d: %s (%d lines)",
+                            partition_id, self.pid, current_split,
+                            current_output_uri.split("/")[-1], lines_in_current_split
+                        )
+                        
+                        # Start new split
+                        current_split += 1
+                        lines_in_current_split = 0
+                        current_output_uri = f"{output_uri_base}_split{current_split:03d}.jsonl"
+                        fout = fsspec.open(current_output_uri, "wb").__enter__()
+
+        finally:
+            # Close the last file
+            fout.__exit__(None, None, None)
+            files_written += 1
+            logging.info(
+                "[partition %s | actor pid=%s] Wrote split %d: %s (%d lines)",
+                partition_id, self.pid, current_split,
+                current_output_uri.split("/")[-1], lines_in_current_split
+            )
 
         elapsed = time.perf_counter() - start
         rate = total / elapsed if elapsed > 0 else 0.0
         logging.info(
-            "[partition %s | actor pid=%s] DONE: %s lines in %.1fs (%.1f lines/s) | errors=%s",
+            "[partition %s | actor pid=%s] DONE: %s lines in %.1fs (%.1f lines/s) | errors=%s | files=%d",
             partition_id,
             self.pid,
             total,
             elapsed,
             rate,
             errors,
+            files_written,
         )
-        return total, errors
+        return total, errors, files_written
 
 
 def _round_robin_assign(partition_ids: Sequence[int], n: int) -> List[List[int]]:
@@ -348,7 +410,8 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=1, help="Stockfish Threads per engine (1 recommended with many actors).")
     ap.add_argument("--hash_mb", type=int, default=128, help="Stockfish Hash size (MB) per engine.")
     ap.add_argument("--partitions", type=str, default=None, help="Comma-separated partition indices (e.g. 1,2,3). Default: discover actions_*.jsonl.")
-    ap.add_argument("--log_interval", type=int, default=50_000, help="Log progress every N lines per partition.")
+    ap.add_argument("--log_interval", type=int, default=100, help="Log progress every N lines per partition (default: 1000).")
+    ap.add_argument("--output_splits", type=int, default=10, help="Split each input partition into N output files (default: 10).")
     ap.add_argument("--cp_scale", type=float, default=_CP_SCALE, help="(Advanced) CP->sigmoid scale. Default 400.")
     ap.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     args = ap.parse_args()
@@ -384,7 +447,17 @@ def main() -> None:
         "threads": args.threads,
         "hash_mb": args.hash_mb,
         "log_interval": args.log_interval,
+        "output_splits": args.output_splits,
     }
+
+    logging.info(
+        "With --output_splits=%d, each input partition will produce %d output files",
+        args.output_splits, args.output_splits
+    )
+    logging.info(
+        "Expected total output files: %d input partitions x %d splits = %d files",
+        len(partition_ids), args.output_splits, len(partition_ids) * args.output_splits
+    )
 
     # Create actors
     n_actors = max(1, int(args.actors))
@@ -397,17 +470,24 @@ def main() -> None:
         actor = actors[i % n_actors]
         fname = parts[pid]
         in_uri = _join_uri(args.input_dir, fname)
-        out_uri = _join_uri(args.output_dir, fname)
-        pending.append(actor.process_partition.remote(pid, in_uri, out_uri))
+        # Output base name (without extension) - splits will be appended
+        out_base = _join_uri(args.output_dir, f"actions_{pid:04d}")
+        pending.append(actor.process_partition.remote(pid, in_uri, out_base, args.output_splits))
 
     total_lines = 0
     total_errors = 0
+    total_files = 0
     # Consume as they finish
-    for (lines, errs) in ray.get(pending):
+    for result in ray.get(pending):
+        lines, errs, files = result
         total_lines += int(lines)
         total_errors += int(errs)
+        total_files += int(files)
 
-    logging.info("ALL DONE: total_lines=%s total_errors=%s partitions=%s", total_lines, total_errors, len(partition_ids))
+    logging.info(
+        "ALL DONE: total_lines=%s total_errors=%s input_partitions=%s output_files=%s",
+        total_lines, total_errors, len(partition_ids), total_files
+    )
 
     # Cleanly shut down engines
     ray.get([a.close.remote() for a in actors])
