@@ -1,50 +1,105 @@
-
 # **Grandmaster-DPO**
 
-### *Beyond Imitation: Preference-Optimized Policies for Realistic Grandmaster Chess*
+### *Preference-Optimized Policies for Realistic Grandmaster Chess*
+
+---
 
 ## Overview
 
-**Grandmaster-DPO** is a research project studying whether **Direct Preference Optimization (DPO)** can be used to produce **strong, realistic, human-style chess play** from elite grandmaster data.
+**Grandmaster-DPO** is a research project exploring whether **Direct Preference Optimization (DPO)** can be used to learn **fine-grained, individual Grandmaster playing styles** from historical chess games—while preserving stability, human-likeness, and tactical soundness.
 
-Starting from **Maia2**, a policy calibrated to human play at specific Elo bands, we apply DPO on curated grandmaster games (initially Garry Kasparov, with extensions to other GMs) and analyze how **preference learning reshapes the policy in ways that interact favorably with shallow search**.
+Starting from **Maia-2**, a neural policy calibrated to human play around the ~2000 Elo level, we apply **preference-based learning** using pairwise move preferences extracted from Grandmaster games. Rather than optimizing for engine strength, the objective is to **systematically prefer the moves a specific Grandmaster would choose over plausible alternatives**, while remaining close to the base human-calibrated policy.
 
-Our focus is not on outperforming modern engines at high depth, but on identifying the **strength–human-likeness tradeoff frontier**: how far human-like policies can be pushed *without collapsing into engine-style play*.
+A central theme of this work is **human-centered chess AI**: we are not attempting to surpass modern engines, but to understand and preserve *how* elite humans play. We study how preference-optimized policies interact with **shallow engine search at inference time**, revealing a clear tradeoff between tactical strength and stylistic fidelity.
 
 ---
 
 ## Research Questions
 
-* Can preference optimization move a human-calibrated policy closer to **specific grandmaster playstyles**?
-* Does DPO unlock **more effective shallow search** than supervised fine-tuning alone?
-* How does search depth affect both **playing strength** and **behavioral fidelity**?
-* Where does human-style play break under deeper tactical pressure?
+* Can **Direct Preference Optimization** capture the distinctive styles of individual Grandmasters from game data?
+* How does DPO compare to **supervised fine-tuning (SFT)** and pairwise SFT for stylistic alignment?
+* Do learned stylistic preferences persist when combined with **engine-based tactical filtering**?
+* How does increasing search depth affect the balance between **playing strength** and **human-likeness**?
+* Where does human-style play begin to collapse under strong tactical pressure?
 
 ---
 
 ## Core Contributions
 
-* **Preference-based grandmaster imitation**
-  We reframe grandmaster chess imitation as a preference-learning problem, using DPO rather than pure next-move prediction.
+### **Preference-Based Grandmaster Style Learning**
 
-* **Quantitative human-likeness evaluation**
-  We evaluate models on held-out grandmaster positions using:
+We reframe Grandmaster imitation as a **preference-learning problem**. For each position, the Grandmaster’s played move is treated as a preferred action relative to strong alternatives, and the policy is optimized via DPO to increase this relative likelihood while constraining divergence from the base Maia-2 policy.
 
-  * Top-1 accuracy on the human move
-  * Mean log-prob gap (chosen vs rejected)
-  * KL divergence over legal moves (phase-wise)
-  * Opening fingerprint similarity
-  * Sacrifice / tactical volatility proxies
+To our knowledge, this is the **first application of DPO to a non-language, structured board-game domain** with discrete legal action constraints.
 
-* **Strength vs human-likeness tradeoff analysis**
-  By wrapping the policy in shallow search (varying depth and beam), we empirically map how:
+---
 
-  * Playing strength increases with depth
-  * Behavioral fidelity degrades beyond a point
-    This yields a clear **Pareto frontier** between realism and Elo.
+### **DPO vs SFT: Controlled Ablations**
 
-* **DPO vs SFT ablations**
-  We directly compare supervised fine-tuning and DPO under identical conditions, showing that DPO produces stronger shallow-search performance with less stylistic drift.
+We compare:
+
+* Standard supervised fine-tuning (next-move prediction)
+* Pairwise supervised fine-tuning
+* Direct Preference Optimization (DPO)
+
+under identical data, initialization, and evaluation conditions.
+
+**Key findings:**
+
+* DPO yields ~2× improvement in mean log-probability gap between the Grandmaster’s chosen move and Maia’s next-best alternative.
+* DPO achieves these gains with **negligible additional KL divergence** from the base Maia-2 policy compared to the strongest SFT baseline.
+* Preference optimization produces **stronger shallow-search performance** with less stylistic drift.
+
+---
+
+### **Quantitative Human-Likeness Evaluation**
+
+We evaluate models on **held-out Grandmaster positions** (≈20%, stratified by game phase) using multiple complementary metrics:
+
+* Top-1 accuracy on the Grandmaster move
+* Mean log-probability gap (chosen vs rejected)
+* KL divergence from the base Maia-2 policy
+* Phase-wise behavioral statistics (opening / middlegame / endgame)
+* Opening fingerprint similarity (ECO families)
+* Tactical volatility and sacrifice propensity proxies
+
+These metrics jointly measure **stylistic fidelity**, not just raw prediction accuracy.
+
+---
+
+### **Inference-Time Tactical Filtering with Engine Search**
+
+Because Maia-2 operates below Grandmaster strength, we study whether tactical quality can be improved **without erasing learned style**.
+
+At inference time only:
+
+* Stockfish generates top-K candidate moves via MultiPV.
+* Clear blunders are filtered using a centipawn-gap threshold relative to the best engine move.
+* The learned policy (SFT or DPO) re-ranks the remaining candidates according to stylistic preference.
+
+Importantly, **Stockfish is never used during training**—it acts purely as a tactical constraint during evaluation.
+
+---
+
+### **Strength vs Human-Likeness Tradeoff**
+
+We perform a systematic **search-depth sweep**, varying Stockfish depth during inference:
+
+```
+Search depth ∈ {1, 2, 4, 8, 16}
+```
+
+For each depth, we measure:
+
+* Engine-based Elo estimates
+* All human-likeness metrics
+
+This exposes a clear **Pareto frontier**:
+
+* Increasing depth improves tactical strength
+* Beyond a point, stylistic fidelity degrades as engine pressure dominates
+
+DPO-trained policies retain stylistic alignment **longer under increasing depth** than SFT baselines.
 
 ---
 
@@ -52,56 +107,49 @@ Our focus is not on outperforming modern engines at high depth, but on identifyi
 
 ### 1. Grandmaster-Likeness Evaluation
 
-Held-out GM positions (20%, stratified by opening / middlegame / endgame) are used to measure how closely the policy matches human decisions.
+Held-out positions are used to measure how closely each policy aligns with the original Grandmaster’s decisions across phases and openings.
 
-**Metrics:**
+**Metrics include:**
 
 * Top-1 move accuracy
 * Log-probability gap statistics
 * KL divergence vs base policy
-* Opening distribution similarity (ECO families)
-* Sacrifice propensity and tactical volatility
+* Opening distribution similarity
+* Tactical volatility measures
 
 ---
 
-### 2. Strength Estimation (Engine-Based Elo)
+### 2. Strength Estimation
 
-To avoid platform policy violations, we estimate strength using a **local engine-vs-engine harness**:
+Playing strength is estimated using a **local engine-vs-engine harness**:
 
 * Fixed time controls
-* Multiple games with color swapping
-* Elo + confidence intervals
+* Color swapping
+* Elo estimates with confidence intervals
 
-**Optional:** public **Lichess bot evaluation**, using the official Bot API ecosystem, to provide an externally visible rating trajectory.
+**Optional:** public evaluation via the official **Lichess Bot API** to provide an externally visible rating trajectory.
 
 ---
 
 ### 3. Depth Ablation (Key Insight)
 
-We wrap the policy in a lightweight search and evaluate:
+By increasing tactical filtering strength at inference time, we isolate whether stylistic preferences learned via DPO persist even when decision-making is increasingly constrained by engine evaluation.
 
-```
-Search depth ∈ {1, 2, 4, 8, 16}
-```
-
-For each depth:
-
-* Measure Elo
-* Measure GM-likeness metrics
-
-This experiment exposes the **human-likeness vs depth tradeoff** that engines typically hide.
+This experiment highlights where **human style survives** and where it breaks.
 
 ---
 
-### 4. Why DPO Instead of SFT?
+## Project Goals
 
-A controlled comparison showing:
+Rather than pushing chess AI beyond human limits, **Grandmaster-DPO** focuses on:
 
-* Faster convergence
-* Better shallow-search performance
-* Lower KL drift for comparable strength gains
+* Faithfully modeling elite human decision-making
+* Preserving stylistic diversity
+* Enabling interpretability and historical analysis
+* Supporting personalized, pedagogical chess AI
 
----
+All fine-tuned models and evaluation code are released publicly to enable further research and community exploration.
+
 
 ## Repository Structure
 
