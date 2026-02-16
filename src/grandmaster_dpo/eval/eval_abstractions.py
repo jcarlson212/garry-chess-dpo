@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import chess
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch import nn
 
 from maia2 import inference, model as maia_model
 from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
