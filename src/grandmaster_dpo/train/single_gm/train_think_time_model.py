@@ -325,12 +325,24 @@ class TimerModel(nn.Module):
 
     def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         feats = self.featurizer(batch["fen"], batch["elo_self"], batch["elo_oppo"])  # [B, D]
-        prev5 = batch["prev5_ms"].to(feats.device)                                   # [B, 5]
-        # Features for prev times: log1p(ms)
-        prev5_feat = torch.log1p(torch.clamp(prev5, min=0.0))
-        x = torch.cat([feats, prev5_feat], dim=-1)
-        return self.head(x)
 
+        prev5 = batch["prev5_ms"].to(feats.device)  # [B, 5]
+        prev5_feat = torch.log1p(torch.clamp(prev5, min=0.0))
+
+        # clock-left before move for mover (ms)
+        # player_side: 1=white, 0=black
+        side = batch["player_side"].to(feats.device).long()
+        cw = batch["prev_clock_w"].to(feats.device).float() * 1000.0 # convert to ms
+        cb = batch["prev_clock_b"].to(feats.device).float() * 1000.0 # convert to ms
+        clock_left_ms = torch.where(side == 1, cw, cb).clamp(min=0.0)  # [B]
+        clock_feat = torch.log1p(clock_left_ms).unsqueeze(-1)          # [B, 1]
+
+        # ply index feature (scaled)
+        ply = batch["ply_idx"].to(feats.device).float().unsqueeze(-1)  # [B, 1]
+        ply_feat = ply / 120.0  # rough normalization; tweak if you want
+
+        x = torch.cat([feats, prev5_feat, clock_feat, ply_feat], dim=-1)
+        return self.head(x)
 
 # ----------------------------
 # Train / Eval
@@ -369,6 +381,80 @@ def eval_epoch(model: TimerModel, loader: DataLoader, device: torch.device) -> D
         "mae_ms": total_mae_ms / max(1, n),
     }
 
+@torch.no_grad()
+def eval_epoch(model: TimerModel, loader: DataLoader, device: torch.device) -> Dict[str, float]:
+    model.eval()
+
+    losses = []
+    abs_err_ms = []
+    abs_err_sec_round = []
+    acc_sec_round = []
+
+    total = 0.0
+    total_mae_ms = 0.0
+    n = 0
+
+    for batch in loader:
+        batch = dict(batch)
+        batch["target_ms"] = batch["target_ms"].to(device)
+        batch["prev5_ms"] = batch["prev5_ms"].to(device)
+
+        # keep these if your TimerModel uses them
+        if "ply_idx" in batch:
+            batch["ply_idx"] = batch["ply_idx"].to(device)
+        if "player_side" in batch:
+            batch["player_side"] = batch["player_side"].to(device)
+        if "prev_clock_w" in batch:
+            batch["prev_clock_w"] = batch["prev_clock_w"].to(device)
+        if "prev_clock_b" in batch:
+            batch["prev_clock_b"] = batch["prev_clock_b"].to(device)
+
+        pred_log = model(batch)  # predicts log1p(ms)
+        tgt_log = torch.log1p(torch.clamp(batch["target_ms"], min=0.0))
+
+        loss = torch.nn.functional.smooth_l1_loss(pred_log, tgt_log, beta=0.2, reduction="mean")
+
+        pred_ms = torch.expm1(pred_log).clamp(min=0.0)
+        ae_ms = torch.abs(pred_ms - batch["target_ms"])
+
+        # Metrics that respect clock quantization: round to nearest second
+        pred_sec_r = torch.round(pred_ms / 1000.0)
+        tgt_sec_r = torch.round(batch["target_ms"] / 1000.0)
+        ae_sec_r = torch.abs(pred_sec_r - tgt_sec_r)
+        acc_sec = (pred_sec_r == tgt_sec_r).float()
+
+        bs = batch["target_ms"].shape[0]
+        total += float(loss) * bs
+        total_mae_ms += float(ae_ms.mean()) * bs
+        n += bs
+
+        losses.append(loss.detach().cpu())
+        abs_err_ms.append(ae_ms.detach().cpu())
+        abs_err_sec_round.append(ae_sec_r.detach().cpu())
+        acc_sec_round.append(acc_sec.detach().cpu())
+
+    # Aggregate
+    if n == 0:
+        return {"loss_log_huber": float("nan"), "mae_ms": float("nan")}
+
+    ae_ms_all = torch.cat(abs_err_ms, dim=0)
+    ae_sec_all = torch.cat(abs_err_sec_round, dim=0)
+    acc_sec_all = torch.cat(acc_sec_round, dim=0)
+
+    def pct(x: torch.Tensor, q: float) -> float:
+        return float(torch.quantile(x, q).item())
+
+    return {
+        "loss_log_huber": total / max(1, n),
+        "mae_ms": total_mae_ms / max(1, n),
+        "med_ae_ms": float(torch.median(ae_ms_all).item()),
+        "p90_ae_ms": pct(ae_ms_all, 0.90),
+        "p95_ae_ms": pct(ae_ms_all, 0.95),
+        "p99_ae_ms": pct(ae_ms_all, 0.99),
+        "mae_sec_round": float(ae_sec_all.mean().item()),
+        "acc_sec_round": float(acc_sec_all.mean().item()),
+    }
+
 
 def train(
     model: TimerModel,
@@ -380,8 +466,14 @@ def train(
     lr: float,
     weight_decay: float,
     grad_clip: float,
+    metrics_out_dir: Optional[Path] = None,   # NEW: write per-epoch metrics JSONL here
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if metrics_out_dir is None:
+        metrics_out_dir = out_dir / "metrics"
+    metrics_out_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_jsonl = metrics_out_dir / "train_val_metrics.jsonl"
 
     # Only train head (featurizer is frozen by construction)
     optim = torch.optim.AdamW(model.head.parameters(), lr=lr, weight_decay=weight_decay)
@@ -400,6 +492,15 @@ def train(
             batch = dict(batch)
             batch["target_ms"] = batch["target_ms"].to(device)
             batch["prev5_ms"] = batch["prev5_ms"].to(device)
+            # keep these if your TimerModel uses them
+            if "ply_idx" in batch:
+                batch["ply_idx"] = batch["ply_idx"].to(device)
+            if "player_side" in batch:
+                batch["player_side"] = batch["player_side"].to(device)
+            if "prev_clock_w" in batch:
+                batch["prev_clock_w"] = batch["prev_clock_w"].to(device)
+            if "prev_clock_b" in batch:
+                batch["prev_clock_b"] = batch["prev_clock_b"].to(device)
 
             pred_log = model(batch)
             tgt_log = torch.log1p(torch.clamp(batch["target_ms"], min=0.0))
@@ -418,8 +519,27 @@ def train(
             if step % 100 == 0:
                 print(f"[epoch {epoch}] step={step} train_loss_log_huber={running/max(1,seen):.4f}")
 
+        # ---- NEW: richer eval metrics ----
         val_metrics = eval_epoch(model, val_loader, device=device)
-        print(f"[epoch {epoch}] val_loss_log_huber={val_metrics['loss_log_huber']:.4f}  val_mae_ms={val_metrics['mae_ms']:.2f}")
+
+        # Pretty print core metrics
+        msg = (
+            f"[epoch {epoch}] "
+            f"val_loss_log_huber={val_metrics['loss_log_huber']:.4f}  "
+            f"val_mae_ms={val_metrics['mae_ms']:.2f}  "
+            f"val_med_ae_ms={val_metrics.get('med_ae_ms', float('nan')):.2f}  "
+            f"val_mae_sec_round={val_metrics.get('mae_sec_round', float('nan')):.3f}  "
+            f"val_acc_sec_round={val_metrics.get('acc_sec_round', float('nan')):.3f}  "
+            f"val_p90_ae_ms={val_metrics.get('p90_ae_ms', float('nan')):.2f}  "
+            f"val_p95_ae_ms={val_metrics.get('p95_ae_ms', float('nan')):.2f}"
+        )
+        print(msg)
+
+        # Write metrics row (JSONL) so you can plot later
+        with open(metrics_jsonl, "a", encoding="utf-8") as f:
+            row = {"epoch": epoch, "step": step, "train_loss_log_huber": running / max(1, seen)}
+            row.update(val_metrics)
+            f.write(json.dumps(row) + "\n")
 
         # Save last
         torch.save(model.head.state_dict(), out_dir / f"timer_head_epoch{epoch}.pt")
@@ -474,6 +594,9 @@ def main() -> None:
     train_jsonl = Path(f"./processed/single_gm/time_per_move/train_val/{args.gm_name}/{args.gm_name}_train.jsonl")
     val_jsonl = Path(f"./processed/single_gm/time_per_move/train_val/{args.gm_name}/{args.gm_name}_val.jsonl")
 
+    metrics_out_dir = Path(f"./processed/single_gm/time_per_move/train_val/{args.gm_name}/metrics")
+    metrics_out_dir.mkdir(parents=True, exist_ok=True)
+
     device = device_from_str(args.device)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -512,7 +635,7 @@ def main() -> None:
         }
         f = featurizer(dummy["fen"], dummy["elo_self"], dummy["elo_oppo"])
         feat_dim = int(f.shape[-1])
-    in_dim = feat_dim + 5  # + prev5 (log1p) features
+    in_dim = feat_dim + 5 + 2 # + prev5 (log1p) features + clock-left (log1p) features + ply index (scaled)
     print(f"[timer] feature_dim={feat_dim}  in_dim={in_dim}")
 
     head = TimerHead(
@@ -565,6 +688,7 @@ def main() -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         grad_clip=args.grad_clip,
+        metrics_out_dir=metrics_out_dir,
     )
 
     print("Done.")
