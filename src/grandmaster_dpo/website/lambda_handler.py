@@ -114,8 +114,7 @@ def json_response(status_code: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "statusCode": status_code,
         "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
+            "Content-Type": "application/json"
         },
         "body": json.dumps(payload),
     }
