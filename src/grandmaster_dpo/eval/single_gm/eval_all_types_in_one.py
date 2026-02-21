@@ -5,6 +5,10 @@ import argparse
 from pathlib import Path
 
 from grandmaster_dpo.eval.eval_abstractions import (
+    DpoWithSfHelper,
+)
+
+from grandmaster_dpo.eval.eval_abstractions import (
     DpoPairs,
     SfConfig,
     build_models_for_gm,
@@ -22,6 +26,7 @@ def main() -> None:
     ap.add_argument("--gm_name", required=True)
     ap.add_argument("--split", default="val", choices=["train", "val"])
     ap.add_argument("--maia_type", default="blitz", choices=["blitz", "rapid"])
+    ap.add_argument("--only_dpo_with_sf_helper", action="store_true")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--beta", type=float, default=0.1)
@@ -48,6 +53,11 @@ def main() -> None:
 
     jsonl_path = args.jsonl_template.format(gm=args.gm_name, split=args.split)
     ds = DpoPairs(jsonl_path)
+    
+    import random
+    rng = random.Random(0) 
+    rng.shuffle(ds.rows)
+    ds.rows = ds.rows[:500]
 
     gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
     out_dir = Path(args.out_root.format(gm=args.gm_name, split=args.split))
@@ -68,6 +78,7 @@ def main() -> None:
                     temperature=float(args.temperature),
                     sample=bool(args.sample),
                     seed=int(args.seed),
+                    threads=16,
                 )
                 sf_cfgs.append(sf_cfg)
 
@@ -82,6 +93,9 @@ def main() -> None:
     results = []
     try:
         for m in models:
+            if args.only_dpo_with_sf_helper and not isinstance(m, DpoWithSfHelper) and m.sf_cfg is not None:
+                print(f"Skipping {m.tag} because it is not a DpoWithSfHelper")
+                continue
             m_out = out_dir / m.tag
             m_out.mkdir(parents=True, exist_ok=True)
             res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name)

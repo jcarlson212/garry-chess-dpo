@@ -39,6 +39,7 @@ class DpoPairs(Dataset):
                 if not line:
                     continue
                 self.rows.append(json.loads(line))
+            print(f"Loaded {len(self.rows)} rows from {jsonl_path}")
 
     def __len__(self) -> int:
         return len(self.rows)
