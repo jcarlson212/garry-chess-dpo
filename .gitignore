@@ -26,9 +26,6 @@ pip-wheel-metadata/
 # =========================
 # PyTorch / ML
 # =========================
-*.pt
-*.pth
-*.ckpt
 *.onnx
 *.h5
 *.npz
