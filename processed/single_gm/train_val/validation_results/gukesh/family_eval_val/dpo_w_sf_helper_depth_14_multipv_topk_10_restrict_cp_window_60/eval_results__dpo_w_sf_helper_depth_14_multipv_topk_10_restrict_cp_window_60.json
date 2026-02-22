@@ -432,21 +432,21 @@
   "sf_helper": {
     "sf_total_rows": 500,
     "sf_valid_rows": 500,
-    "sf_help_top1_acc": 0.56,
-    "sf_help_top5_hit_cand": 0.836,
-    "sf_help_top10_hit_cand": 0.864,
-    "sf_help_mean_cp_gap": 9.424,
-    "sf_help_best_sf_rate": 0.552,
-    "sf_help_mean_entropy": 0.7114878825628703,
-    "sf_help_mean_logp_selected_full": -0.9003080176949979,
-    "sf_help_chosen_in_cands": 432.0,
-    "sf_help_p_chosen_in_cands_sum": 252.05723105111903,
-    "sf_help_mean_p_chosen_cond": 0.5041144621022381,
-    "sf_help_mean_p_rejected_cond": 0.21969374728250152,
-    "sf_help_mean_logp_chosen_cond": -4.735093523940766,
-    "sf_help_mean_logp_rejected_cond": -13.488101170525711,
-    "sf_help_mean_gap_logp_cond": 8.753007646584885,
-    "sf_help_mean_kl_q_vs_base": 0.6606113814321153,
+    "sf_help_top1_acc": 0.568,
+    "sf_help_top5_hit_cand": 0.856,
+    "sf_help_top10_hit_cand": 0.884,
+    "sf_help_mean_cp_gap": 9.788,
+    "sf_help_best_sf_rate": 0.546,
+    "sf_help_mean_entropy": 0.7168483277828898,
+    "sf_help_mean_logp_selected_full": -0.9044923109949113,
+    "sf_help_chosen_in_cands": 442.0,
+    "sf_help_p_chosen_in_cands_sum": 253.9314434635737,
+    "sf_help_mean_p_chosen_cond": 0.5078628869271473,
+    "sf_help_mean_p_rejected_cond": 0.2195909787423539,
+    "sf_help_mean_logp_chosen_cond": -4.208963147523563,
+    "sf_help_mean_logp_rejected_cond": -13.22708907692408,
+    "sf_help_mean_gap_logp_cond": 9.018125929400476,
+    "sf_help_mean_kl_q_vs_base": 0.6629353066574379,
     "full_hit1": 0.506,
     "full_hit5": 0.888,
     "full_hit10": 0.958,
@@ -462,8 +462,8 @@
         "count": 5
       }
     ],
-    "sf_help_chosen_in_cands_rate": 0.864,
-    "sf_help_mean_p_chosen_given_in": 0.5834658126183311,
+    "sf_help_chosen_in_cands_rate": 0.884,
+    "sf_help_mean_p_chosen_given_in": 0.5745055281981305,
     "sf_config": {
       "stockfish_path": "D:\\jcarl\\stockfish\\stockfish-windows-x86-64-avx2.exe",
       "depth": 14,
@@ -478,47 +478,47 @@
       "ply0_white": [
         {
           "uci": "d2d4",
-          "p": 0.8013903061224685
+          "p": 0.8011302651468687
         },
         {
           "uci": "e2e4",
-          "p": 0.18253287197062748
+          "p": 0.18247364112461145
         },
         {
           "uci": "c2c4",
-          "p": 0.014242319319653524
+          "p": 0.014237697930018082
         },
         {
           "uci": "d2d3",
-          "p": 0.0016198518404771376
+          "p": 0.001943822222030548
         },
         {
           "uci": "c2c3",
-          "p": 0.00014551574185632274
+          "p": 0.0001454685239824837
         },
         {
           "uci": "e2e3",
-          "p": 4.874176265644019e-05
+          "p": 4.872594662277663e-05
         },
         {
           "uci": "b1c3",
-          "p": 2.0331537227487318e-05
+          "p": 2.0324939894350253e-05
         },
         {
           "uci": "a2a3",
-          "p": 4.5636778579577724e-08
+          "p": 4.562197017136053e-08
         },
         {
           "uci": "b2b3",
-          "p": 1.5047844015424315e-08
+          "p": 7.52392205980376e-09
         },
         {
           "uci": "g2g3",
-          "p": 1.0127925501750343e-09
+          "p": 1.0124639153445714e-09
         },
         {
           "uci": "g1f3",
-          "p": 7.617907219971535e-12
+          "p": 7.615435292009715e-12
         },
         {
           "uci": "a1h8",
@@ -680,51 +680,51 @@
       "ply1_black": [
         {
           "uci": "d7d5",
-          "p": 0.6400361787281919
+          "p": 0.6400361787695936
         },
         {
           "uci": "e7e5",
-          "p": 0.2592347961330322
+          "p": 0.2592347961498012
         },
         {
           "uci": "c7c5",
-          "p": 0.09232885396316991
+          "p": 0.09232885396914234
         },
         {
           "uci": "d7d6",
-          "p": 0.005291024894761751
+          "p": 0.005291024895104009
         },
         {
           "uci": "c7c6",
-          "p": 0.002678403605323474
+          "p": 0.0026784036054967307
         },
         {
           "uci": "b8c6",
-          "p": 0.0002591903888082993
+          "p": 0.0002591903888250655
         },
         {
           "uci": "e7e6",
-          "p": 0.00017068304961073032
+          "p": 0.00017068304962177124
         },
         {
           "uci": "a7a6",
-          "p": 6.695447746283278e-07
+          "p": 6.695447746716384e-07
         },
         {
           "uci": "f7f5",
-          "p": 1.9531697341014324e-07
+          "p": 1.953169734227776e-07
         },
         {
           "uci": "g7g6",
-          "p": 4.2355706371446044e-09
-        },
-        {
-          "uci": "h7h6",
-          "p": 1.0403160682963842e-10
+          "p": 4.235570637418589e-09
         },
         {
           "uci": "g8f6",
-          "p": 3.57514171095891e-11
+          "p": 4.904509073742572e-11
+        },
+        {
+          "uci": "h7h6",
+          "p": 2.6051536945109472e-11
         },
         {
           "uci": "a8h1",

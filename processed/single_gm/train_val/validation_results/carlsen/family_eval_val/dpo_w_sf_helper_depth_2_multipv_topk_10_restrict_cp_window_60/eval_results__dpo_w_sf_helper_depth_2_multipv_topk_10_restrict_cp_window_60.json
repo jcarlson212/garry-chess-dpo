@@ -432,32 +432,28 @@
   "sf_helper": {
     "sf_total_rows": 500,
     "sf_valid_rows": 500,
-    "sf_help_top1_acc": 0.494,
-    "sf_help_top5_hit_cand": 0.834,
-    "sf_help_top10_hit_cand": 0.85,
-    "sf_help_mean_cp_gap": 9.772,
-    "sf_help_best_sf_rate": 0.524,
-    "sf_help_mean_entropy": 0.7486115072055312,
-    "sf_help_mean_logp_selected_full": -0.9341570061061611,
-    "sf_help_chosen_in_cands": 425.0,
-    "sf_help_p_chosen_in_cands_sum": 224.4931435281078,
-    "sf_help_mean_p_chosen_cond": 0.44898628705621557,
-    "sf_help_mean_p_rejected_cond": 0.27528722489727514,
-    "sf_help_mean_logp_chosen_cond": -5.144973687398419,
-    "sf_help_mean_logp_rejected_cond": -10.938805597651157,
-    "sf_help_mean_gap_logp_cond": 5.7938319102527265,
-    "sf_help_mean_kl_q_vs_base": 0.6593505776156653,
+    "sf_help_top1_acc": 0.492,
+    "sf_help_top5_hit_cand": 0.836,
+    "sf_help_top10_hit_cand": 0.858,
+    "sf_help_mean_cp_gap": 9.934,
+    "sf_help_best_sf_rate": 0.518,
+    "sf_help_mean_entropy": 0.7234657633271396,
+    "sf_help_mean_logp_selected_full": -0.8986225906964938,
+    "sf_help_chosen_in_cands": 429.0,
+    "sf_help_p_chosen_in_cands_sum": 228.85943904666965,
+    "sf_help_mean_p_chosen_cond": 0.4577188780933393,
+    "sf_help_mean_p_rejected_cond": 0.27452191820052557,
+    "sf_help_mean_logp_chosen_cond": -4.935477455534604,
+    "sf_help_mean_logp_rejected_cond": -11.356711455913675,
+    "sf_help_mean_gap_logp_cond": 6.421234000379058,
+    "sf_help_mean_kl_q_vs_base": 0.6517894199723734,
     "full_hit1": 0.456,
     "full_hit5": 0.898,
     "full_hit10": 0.976,
     "opening_selected_white_ply0": [
       {
         "uci": "e2e4",
-        "count": 6
-      },
-      {
-        "uci": "d2d4",
-        "count": 1
+        "count": 7
       }
     ],
     "opening_selected_black_ply1": [
@@ -466,8 +462,8 @@
         "count": 1
       }
     ],
-    "sf_help_chosen_in_cands_rate": 0.85,
-    "sf_help_mean_p_chosen_given_in": 0.5282191612426066,
+    "sf_help_chosen_in_cands_rate": 0.858,
+    "sf_help_mean_p_chosen_given_in": 0.5334718858896729,
     "sf_config": {
       "stockfish_path": "D:\\jcarl\\stockfish\\stockfish-windows-x86-64-avx2.exe",
       "depth": 2,
@@ -482,55 +478,51 @@
       "ply0_white": [
         {
           "uci": "e2e4",
-          "p": 0.8565229542375565
+          "p": 0.9992627157043644
         },
         {
           "uci": "d2d4",
-          "p": 0.1354711787860409
+          "p": 0.0006938846755152851
         },
         {
           "uci": "c2c4",
-          "p": 0.007268107766805329
+          "p": 3.719554171626939e-05
         },
         {
           "uci": "e2e3",
-          "p": 0.000712365241927156
-        },
-        {
-          "uci": "c2c3",
-          "p": 2.0633189906784102e-05
-        },
-        {
-          "uci": "b2b3",
-          "p": 1.6865603435377064e-06
-        },
-        {
-          "uci": "g2g3",
-          "p": 1.1169397082759552e-06
-        },
-        {
-          "uci": "a2a4",
-          "p": 1.0006983020484789e-06
+          "p": 4.2537504105476146e-06
         },
         {
           "uci": "d2d3",
-          "p": 6.325321937523e-07
-        },
-        {
-          "uci": "a2a3",
-          "p": 2.1499454723599116e-07
+          "p": 1.4756893204075276e-06
         },
         {
           "uci": "b1c3",
-          "p": 6.391007512783748e-08
+          "p": 3.196044760266969e-07
+        },
+        {
+          "uci": "c2c3",
+          "p": 1.0559318838626157e-07
+        },
+        {
+          "uci": "f2f4",
+          "p": 3.6509890773013655e-08
+        },
+        {
+          "uci": "g2g3",
+          "p": 6.669587603179122e-09
+        },
+        {
+          "uci": "a2a4",
+          "p": 5.1255828570259274e-09
+        },
+        {
+          "uci": "a2a3",
+          "p": 1.103087772963944e-09
         },
         {
           "uci": "g1f3",
-          "p": 3.845946622092977e-08
-        },
-        {
-          "uci": "h2h3",
-          "p": 6.683127141107957e-09
+          "p": 3.285968944336359e-11
         },
         {
           "uci": "a1h8",
@@ -679,48 +671,52 @@
         {
           "uci": "b1a2",
           "p": 0.0
+        },
+        {
+          "uci": "b1h1",
+          "p": 0.0
         }
       ],
       "ply1_black": [
         {
           "uci": "d7d5",
-          "p": 0.7478923125926776
+          "p": 0.7603997006494331
         },
         {
           "uci": "c7c5",
-          "p": 0.23205551629704266
-        },
-        {
-          "uci": "b8c6",
-          "p": 0.013984931674679181
+          "p": 0.23593629941268637
         },
         {
           "uci": "e7e6",
-          "p": 0.0032380632981026396
-        },
-        {
-          "uci": "d7d6",
-          "p": 0.002539341281845334
+          "p": 0.003292215062944692
         },
         {
           "uci": "c7c6",
-          "p": 0.00016008347688303427
+          "p": 0.00016276064010389878
         },
         {
-          "uci": "b7b6",
-          "p": 6.853142007750559e-05
+          "uci": "f7f5",
+          "p": 0.00012503305357316775
         },
         {
           "uci": "g7g6",
-          "p": 4.960748610336118e-05
+          "p": 5.043709834798988e-05
+        },
+        {
+          "uci": "a7a5",
+          "p": 1.5049990025818458e-05
         },
         {
           "uci": "g8f6",
-          "p": 1.035429867641985e-05
+          "p": 1.0527459400595474e-05
+        },
+        {
+          "uci": "h7h6",
+          "p": 6.69741849735961e-06
         },
         {
           "uci": "a7a6",
-          "p": 1.258173912229435e-06
+          "p": 1.279214987026032e-06
         },
         {
           "uci": "a8h1",
