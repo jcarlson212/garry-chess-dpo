@@ -38,7 +38,7 @@ def main() -> None:
 
     # SF-helper options
     ap.add_argument("--enable_sf_helper", action="store_true")
-    ap.add_argument("--sf_path", default="/usr/local/bin/stockfish")
+    ap.add_argument("--sf_path", default="D:\jcarl\stockfish\stockfish-windows-x86-64-avx2.exe")
     ap.add_argument("--sf_depth", type=parse_int_list, default=[10], help="Stockfish depth (human-likeness sweep target).")
     ap.add_argument("--sf_tops", type=parse_int_list, default=[10], help="MultiPV candidates.")
     ap.add_argument("--sf_uci_elo", default="none", help="none or integer (e.g. 1600).")
@@ -46,6 +46,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--sample", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--disable_initial_model_types", action="store_true")
 
     args = ap.parse_args()
 
@@ -78,7 +79,8 @@ def main() -> None:
                     temperature=float(args.temperature),
                     sample=bool(args.sample),
                     seed=int(args.seed),
-                    threads=16,
+                    threads=2,
+                    use_gibbs=True,
                 )
                 sf_cfgs.append(sf_cfg)
 
@@ -88,6 +90,7 @@ def main() -> None:
         gm_dir=gm_ckpt_dir,
         sf_cfgs=sf_cfgs,
         beta=float(args.beta),
+        disable_initial_model_types=args.disable_initial_model_types
     )
 
     results = []

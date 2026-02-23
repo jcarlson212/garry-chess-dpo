@@ -16,6 +16,7 @@ import chess
 import torch
 from torch.utils.data import DataLoader, Dataset
 from torch import nn
+import numpy as np
 
 from maia2 import inference, model as maia_model
 from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
@@ -362,15 +363,35 @@ def coarse_opening_family_from_prefix(prefix_uci: List[str]) -> str:
 # Stockfish helper bits (single-process engine; keep it simple)
 # ============================================================
 
-def _score_to_cp(score: chess.engine.PovScore, mate_score: int = 100_000) -> int:
-    rel = score.relative
-    cp = rel.score(mate_score=mate_score)
-    if cp is None:
-        m = rel.mate()
-        if m is not None:
-            return mate_score if m > 0 else -mate_score
+def _score_to_cp(
+    score,
+    *,
+    turn: bool | None = None,
+    mate_score: int = 100_000,
+) -> int:
+    """
+    Convert python-chess engine score -> integer centipawns (mate mapped to +/- mate_score).
+
+    Supports:
+      - PovScore (has .pov(turn))
+      - Score: Cp / Mate
+    """
+    # If it's PovScore, convert to POV for 'turn' if provided; else keep its own POV
+    if hasattr(score, "pov"):
+        if turn is None:
+            # PovScore carries its own POV side; python-chess exposes it as .turn on PovScore
+            # If .turn doesn't exist in your version, we fall back to not passing turn.
+            t = getattr(score, "turn", None)
+            score = score.pov(t) if t is not None else score.pov(True)
+        else:
+            score = score.pov(turn)
+
+    # Now 'score' should be a Score (Cp/Mate). Convert to cp-like int.
+    v = score.score(mate_score=mate_score)
+    if v is None:
+        # Shouldn't happen often, but keep it safe.
         return 0
-    return int(cp)
+    return int(v)
 
 @dataclass
 class SfConfig:
@@ -387,6 +408,9 @@ class SfConfig:
     sample: bool = False
     seed: int = 0
     eps: float = 1e-12
+
+    use_gibbs: bool = False
+    k: int = 40
 
 @dataclass
 class SfPerPosResult:
@@ -423,6 +447,259 @@ def _entropy(probs: List[float], eps: float) -> float:
         pp = max(float(p), eps)
         s -= pp * math.log(pp)
     return float(s)
+
+@torch.no_grad()
+def compute_sf_helper_w_gibbs_for_one_position(
+    *,
+    fen: str,
+    chosen_uci: str,
+    rejected_uci: str,
+    sf_engine: chess.engine.SimpleEngine,
+    logits_masked_1d: torch.Tensor,   # [V] masked logits for policy
+    base_logp_full_1d: torch.Tensor,  # [V] log-softmax of base masked logits
+    all_moves_dict: Dict[str, int],   # uci_eff -> idx
+    cfg: SfConfig,
+    full_hit: Dict[int, int],         # {1:0/1, 5:0/1, 10:0/1}
+    rng: random.Random,
+) -> Optional[Tuple[SfPerPosResult, Dict[str, Any]]]:
+
+    # --------- basic guards ----------
+    board = chess.Board(fen)
+    if board.is_game_over(claim_draw=True):
+        return None
+
+    # IMPORTANT: ply index must come from FEN, not move_stack
+    ply_abs = int(fen_to_ply_abs(fen))  # you already have this util elsewhere
+
+    V = int(logits_masked_1d.numel())
+
+    # Build idx->uci_eff list so we can invert topk indices into actual UCI for this FEN
+    idx_to_uci_eff: List[Optional[str]] = [None] * V
+    for u, i in all_moves_dict.items():
+        ii = int(i)
+        if 0 <= ii < V:
+            idx_to_uci_eff[ii] = u
+
+    # Build all_moves list for vocab_index_to_uci if you want to reuse it
+    # (it expects a list: index -> uci_eff)
+    all_moves_list: List[str] = [m if m is not None else "??" for m in idx_to_uci_eff]
+
+    # --------- hyperparams (with sane defaults) ----------
+    k = int(getattr(cfg, "k", 40))
+    k = max(1, min(k, V))
+
+    restrict_base = float(getattr(cfg, "restrict_cp_window_base", getattr(cfg, "restrict_cp_window", 20) or 20))
+    restrict_max_factor = float(getattr(cfg, "restrict_cp_window_max_factor", 6.0))  # base*(~6) ~= 120 if base=20
+    game_len = float(getattr(cfg, "game_len_plies", 80.0))
+    frac = min(1.0, max(0.0, ply_abs / game_len))
+    adaptive_restrict_cp_window = restrict_base * (1.0 + (restrict_max_factor - 1.0) * frac)
+
+    # lambda schedule (you called it temperature): higher early -> less SF influence
+    base_lambda = float(getattr(cfg, "base_temperature", getattr(cfg, "temperature", 0.3)))
+    min_lambda = float(getattr(cfg, "min_temperature", 1e-3))
+    max_lambda = float(getattr(cfg, "max_temperature", 5.0))
+    # Example: start high, end low (more SF late). You can flip if you want.
+    # High early -> low late:
+    lam = base_lambda * (1.0 + (1.0 - frac) * 4.0)   # ~5x early, ~1x late
+    lam = float(min(max(lam, min_lambda), max_lambda))
+
+    # Q scale
+    cp_cap = int(getattr(cfg, "cp_cap", 2000))
+    cp_scale = float(getattr(cfg, "cp_scale", 150.0))  # 150cp -> +1.0 logit bonus at lambda=1
+
+    # --------- policy top-k candidates ----------
+    # logits are already masked; softmax is safe (masked moves -> prob 0)
+    policy_probs = torch.softmax(logits_masked_1d, dim=-1)  # [V]
+    topv, topi = torch.topk(policy_probs, k=k)
+
+    policy_root_moves: List[chess.Move] = []
+    policy_cand_details: List[Tuple[str, float]] = []  # [(uci_actual, prob)]
+
+    for p, idx in zip(topv.tolist(), topi.tolist()):
+        idx = int(idx)
+        if not (0 <= idx < V):
+            continue
+        uci_actual = vocab_index_to_uci(all_moves_list, fen, idx)
+        if uci_actual is None:
+            continue
+        try:
+            mv = chess.Move.from_uci(uci_actual)
+        except Exception:
+            continue
+        if mv in board.legal_moves:
+            policy_root_moves.append(mv)
+            policy_cand_details.append((uci_actual, float(p)))
+
+    if not policy_root_moves:
+        return None
+
+    # --------- stockfish eval restricted to those root moves ----------
+    limit = chess.engine.Limit(depth=int(cfg.depth))
+    multipv = k
+
+    try:
+        infos = sf_engine.analyse(
+            board,
+            limit,
+            multipv=min(multipv, len(policy_root_moves)),
+            root_moves=policy_root_moves,
+        )
+    except Exception:
+        return None
+
+    assert len(infos) <= len(topv.tolist())
+
+    sf_cands: List[Tuple[str, int]] = []
+    for info in infos:
+        pv = info.get("pv")
+        score = info.get("score")
+        if not pv or score is None:
+            continue
+        uci = pv[0].uci()
+        # Convert to POV for side to move so cp comparisons are consistent
+        pov_score = score.pov(board.turn) if hasattr(score, "pov") else score
+        cp = _score_to_cp(score, turn=board.turn)
+        sf_cands.append((uci, cp))
+
+    if not sf_cands:
+        return None
+
+    # --------- cp-window filter ----------
+    best_cp = max(cp for _, cp in sf_cands)
+    kept: List[Tuple[str, int]] = sf_cands
+    w = int(adaptive_restrict_cp_window)
+    filtered = [(m, cp) for (m, cp) in kept if cp >= best_cp - w]
+    if filtered:
+        kept = filtered
+    if not kept:
+        return None
+
+    # Ensure stable ordering for reporting
+    kept = sorted(kept, key=lambda x: -x[1])
+
+    # --------- compute pi_ref over kept moves (from policy logits) ----------
+    # This is the ref distribution in the KL term.
+    logp_ref_all = torch.log_softmax(logits_masked_1d, dim=-1)  # [V]
+
+    cand_moves: List[str] = [m for (m, _cp) in kept]
+    cand_idxs: List[int] = [uci_to_vocab_index(all_moves_dict, fen, u) for u in cand_moves]
+
+    neg_inf = torch.finfo(logits_masked_1d.dtype).min
+    cand_logp_ref = []
+    for idx in cand_idxs:
+        if idx < 0:
+            cand_logp_ref.append(torch.tensor(neg_inf, device=logp_ref_all.device, dtype=logp_ref_all.dtype))
+        else:
+            cand_logp_ref.append(logp_ref_all[idx])
+    cand_logp_ref_t = torch.stack(cand_logp_ref, dim=0)  # [K]
+
+    # --------- Gibbs / KL-regularized policy improvement ----------
+    # pi_new(a) ∝ pi_ref(a) * exp(Q(a)/lambda)
+    cps = torch.tensor(
+        [int(cp) for (_uci, cp) in kept],
+        device=cand_logp_ref_t.device,
+        dtype=cand_logp_ref_t.dtype,
+    ).clamp(min=-cp_cap, max=cp_cap)
+
+    Q = cps / cp_scale
+    combined = cand_logp_ref_t + (Q / max(lam, 1e-6))          # [K]
+    cand_probs_t = torch.softmax(combined, dim=0)              # [K]
+    cand_probs: List[float] = cand_probs_t.detach().cpu().tolist()
+
+    # Build a full-V "logits" tensor that corresponds to combined scores on candidates
+    cands_logits_full = torch.full_like(logits_masked_1d, neg_inf)  # [V]
+    for idx, comb in zip(cand_idxs, combined):
+        if idx >= 0:
+            cands_logits_full[idx] = comb
+
+    # --------- select within candidates ----------
+    if bool(getattr(cfg, "sample", True)):
+        sel_i = int(torch.multinomial(cand_probs_t, 1).item())
+    else:
+        sel_i = int(torch.argmax(cand_probs_t).item())
+
+    selected_uci, cp_selected = kept[sel_i]
+    cp_gap = float(best_cp - cp_selected)
+    is_best = (cp_gap <= 1e-9)
+
+    probs_np = cand_probs_t.detach().cpu().numpy()
+    eps = float(getattr(cfg, "eps", 1e-12))
+    ent = float(-(probs_np * np.log(probs_np + eps)).sum()) if probs_np.size else 0.0
+
+    # Log-prob of selected move under *full policy* (for comparability with other helper)
+    sel_idx = uci_to_vocab_index(all_moves_dict, fen, selected_uci)
+    logp_selected_full = float(logp_ref_all[sel_idx].item()) if sel_idx >= 0 else float("-inf")
+
+    # chosen/rejected conditional probs in candidate set
+    p_ch = float(cand_probs[cand_moves.index(chosen_uci)]) if chosen_uci in cand_moves else 0.0
+    p_rj = float(cand_probs[cand_moves.index(rejected_uci)]) if rejected_uci in cand_moves else 0.0
+    logp_ch = math.log(max(p_ch, eps))
+    logp_rj = math.log(max(p_rj, eps))
+    gap_logp = float(logp_ch - logp_rj)
+
+    # candidate hits on chosen (based on q ordering)
+    K = len(cand_probs)
+    order = sorted(range(K), key=lambda j: cand_probs[j], reverse=True)
+
+    def cand_hit_at(k_: int) -> float:
+        if k_ <= 0:
+            return 0.0
+        kk = min(int(k_), K)
+        top_moves = [cand_moves[j] for j in order[:kk]]
+        return 1.0 if chosen_uci in top_moves else 0.0
+
+    # KL(q || base_full) over candidate support
+    kl = 0.0
+    for (uci, _cp), q in zip(kept, cand_probs):
+        idx = uci_to_vocab_index(all_moves_dict, fen, uci)
+        if idx < 0:
+            continue
+        logq = math.log(max(float(q), eps))
+        logp_b = float(base_logp_full_1d[idx].item())
+        kl += float(q) * (logq - logp_b)
+
+    res = SfPerPosResult(
+        selected_uci=str(selected_uci),
+        is_best_sf=bool(is_best),
+        cp_selected=int(cp_selected),
+        cp_best=int(best_cp),
+        cp_gap=float(cp_gap),
+        entropy=float(ent),
+        logp_selected_full=float(logp_selected_full),
+
+        p_chosen_cond=float(p_ch),
+        p_rejected_cond=float(p_rj),
+        logp_chosen_cond=float(logp_ch),
+        logp_rejected_cond=float(logp_rj),
+        gap_logp_cond=float(gap_logp),
+
+        cand_hit1=float(cand_hit_at(1)),
+        cand_hit5=float(cand_hit_at(5)),
+        cand_hit10=float(cand_hit_at(10)),
+
+        full_hit1=float(full_hit.get(1, 0)),
+        full_hit5=float(full_hit.get(5, 0)),
+        full_hit10=float(full_hit.get(10, 0)),
+
+        kl_q_vs_base=float(kl),
+    )
+
+    dbg = {
+        "ply_abs": int(ply_abs),
+        "lambda": float(lam),
+        "adaptive_restrict_cp_window": float(adaptive_restrict_cp_window),
+        "cp_scale": float(cp_scale),
+        "cp_cap": int(cp_cap),
+
+        "policy_topk": policy_cand_details,   # [(uci, prob)] before SF filtering
+        "cands_kept": kept,                   # [(uci, cp)]
+        "q_probs": cand_probs,                # q over kept
+        "selected_index": int(sel_i),
+
+        # Full-V tensor with combined scores on candidate indices, -inf elsewhere
+        "cands_logits_full": cands_logits_full.detach().cpu(),  # [V]
+    }
+    return res, dbg
 
 @torch.no_grad()
 def compute_sf_helper_for_one_position(
@@ -971,38 +1248,55 @@ class EvalModel(ABC):
                 if board.is_game_over(claim_draw=True):
                     continue
 
-                infos = self._sf_engine.analyse(board, limit, multipv=int(cfg.multipv_topk))
-                cands: List[Tuple[str, int]] = []
-                for info in infos:
-                    pv = info.get("pv")
-                    score = info.get("score")
-                    if not pv or score is None:
+                if cfg.use_gibbs:
+                    out = compute_sf_helper_w_gibbs_for_one_position(
+                        fen=fen,
+                        chosen_uci=chosen[i],
+                        rejected_uci=rejected[i],
+                        sf_engine=self._sf_engine,
+                        logits_masked_1d=logits_pi_m[i],
+                        base_logp_full_1d=base_logp_full[i],
+                        all_moves_dict=self.all_moves_dict,
+                        cfg=cfg,
+                        full_hit={
+                            1: int(full_hit1[i].item()),
+                            5: int(full_hit5[i].item()),
+                            10: int(full_hit10[i].item()),
+                        },
+                        rng=rng,
+                    )
+                else:
+                    infos = self._sf_engine.analyse(board, limit, multipv=int(cfg.multipv_topk))
+                    cands: List[Tuple[str, int]] = []
+                    for info in infos:
+                        pv = info.get("pv")
+                        score = info.get("score")
+                        if not pv or score is None:
+                            continue
+                        uci = pv[0].uci()
+                        cp = _score_to_cp(score, turn=board.turn)
+                        cands.append((uci, cp))
+                    if not cands:
                         continue
-                    uci = pv[0].uci()
-                    cp = _score_to_cp(score)
-                    cands.append((uci, cp))
-                if not cands:
-                    continue
 
-                best_cp = max(cp for _, cp in cands)
-
-                out = compute_sf_helper_for_one_position(
-                    fen=fen,
-                    chosen_uci=chosen[i],
-                    rejected_uci=rejected[i],
-                    cands=cands,
-                    best_cp=int(best_cp),
-                    logits_masked_1d=logits_pi_m[i],
-                    base_logp_full_1d=base_logp_full[i],
-                    all_moves_dict=self.all_moves_dict,
-                    cfg=cfg,
-                    full_hit={
-                        1: int(full_hit1[i].item()),
-                        5: int(full_hit5[i].item()),
-                        10: int(full_hit10[i].item()),
-                    },
-                    rng=rng,
-                )
+                    best_cp = max(cp for _, cp in cands)
+                    out = compute_sf_helper_for_one_position(
+                        fen=fen,
+                        chosen_uci=chosen[i],
+                        rejected_uci=rejected[i],
+                        cands=cands,
+                        best_cp=int(best_cp),
+                        logits_masked_1d=logits_pi_m[i],
+                        base_logp_full_1d=base_logp_full[i],
+                        all_moves_dict=self.all_moves_dict,
+                        cfg=cfg,
+                        full_hit={
+                            1: int(full_hit1[i].item()),
+                            5: int(full_hit5[i].item()),
+                            10: int(full_hit10[i].item()),
+                        },
+                        rng=rng,
+                    )
                 if out is None:
                     continue
                 res, _dbg = out
@@ -1086,12 +1380,35 @@ class EvalModel(ABC):
         agg["sf_config"] = {
             "stockfish_path": cfg.stockfish_path,
             "depth": int(cfg.depth),
-            "multipv_topk": int(cfg.multipv_topk),
-            "uci_elo": cfg.uci_elo,
-            "restrict_cp_window": cfg.restrict_cp_window,
-            "temperature": float(cfg.temperature),
-            "sample": bool(cfg.sample),
+            "multipv_topk": int(getattr(cfg, "multipv_topk", getattr(cfg, "multipv", 10))),
+
+            "use_gibbs": bool(getattr(cfg, "use_gibbs", False)),
+
+            # candidate selection (policy-side)
+            "k": int(getattr(cfg, "k", 40)),
+
+            # adaptive cp window
+            "restrict_cp_window": cfg.restrict_cp_window,  # keep legacy if you still set it
+            "restrict_cp_window_base": float(getattr(cfg, "restrict_cp_window_base", getattr(cfg, "restrict_cp_window", 20) or 20)),
+            "restrict_cp_window_max_factor": float(getattr(cfg, "restrict_cp_window_max_factor", 6.0)),
+            "game_len_plies": float(getattr(cfg, "game_len_plies", 80.0)),
+
+            # KL-regularized improvement hyperparams
+            "base_temperature": float(getattr(cfg, "base_temperature", getattr(cfg, "temperature", 0.3))),
+            "min_temperature": float(getattr(cfg, "min_temperature", 1e-3)),
+            "max_temperature": float(getattr(cfg, "max_temperature", 5.0)),
+            "cp_scale": float(getattr(cfg, "cp_scale", 150.0)),
+            "cp_cap": int(getattr(cfg, "cp_cap", 2000)),
+
+            # sampling
+            "sample": bool(getattr(cfg, "sample", True)),
             "seed": int(cfg.seed),
+
+            # misc
+            "uci_elo": cfg.uci_elo,
+            "threads": int(getattr(cfg, "threads", 1)),
+            "hash_mb": int(getattr(cfg, "hash_mb", 64)),
+            "timeout_s": float(getattr(cfg, "timeout_s", getattr(cfg, "timeout", 0.0))),
         }
 
         agg["sf_opening_summary"] = opening_summary_sf
@@ -1185,7 +1502,7 @@ class DpoWithSfHelper(DpoModel):
         
     @property
     def tag(self) -> str:
-        return f"dpo_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+        return f"dpo_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
 
 class SftWithSfHelper(SftModel):
 
@@ -1197,7 +1514,7 @@ class SftWithSfHelper(SftModel):
         
     @property
     def tag(self) -> str:
-        return f"sft_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+        return f"sft_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
 
 class SftPairwiseWithSfHelper(SftPairwiseModel):
 
@@ -1209,7 +1526,7 @@ class SftPairwiseWithSfHelper(SftPairwiseModel):
         
     @property
     def tag(self) -> str:
-        return f"sft_pairwise_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+        return f"sft_pairwise_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
 
 
 # ============================================================
@@ -1223,6 +1540,7 @@ def build_models_for_gm(
     gm_dir: Path,
     sf_cfgs: Optional[List[SfConfig]],
     beta: float,
+    disable_initial_model_types: bool = False,
 ) -> List[EvalModel]:
     """
     gm_dir expected to contain:
@@ -1239,11 +1557,11 @@ def build_models_for_gm(
 
     # base only
     models.append(BaseMaia2(maia_type=maia_type, device=device, policy_pt_path=None, beta=beta, sf_cfg=None))
-
-    # non-SF runs
-    models.append(DpoModel(maia_type=maia_type, device=device, policy_pt_path=str(dpo_pt), beta=beta, sf_cfg=None))
-    models.append(SftModel(maia_type=maia_type, device=device, policy_pt_path=str(sft_pt), beta=beta, sf_cfg=None))
-    models.append(SftPairwiseModel(maia_type=maia_type, device=device, policy_pt_path=str(pw_pt), beta=beta, sf_cfg=None))
+    if not disable_initial_model_types:
+        # non-SF runs
+        models.append(DpoModel(maia_type=maia_type, device=device, policy_pt_path=str(dpo_pt), beta=beta, sf_cfg=None))
+        models.append(SftModel(maia_type=maia_type, device=device, policy_pt_path=str(sft_pt), beta=beta, sf_cfg=None))
+        models.append(SftPairwiseModel(maia_type=maia_type, device=device, policy_pt_path=str(pw_pt), beta=beta, sf_cfg=None))
 
     # SF-helper runs (depth lives in sf_cfg.depth)
     if sf_cfgs is not None:
