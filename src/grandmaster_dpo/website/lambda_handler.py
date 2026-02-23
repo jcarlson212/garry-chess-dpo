@@ -168,15 +168,25 @@ class EngineProfile:
 # You can expand this to include variants (e.g., bullet/blitz/classical, different ELO-conditioning)
 GAME_TYPE_TO_PROFILE: Dict[str, EngineProfile] = {
     # e.g. "gm_kasparov_blitz": EngineProfile(gm_name="kasparov", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_carlsen_blitz": EngineProfile(gm_name="carlsen", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_nakamura_blitz": EngineProfile(gm_name="nakamura", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_caruana_blitz": EngineProfile(gm_name="caruana", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_firouzja_blitz": EngineProfile(gm_name="firouzja", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_giri_blitz": EngineProfile(gm_name="giri", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_gukesh_blitz": EngineProfile(gm_name="gukesh", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_praggnanandhaa_blitz": EngineProfile(gm_name="praggnanandhaa", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_vincent_blitz": EngineProfile(gm_name="vincent", maia_type="blitz", temperature=0.9, sample=False),
-    "gm_wei_blitz": EngineProfile(gm_name="wei", maia_type="blitz", temperature=0.9, sample=False),
+    "gm_carlsen_blitz": EngineProfile(gm_name="carlsen", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_nakamura_blitz": EngineProfile(gm_name="nakamura", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_caruana_blitz": EngineProfile(gm_name="caruana", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_firouzja_blitz": EngineProfile(gm_name="firouzja", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_giri_blitz": EngineProfile(gm_name="giri", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_gukesh_blitz": EngineProfile(gm_name="gukesh", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_praggnanandhaa_blitz": EngineProfile(gm_name="praggnanandhaa", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_vincent_blitz": EngineProfile(gm_name="vincent", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_wei_blitz": EngineProfile(gm_name="wei", maia_type="blitz", temperature=1.0, sample=True),
+
+    "gm_alekhine_blitz": EngineProfile(gm_name="alekhine", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_anand_blitz": EngineProfile(gm_name="anand", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_botvinnik_blitz": EngineProfile(gm_name="botvinnik", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_capablanca_blitz": EngineProfile(gm_name="capablanca", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_fischer_blitz": EngineProfile(gm_name="fischer", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_kasparov_blitz": EngineProfile(gm_name="kasparov", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_lasker_blitz": EngineProfile(gm_name="lasker", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_polgar_blitz": EngineProfile(gm_name="polgar", maia_type="blitz", temperature=1.0, sample=True),
+    "gm_tal_blitz": EngineProfile(gm_name="tal", maia_type="blitz", temperature=1.0, sample=True)
 }
 
 def load_game_type_profile(game_type_id: str) -> EngineProfile:
@@ -456,7 +466,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         limit_obj = (engine_config.get("limit") or {"type": "time_ms", "value": 200})
         random_seed = int((engine_config.get("random_seed") or 0))
 
-        if not game_id or not pre_move_fen or not client_uci or not game_type_id:
+        player_color_req = str(req.get("player_color") or "")  # "white"|"black"|"" (maybe empty on subsequent calls)
+
+        if not game_id or not pre_move_fen or not game_type_id:
             return json_response(
                 400,
                 {"ok": False, "error": {"code": "bad_request", "message": "Missing required fields"}},
@@ -465,10 +477,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # PSEUDO: lookup state from ElastiCache (no-op)
         state = redis_get_game_state_pseudocode(game_id)
         if state is None:
-            # initialize from request (authoritative for now)
+            if player_color_req not in ("white", "black"):
+                return json_response(
+                    400,
+                    {"ok": False, "error": {"code": "bad_request", "message": "Missing/invalid player_color (white|black)"}},
+                )
+            player_color = player_color_req
             server_fen = pre_move_fen
             server_ply = client_ply if client_ply >= 0 else fen_ply_abs(pre_move_fen)
         else:
+            player_color = str(state.get("player_color", player_color_req or "white"))
             server_fen = str(state.get("fen", pre_move_fen))
             server_ply = int(state.get("ply", fen_ply_abs(server_fen)))
 
@@ -502,6 +520,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 ),
             )
 
+        player_is_white = (player_color == "white")
+        is_player_turn = (board.turn == chess.WHITE) if player_is_white else (board.turn == chess.BLACK)
+
         # game over?
         if board.is_game_over(claim_draw=True):
             return json_response(
@@ -517,73 +538,74 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
 
         server_ply_before = server_ply
-
-        # Apply player move
-        try:
-            mv = chess.Move.from_uci(client_uci)
-        except Exception:
-            return json_response(
-                400,
-                error_payload(
-                    game_id=game_id,
-                    code="illegal_move",
-                    message="Invalid UCI format",
-                    server_ply=server_ply,
-                    server_fen=board.fen(),
-                    clock=clock,
-                ),
-            )
-
-        if mv not in board.legal_moves:
-            return json_response(
-                400,
-                error_payload(
-                    game_id=game_id,
-                    code="illegal_move",
-                    message="Move is not legal in current position",
-                    server_ply=server_ply,
-                    server_fen=board.fen(),
-                    clock=clock,
-                ),
-            )
-
-        # Update clock (simple: subtract elapsed from side who moved)
-        # NOTE: This assumes the player is the side-to-move in server_fen and client_uci is their move.
-        # If your API distinguishes player color, incorporate it here.
-        if isinstance(clock, dict) and "white_ms" in clock and "black_ms" in clock:
+        
+        if is_player_turn:
+            # Apply player move
             try:
-                if board.turn == chess.WHITE:
-                    clock["white_ms"] = max(0, int(clock["white_ms"]) - elapsed_ms)
-                else:
-                    clock["black_ms"] = max(0, int(clock["black_ms"]) - elapsed_ms)
+                mv = chess.Move.from_uci(client_uci)
             except Exception:
-                pass
+                return json_response(
+                    400,
+                    error_payload(
+                        game_id=game_id,
+                        code="illegal_move",
+                        message="Invalid UCI format or was player turn and no UCI provided",
+                        server_ply=server_ply,
+                        server_fen=board.fen(),
+                        clock=clock,
+                    ),
+                )
 
-        board.push(mv)
-        server_ply += 1
+            if mv not in board.legal_moves:
+                return json_response(
+                    400,
+                    error_payload(
+                        game_id=game_id,
+                        code="illegal_move",
+                        message="Move is not legal in current position",
+                        server_ply=server_ply,
+                        server_fen=board.fen(),
+                        clock=clock,
+                    ),
+                )
 
-        # After player move, game might be over
-        if board.is_game_over(claim_draw=True):
-            status = game_status_from_board(board)
-            # PSEUDO: persist
-            redis_set_game_state_pseudocode(game_id, {"fen": board.fen(), "ply": server_ply, "clock": clock})
-            return json_response(
-                200,
-                {
-                    "ok": True,
-                    "game_id": game_id,
-                    "server_ply_before": server_ply_before,
-                    "server_ply_after": server_ply,
-                    "new_fen": board.fen(),
-                    "player_move_uci": client_uci,
-                    "bot_move_uci": "",
-                    "bot_id": bot_id,
-                    "game_type_id": game_type_id,
-                    "clock": clock,
-                    "game_status": status,
-                    "analysis": {"bot_eval_cp": 0, "bot_pv_uci": []},
-                },
-            )
+            # Update clock (simple: subtract elapsed from side who moved)
+            # NOTE: This assumes the player is the side-to-move in server_fen and client_uci is their move.
+            # If your API distinguishes player color, incorporate it here.
+            if isinstance(clock, dict) and "white_ms" in clock and "black_ms" in clock:
+                try:
+                    if board.turn == chess.WHITE:
+                        clock["white_ms"] = max(0, int(clock["white_ms"]) - elapsed_ms)
+                    else:
+                        clock["black_ms"] = max(0, int(clock["black_ms"]) - elapsed_ms)
+                except Exception:
+                    pass
+
+            board.push(mv)
+            server_ply += 1
+
+            # After player move, game might be over
+            if board.is_game_over(claim_draw=True):
+                status = game_status_from_board(board)
+                # PSEUDO: persist
+                redis_set_game_state_pseudocode(game_id, {"fen": board.fen(), "ply": server_ply, "clock": clock, "player_color": player_color})
+                return json_response(
+                    200,
+                    {
+                        "ok": True,
+                        "game_id": game_id,
+                        "server_ply_before": server_ply_before,
+                        "server_ply_after": server_ply,
+                        "new_fen": board.fen(),
+                        "player_move_uci": client_uci,
+                        "bot_move_uci": "",
+                        "bot_id": bot_id,
+                        "game_type_id": game_type_id,
+                        "clock": clock,
+                        "game_status": status,
+                        "analysis": {"bot_eval_cp": 0, "bot_pv_uci": []},
+                    },
+                )
 
         # Load profile & engine bundle (DPO + SF-top10)
         profile = load_game_type_profile(game_type_id)
@@ -633,7 +655,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         status = game_status_from_board(board)
 
         # PSEUDO: update state in ElastiCache
-        redis_set_game_state_pseudocode(game_id, {"fen": board.fen(), "ply": server_ply, "clock": clock})
+        redis_set_game_state_pseudocode(game_id, {"fen": board.fen(), "ply": server_ply, "clock": clock, "player_color": player_color})
 
         resp_ok = {
             "ok": True,
@@ -641,7 +663,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "server_ply_before": server_ply_before,  # before player+bot applied
             "server_ply_after": server_ply,
             "new_fen": board.fen(),
-            "player_move_uci": client_uci,
+            "player_move_uci": client_uci if is_player_turn else "",
             "bot_move_uci": bot_uci,
             "bot_id": bot_id,
             "game_type_id": game_type_id,
