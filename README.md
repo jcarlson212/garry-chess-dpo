@@ -1,4 +1,4 @@
-# **Grandmaster-DPO**
+# **GarryChess-DPO**
 
 ### *Preference-Optimized Policies for Realistic Grandmaster Chess*
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Grandmaster-DPO** is a research project exploring whether **Direct Preference Optimization (DPO)** can be used to learn **fine-grained, individual Grandmaster playing styles** from historical chess games—while preserving stability, human-likeness, and tactical soundness.
+**GarryChess-DPO** is a research project exploring whether **Direct Preference Optimization (DPO)** can be used to learn **fine-grained, individual Grandmaster playing styles** from historical chess games—while preserving stability, human-likeness, and tactical soundness.
 
 Starting from **Maia-2**, a neural policy calibrated to human play around the ~2000 Elo level, we apply **preference-based learning** using pairwise move preferences extracted from Grandmaster games. Rather than optimizing for engine strength, the objective is to **systematically prefer the moves a specific Grandmaster would choose over plausible alternatives**, while remaining close to the base human-calibrated policy.
 
