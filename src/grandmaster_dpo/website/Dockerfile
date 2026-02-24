@@ -52,15 +52,15 @@ COPY ./processed/single_gm/train_val/praggnanandhaa/policy_dpo_best.pt /opt/mode
 COPY ./processed/single_gm/train_val/vincent/policy_dpo_best.pt /opt/models/vincent/policy_dpo_best.pt
 COPY ./processed/single_gm/train_val/wei/policy_dpo_best.pt /opt/models/wei/policy_dpo_best.pt
 
-COPY ./processed/single_gm/famous_chessgames_gms/alekhine/policy_best_dpo.pt /opt/models/alekhine/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/anand/policy_best_dpo.pt /opt/models/anand/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/botvinnik/policy_best_dpo.pt /opt/models/botvinnik/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/capablanca/policy_best_dpo.pt /opt/models/capablanca/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/fischer/policy_best_dpo.pt /opt/models/fischer/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/kasparov/policy_best_dpo.pt /opt/models/kasparov/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/lasker/policy_best_dpo.pt /opt/models/lasker/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/polgar/policy_best_dpo.pt /opt/models/polgar/policy_best_dpo.pt
-COPY ./processed/single_gm/famous_chessgames_gms/tal/policy_best_dpo.pt /opt/models/tal/policy_best_dpo.pt
+COPY ./processed/single_gm/famous_chessgames_gms/alekhine/policy_best_dpo.pt /opt/models/alekhine/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/anand/policy_best_dpo.pt /opt/models/anand/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/botvinnik/policy_best_dpo.pt /opt/models/botvinnik/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/capablanca/policy_best_dpo.pt /opt/models/capablanca/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/fischer/policy_best_dpo.pt /opt/models/fischer/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/kasparov/policy_best_dpo.pt /opt/models/kasparov/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/lasker/policy_best_dpo.pt /opt/models/lasker/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/polgar/policy_best_dpo.pt /opt/models/polgar/policy_dpo_best.pt
+COPY ./processed/single_gm/famous_chessgames_gms/tal/policy_best_dpo.pt /opt/models/tal/policy_dpo_best.pt
 
 # ---- Environment defaults (override in Lambda config if desired) ----
 ENV STOCKFISH_PATH=/opt/bin/stockfish
