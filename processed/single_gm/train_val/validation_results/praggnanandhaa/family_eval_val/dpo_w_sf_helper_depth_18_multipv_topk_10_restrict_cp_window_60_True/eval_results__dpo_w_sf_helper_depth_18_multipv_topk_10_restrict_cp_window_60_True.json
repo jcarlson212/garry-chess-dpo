@@ -1,10 +1,10 @@
 {
   "gm": "praggnanandhaa",
-  "tag": "dpo_w_sf_helper_depth_10_multipv_topk_10_restrict_cp_window_60_True",
+  "tag": "dpo_w_sf_helper_depth_18_multipv_topk_10_restrict_cp_window_60_True",
   "maia_type": "blitz",
   "device": "cpu",
   "n": 500,
-  "dpo_w_sf_helper_depth_10_multipv_topk_10_restrict_cp_window_60_True_loss": 0.6751647553443909,
+  "dpo_w_sf_helper_depth_18_multipv_topk_10_restrict_cp_window_60_True_loss": 0.6751647553443909,
   "mean_logp_gap_pi": 0.30347950506210325,
   "mean_logp_gap_ref": -0.1548410034775734,
   "mean_gap_improve": 0.4583205139636993,
@@ -432,20 +432,20 @@
     "sf_total_rows": 500,
     "sf_valid_rows": 500,
     "sf_help_top1_acc": 0.418,
-    "sf_help_top5_hit_cand": 0.878,
+    "sf_help_top5_hit_cand": 0.876,
     "sf_help_top10_hit_cand": 0.956,
-    "sf_help_mean_cp_gap": 28.466,
-    "sf_help_best_sf_rate": 0.424,
-    "sf_help_mean_entropy": 1.1502984208744018,
-    "sf_help_mean_logp_selected_full": -1.2489960607217263,
-    "sf_help_chosen_in_cands": 492.0,
-    "sf_help_p_chosen_in_cands_sum": 205.6259531287863,
-    "sf_help_mean_p_chosen_cond": 0.41125190625757263,
-    "sf_help_mean_p_rejected_cond": 0.29554265354053494,
-    "sf_help_mean_logp_chosen_cond": -1.980752798474521,
-    "sf_help_mean_logp_rejected_cond": -4.613897683448146,
-    "sf_help_mean_gap_logp_cond": 2.6331448849736288,
-    "sf_help_mean_kl_q_vs_base": 0.263248148827992,
+    "sf_help_mean_cp_gap": 31.438,
+    "sf_help_best_sf_rate": 0.41,
+    "sf_help_mean_entropy": 1.1141682029426447,
+    "sf_help_mean_logp_selected_full": -1.2273591486589621,
+    "sf_help_chosen_in_cands": 490.0,
+    "sf_help_p_chosen_in_cands_sum": 212.152494324582,
+    "sf_help_mean_p_chosen_cond": 0.424304988649164,
+    "sf_help_mean_p_rejected_cond": 0.2865604705615697,
+    "sf_help_mean_logp_chosen_cond": -2.0545522731908124,
+    "sf_help_mean_logp_rejected_cond": -5.5707282022753315,
+    "sf_help_mean_gap_logp_cond": 3.516175929084525,
+    "sf_help_mean_kl_q_vs_base": 0.3030152985693356,
     "full_hit1": 0.462,
     "full_hit5": 0.864,
     "full_hit10": 0.968,
@@ -461,15 +461,15 @@
         "count": 4
       },
       {
-        "uci": "c7c5",
+        "uci": "d7d5",
         "count": 1
       }
     ],
-    "sf_help_chosen_in_cands_rate": 0.984,
-    "sf_help_mean_p_chosen_given_in": 0.4179389291235494,
+    "sf_help_chosen_in_cands_rate": 0.98,
+    "sf_help_mean_p_chosen_given_in": 0.4329642741318,
     "sf_config": {
       "stockfish_path": "D:\\jcarl\\stockfish\\stockfish-windows-x86-64-avx2.exe",
-      "depth": 10,
+      "depth": 18,
       "multipv_topk": 10,
       "use_gibbs": true,
       "k": 40,
@@ -493,59 +493,59 @@
       "ply0_white": [
         {
           "uci": "e2e4",
-          "p": 0.9783666193107485
+          "p": 0.9778989686722616
         },
         {
           "uci": "c2c4",
-          "p": 0.018308120461060395
+          "p": 0.018684929285644716
         },
         {
           "uci": "b1c3",
-          "p": 0.0017143548461350101
+          "p": 0.0017310466324716996
         },
         {
           "uci": "d2d4",
-          "p": 0.001077018298776458
+          "p": 0.0010846531867782928
         },
         {
           "uci": "g1f3",
-          "p": 0.00017970547175999186
+          "p": 0.00018001097986751396
         },
         {
           "uci": "e2e3",
-          "p": 0.00017695153672974675
+          "p": 0.00017836438192987377
         },
         {
           "uci": "b2b3",
-          "p": 0.00010149480732439661
+          "p": 0.00015108001739198973
         },
         {
           "uci": "c2c3",
-          "p": 4.899726082045032e-05
+          "p": 4.938649425898656e-05
         },
         {
           "uci": "d2d3",
-          "p": 2.2881766722925214e-05
+          "p": 3.509467923907587e-05
         },
         {
           "uci": "a2a4",
-          "p": 2.3770767053261146e-06
+          "p": 4.815881661055273e-06
         },
         {
           "uci": "a2a3",
-          "p": 7.816804248802198e-07
+          "p": 1.1883228978595922e-06
         },
         {
           "uci": "b2b4",
-          "p": 5.214160079418877e-07
+          "p": 2.630302045537123e-07
         },
         {
           "uci": "g2g3",
-          "p": 1.3850740297742336e-07
+          "p": 1.417417226219596e-07
         },
         {
           "uci": "h2h3",
-          "p": 3.755938100798812e-08
+          "p": 5.6693670189138015e-08
         },
         {
           "uci": "a1h8",
@@ -695,71 +695,71 @@
       "ply1_black": [
         {
           "uci": "e7e5",
-          "p": 0.6493770842492768
+          "p": 0.6503573493880374
         },
         {
           "uci": "c7c5",
-          "p": 0.2118953551554101
+          "p": 0.2109402658923985
         },
         {
           "uci": "d7d5",
-          "p": 0.08533960389191582
+          "p": 0.08508901043861206
         },
         {
           "uci": "b8c6",
-          "p": 0.025176532301923852
+          "p": 0.025354431121652327
         },
         {
           "uci": "g8f6",
-          "p": 0.014185373298852479
+          "p": 0.014127624696666624
         },
         {
           "uci": "e7e6",
-          "p": 0.007055778828399856
+          "p": 0.006949309434225825
         },
         {
           "uci": "c7c6",
-          "p": 0.0034496900119665363
+          "p": 0.0034787247539723645
         },
         {
           "uci": "d7d6",
-          "p": 0.0018105258055472276
+          "p": 0.0018247243725566793
         },
         {
           "uci": "b7b6",
-          "p": 0.0013373551330549335
+          "p": 0.0013632535395718974
         },
         {
           "uci": "f7f5",
-          "p": 0.00023936046766008073
-        },
-        {
-          "uci": "a7a5",
-          "p": 7.825700162534783e-05
-        },
-        {
-          "uci": "g7g6",
-          "p": 2.447602966053245e-05
-        },
-        {
-          "uci": "a7a6",
-          "p": 1.5319513246529404e-05
+          "p": 0.0002399228392200765
         },
         {
           "uci": "b8a6",
-          "p": 8.213838893734e-06
+          "p": 0.0001440731112383602
+        },
+        {
+          "uci": "a7a5",
+          "p": 7.812103522757946e-05
+        },
+        {
+          "uci": "g7g6",
+          "p": 2.4469489030979796e-05
+        },
+        {
+          "uci": "a7a6",
+          "p": 1.528533170763501e-05
         },
         {
           "uci": "h7h6",
-          "p": 6.955534497024546e-06
+          "p": 6.934192012670298e-06
         },
         {
-          "uci": "h7h5",
-          "p": 6.004435250345084e-08
+          "uci": "b7b5",
+          "p": 6.440448562887347e-06
         },
         {
           "uci": "f7f6",
-          "p": 5.8893716628229434e-08
+          "p": 5.991530613030928e-08
         },
         {
           "uci": "a8h1",
