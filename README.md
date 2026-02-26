@@ -218,6 +218,15 @@ Exact commands are documented in `scripts/` and `configs/`.
 
 ---
 
+## Lichess Bots Released
+You can play these bots. They mostly get matched against bots at the moment so their ELO is not calibrated against a human playing pool, making them underestimated we beleive, especially given we tweak them from time-to-time to test various configs, causing some temporary ELO decay. 
+
+List of bots with move time prediction model + Maia2 fine-tuned w/ DPO on blitz tournament games:
+
+Magnus Carlsen: https://lichess.org/@/magnuscarlsenstyles
+Alireza Firouzja: https://lichess.org/@/firouzjastyles
+Rameshbabu Praggnanandhaa: https://lichess.org/@/praggstyle
+
 ## Licensing
 
 * **Code:** Apache License 2.0
