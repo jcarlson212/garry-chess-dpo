@@ -206,8 +206,27 @@ _GLOBALS: Dict[str, Any] = {
     "elo_dict": None,
     "all_moves": None,
     "all_moves_dict": None,
-    "models": {},     # gm_name -> {"base":..., "policy":..., "sf":..., "maia_type":...}
+    "models": {},     # gm_name -> {"policy":..., "sf":..., "maia_type":...}
 }
+
+_GLOBALS["sf"] = None
+
+def get_stockfish() -> chess.engine.SimpleEngine:
+    if _GLOBALS["sf"] is None:
+        stockfish_path = os.environ.get("STOCKFISH_PATH", "/opt/bin/stockfish")
+        sf_threads = int(os.environ.get("STOCKFISH_THREADS", "1"))
+        sf_hash_mb = int(os.environ.get("STOCKFISH_HASH_MB", "128"))
+        sf_timeout_s = float(os.environ.get("STOCKFISH_TIMEOUT_S", "5.0"))
+        _GLOBALS["sf"] = make_stockfish(
+            stockfish_path,
+            threads=sf_threads,
+            hash_mb=sf_hash_mb,
+            uci_elo=None,          # full strength by default; you can map this from game_type_id too
+            skill_level=None,
+            timeout=sf_timeout_s,
+        )
+    return _GLOBALS["sf"]
+
 
 def get_device() -> torch.device:
     # Lambda is typically CPU unless you’re doing something custom
@@ -252,7 +271,6 @@ def get_or_load_gm_bundle(profile: EngineProfile) -> Dict[str, Any]:
 
     device: torch.device = _GLOBALS["device"]
 
-    base = maia_model.from_pretrained(type=maia_type, device=str(device)).to(device).eval()
     policy = maia_model.from_pretrained(type=maia_type, device=str(device)).to(device).eval()
 
     model_root = os.environ.get("MODEL_ROOT", "/opt/models")  # put weights in a Lambda layer or container image
@@ -268,22 +286,8 @@ def get_or_load_gm_bundle(profile: EngineProfile) -> Dict[str, Any]:
 
     _load_policy_weights(policy, str(pt_path))
 
-    stockfish_path = os.environ.get("STOCKFISH_PATH", "/opt/bin/stockfish")
-    sf_threads = int(os.environ.get("STOCKFISH_THREADS", "1"))
-    sf_hash_mb = int(os.environ.get("STOCKFISH_HASH_MB", "128"))
-    sf_timeout_s = float(os.environ.get("STOCKFISH_TIMEOUT_S", "5.0"))
-
-    sf = make_stockfish(
-        stockfish_path,
-        threads=sf_threads,
-        hash_mb=sf_hash_mb,
-        uci_elo=None,          # full strength by default; you can map this from game_type_id too
-        skill_level=None,
-        timeout=sf_timeout_s,
-    )
-
+    sf = get_stockfish()
     bundle = {
-        "base": base,
         "policy": policy,
         "sf": sf,
         "maia_type": maia_type,
