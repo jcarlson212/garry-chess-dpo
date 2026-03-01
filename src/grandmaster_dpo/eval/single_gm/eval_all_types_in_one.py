@@ -47,6 +47,7 @@ def main() -> None:
     ap.add_argument("--sample", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--disable_initial_model_types", action="store_true")
+    ap.add_argument("--disable_output", action="store_true")
 
     args = ap.parse_args()
 
@@ -101,6 +102,8 @@ def main() -> None:
                 continue
             m_out = out_dir / m.tag
             m_out.mkdir(parents=True, exist_ok=True)
+            if args.disable_output:
+                m_out = None
             res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name)
             results.append(res)
             print(f"[done] {m.tag} -> {m_out}")
@@ -109,8 +112,11 @@ def main() -> None:
             m.close()
 
     # one combined summary file
-    (out_dir / "summary_all.json").write_text(__import__("json").dumps(results, indent=2))
-    print(f"[saved] {out_dir / 'summary_all.json'}")
+    if not args.disable_output:
+        (out_dir / "summary_all.json").write_text(__import__("json").dumps(results, indent=2))
+        print(f"[saved] {out_dir / 'summary_all.json'}")
+    else:
+        print("Output is disabled, so no summary file was saved.")
 
 if __name__ == "__main__":
     main()
