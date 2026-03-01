@@ -266,6 +266,7 @@ def batch_preprocess(
     elo_oppo_cats = []
 
     for fen, es, eo in zip(fens, elo_self, elo_oppo):
+        es, eo = 2000, 2000
         bi, es_cat, eo_cat, lm = inference.preprocessing(
             fen, int(es), int(eo), elo_dict, all_moves_dict
         )
@@ -940,6 +941,131 @@ class EvalModel(ABC):
     # Shared eval
     # -----------------------
 
+
+    def debug_opening_distribution(self, policy, device, topk: int = 20):
+        import chess
+        import torch
+
+        def _to_tensor(x):
+            if isinstance(x, torch.Tensor):
+                return x
+            return torch.as_tensor(x)
+
+        def _as_batched_long(x):
+            # embedding() requires LongTensor indices; also ensure batch dim [B]
+            if isinstance(x, int):
+                return torch.tensor([x], device=device, dtype=torch.long)
+            x = _to_tensor(x)
+            if x.dim() == 0:
+                x = x.unsqueeze(0)
+            elif x.dim() > 1:
+                x = x.reshape(-1)  # defensive: flatten to [B] if something odd comes back
+            return x.to(device=device, dtype=torch.long)
+
+        def _as_batched_board(board_input):
+            # Maia expects [B, 1152] so it can view -> [B, C, 8, 8] with C=18
+            x = _to_tensor(board_input)
+
+            # Common shapes we might get back from preprocessing:
+            #   [18, 8, 8]  (C,8,8)
+            #   [18, 64]    (C,64)
+            #   [1152]      (flat)
+            #   [B,1152]    (already batched)
+            if x.dim() == 3 and x.shape[-2:] == (8, 8):
+                x = x.reshape(1, -1)          # [1, 18*8*8]
+            elif x.dim() == 2 and x.shape[-1] == 64:
+                x = x.reshape(1, -1)          # [1, 18*64]
+            elif x.dim() == 1:
+                x = x.unsqueeze(0)            # [1, 1152]
+            elif x.dim() == 2 and x.shape[-1] == 1152:
+                pass                          # already [B,1152]
+            else:
+                # Last-resort: make it [1, -1] and hope it is 1152
+                x = x.reshape(1, -1)
+
+            # Keep dtype consistent with the model; float is safe here.
+            return x.to(device=device, dtype=torch.float32)
+
+        def _as_batched_mask(legal_moves):
+            m = _to_tensor(legal_moves)
+            # expected either [V] or [B,V] or something like [1,V]
+            if m.dim() == 1:
+                m = m.unsqueeze(0)
+            return m.to(device=device)
+
+        # --------------------------
+        # Build opening position inputs
+        # --------------------------
+        board = chess.Board()
+        fen = board.fen()
+
+        # NOTE: inference.preprocessing signature can differ by maia2 version.
+        # Your earlier error showed it returns 4 values in your env, so we handle both.
+        prep_out = inference.preprocessing(
+            fen,
+            int(2000),
+            int(2000),
+            self.elo_dict,
+            self.all_moves_dict,
+        )
+
+        if len(prep_out) == 4:
+            board_input, es_t, eo_t, legal_moves = prep_out
+        elif len(prep_out) == 5:
+            board_input, es_t, eo_t, legal_moves, _ = prep_out
+        else:
+            raise ValueError(f"inference.preprocessing returned {len(prep_out)} values, expected 4 or 5")
+
+        board_input = _as_batched_board(board_input)
+        es_t = _as_batched_long(es_t)
+        eo_t = _as_batched_long(eo_t)
+        legal_moves = _as_batched_mask(legal_moves)
+
+        # --------------------------
+        # Forward + mask to legal
+        # --------------------------
+        policy.eval()
+        with torch.no_grad():
+            logits = forward_logits(policy, board_input, es_t, eo_t)
+            # allow either [V] or [B,V]
+            if logits.dim() == 1:
+                logits = logits.unsqueeze(0)
+            logits = logits[0]  # [V]
+
+        mask = legal_moves[0].bool()  # [V]
+
+        print("=== Opening distribution ===")
+        print(f"fen: {fen}")
+        print(f"board_input shape: {tuple(board_input.shape)} (expected [1,1152])")
+        print(f"logits shape: {tuple(logits.shape)}")
+        print(f"mask shape: {tuple(mask.shape)}  num_legal(mask.sum)={int(mask.sum())}")
+
+        # If this is 0, your legal mask is in a different space than the policy vocab
+        if int(mask.sum()) == 0:
+            # extra diagnostics to help you immediately see what's off
+            nz = torch.nonzero(mask, as_tuple=False).reshape(-1)
+            print(f"mask nonzero count: {nz.numel()}")
+            print("WARNING: num legal is 0. This usually means legal_moves mask is not aligned with policy vocab.")
+            print("First 64 mask values:", mask[:64].to(torch.int).tolist())
+            return
+
+        legal_logits = logits[mask]
+        probs = torch.softmax(legal_logits, dim=-1)
+
+        ent = float(-(probs * torch.log(probs + 1e-12)).sum())
+        print("entropy:", ent)
+
+        k = min(topk, probs.numel())
+        vals, idxs = torch.topk(probs, k=k)
+
+        # Map back from "legal-space index" -> "global vocab index"
+        legal_indices = torch.nonzero(mask, as_tuple=False).reshape(-1)
+
+        for rank, (p, j) in enumerate(zip(vals.tolist(), idxs.tolist()), start=1):
+            vocab_idx = int(legal_indices[j].item())
+            print(f"[{rank:02d}] vocab_idx={vocab_idx:4d}  p={p:.4f}")
+
+
     @torch.no_grad()
     def run_eval(
         self,
@@ -985,10 +1111,53 @@ class EvalModel(ABC):
                 device=self.device,
             )
 
+
+
+            print("=== DEBUG: first batch ===")
+            print("batch size:", len(fens))
+            print("ply_idx sample:", ply_idxs[:10])
+
+            # Always print first few rows no matter what (so you know logging works)
+            for i in range(min(5, len(fens))):
+                lm_sum = int(legal_moves[i].sum().item())
+                print(f"[row {i}] ply_idx={ply_idxs[i]} ply_abs={fen_to_ply_abs(fens[i])} lm_sum={lm_sum}")
+                legal_idxs = torch.nonzero(legal_moves[i] > 0).squeeze(1)[:30].tolist()
+                print("  first legal idxs:", legal_idxs)
+        
+            self.debug_opening_distribution(self.policy, self.device)
+
             logits_pi = forward_logits(self.policy, board_input, es_t, eo_t)
             logits_ref = forward_logits(self.base, board_input, es_t, eo_t)
 
             logits_pi_m = apply_legal_mask(logits_pi, legal_moves)
+
+
+
+            # After logits_pi_m is computed:
+            with torch.no_grad():
+                # find first ply_abs==0 row in this batch
+                ply0 = [i for i, fen in enumerate(fens) if fen_to_ply_abs(fen) == 0]
+                if ply0:
+                    i = ply0[0]
+                    row = logits_pi_m[i]                 # already masked
+                    probs = torch.softmax(row, dim=-1)   # over vocab indices
+
+                    # show top legal moves by prob, decoded to uci
+                    vals, idxs = torch.topk(probs, k=20)
+                    for k in range(20):
+                        print("\n=== PLY0 ROW (from batch) distribution ===")
+                    print("fen:", fens[i])
+                    print("elo_self raw:", es[i], "elo_oppo raw:", eo[i])
+                    print("elo_self_cat:", int(es_t[i].item()), "elo_oppo_cat:", int(eo_t[i].item()))
+                    ent = float(-(probs * torch.log(probs + 1e-12)).sum().item())
+                    print("entropy:", ent)
+
+                    for r, (p, j) in enumerate(zip(vals.tolist(), idxs.tolist()), 1):
+                        uci = vocab_index_to_uci(self.all_moves, fens[i], int(j))
+                        print(f"[{r:02d}] idx={int(j):4d} uci={uci:6s} p={p:.6f}")
+
+
+
             logits_ref_m = apply_legal_mask(logits_ref, legal_moves)
 
             chosen_idx = torch.tensor(
