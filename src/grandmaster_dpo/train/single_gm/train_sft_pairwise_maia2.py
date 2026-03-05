@@ -219,7 +219,7 @@ def evaluate(
 # ----------------------------
 
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_sft_maia2.py --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_sft_pairwise_maia2.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", type=str, required=True)
 
@@ -230,16 +230,18 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--weight_decay", type=float, default=0.0)
     ap.add_argument("--grad_clip", type=float, default=1.0)
+    ap.add_argument("--train_val_folder", type=str, required=True)
+    ap.add_argument("--out_dir", type=str, required=True)
 
     ap.add_argument("--maia_type", type=str, default="blitz", choices=["blitz", "rapid"]) # this is just the base model from maia2 used.
 
     args = ap.parse_args()
 
     # Reuse your same train/val JSONLs (they contain chosen + rejected, but we only use chosen)
-    train_jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_train_dpo.jsonl")
-    val_jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_val_dpo.jsonl")
+    train_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_train_dpo.jsonl")
+    val_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_val_dpo.jsonl")
 
-    out_dir = Path(f"./processed/single_gm/train_val/{args.gm_name}")
+    out_dir = Path(f"{args.out_dir}/{args.gm_name}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = device_from_str(args.device)

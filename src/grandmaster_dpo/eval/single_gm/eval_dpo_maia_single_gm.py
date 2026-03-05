@@ -92,13 +92,130 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # Helpers (match training)
 # ----------------------------
 
+@torch.no_grad()
+def probe_opening_distributions_from_policy(
+    policy: torch.nn.Module,
+    *,
+    maia_type: str,
+    device: torch.device,
+    all_moves: List[str],
+    all_moves_dict: Dict[str, int],
+    elo_dict: Dict[str, int],
+    elo_self: int = 2800,
+    elo_oppo: int = 2800,
+    temperature: float = 1.0,
+) -> Dict[str, Any]:
+    """
+    Returns:
+      {
+        "white_first_move_probs": {uci: prob, ...},
+        "black_reply_probs_cond_on_white": {
+            white_uci: {black_uci: prob, ...},
+            ...
+        },
+        "meta": {...}
+      }
 
-def mirror_uci_like_board_mirror(uci: str) -> str:
-    """Mirror a UCI move the same way chess.Board(...).mirror() changes coordinates."""
-    mv = chess.Move.from_uci(uci)
-    f = chess.square_mirror(mv.from_square)
-    t = chess.square_mirror(mv.to_square)
-    return chess.Move(f, t, promotion=mv.promotion).uci()
+    Notes:
+      - Uses fine-tuned policy logits (legal-masked) in *canonical* opening states.
+      - White distribution is computed at the initial position.
+      - Black conditional distributions are computed at positions after each probed white first move.
+      - Probabilities are over a curated move set; we also return 'other_mass' remainder.
+    """
+
+    def apply_legal_mask_row(logits_row: torch.Tensor, legal_row: torch.Tensor) -> torch.Tensor:
+        neg_inf = torch.finfo(logits_row.dtype).min
+        return torch.where(legal_row > 0, logits_row, torch.full_like(logits_row, neg_inf))
+
+    def uci_to_vocab_index_local(fen: str, uci: str) -> int:
+        side = fen.split(" ")[1]  # 'w' or 'b'
+        # Maia vocab is stored in "white perspective".
+        # For real black moves, map them into that space using mirror_move (involution).
+        uci_eff = mirror_move(uci) if side == "b" else uci
+        return int(all_moves_dict.get(uci_eff, -1))
+
+    def probs_for_ucis(fen: str, logits_masked_row: torch.Tensor, ucis: List[str]) -> Tuple[Dict[str, float], float]:
+        # temperature
+        if temperature <= 0:
+            probs = torch.softmax(logits_masked_row, dim=-1)
+        else:
+            probs = torch.softmax(logits_masked_row / temperature, dim=-1)
+
+        out: Dict[str, float] = {}
+        used = 0.0
+        for u in ucis:
+            j = uci_to_vocab_index_local(fen, u)
+            p = float(probs[j].item()) if j >= 0 else 0.0
+            out[u] = p
+            used += p
+        other = max(0.0, 1.0 - used)
+        return out, other
+
+    # ---- canonical states we probe ----
+
+    # Initial position (white to move)
+    start_fen = chess.STARTING_FEN  # "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+    # White first moves we probe (you can expand this list)
+    white_first_moves = [
+        "e2e4", "d2d4", "c2c4", "g1f3", "g2g3", "b2b3", "f2f4", "b2b4", "a2a4",
+    ]
+
+    # Black reply moves we probe (common replies; expand as you like)
+    black_replies = [
+        "c7c5", "e7e5", "e7e6", "c7c6", "d7d5", "g8f6", "g7g6", "d7d6",
+    ]
+
+    # ---- helper to run model on one fen ----
+    def logits_masked_for_fen(fen: str) -> torch.Tensor:
+        bi, es_cat, eo_cat, lm = inference.preprocessing(
+            fen, int(elo_self), int(elo_oppo), elo_dict, all_moves_dict
+        )
+        board_input = bi.unsqueeze(0).to(device)            # [1,...]
+        legal = lm.unsqueeze(0).to(device)                  # [1,V]
+        es_t = torch.tensor([int(es_cat)], device=device).long()
+        eo_t = torch.tensor([int(eo_cat)], device=device).long()
+
+        logits, _, _ = policy(board_input, es_t, eo_t)       # [1,V]
+        logits = logits.squeeze(0)                           # [V]
+        legal = legal.squeeze(0)                             # [V]
+        return apply_legal_mask_row(logits, legal)
+
+    # ---- compute white distribution ----
+    logits_start = logits_masked_for_fen(start_fen)
+    white_probs, white_other = probs_for_ucis(start_fen, logits_start, white_first_moves)
+
+    
+
+    # ---- compute black conditional distributions ----
+    black_cond: Dict[str, Any] = {}
+    for w in white_first_moves:
+        b = chess.Board(start_fen)
+        b.push_uci(w)
+        fen_b = b.fen()
+
+        logits_b = logits_masked_for_fen(fen_b)
+        probs_b, other_b = probs_for_ucis(fen_b, logits_b, black_replies)
+
+        black_cond[w] = {
+            "fen_after_white": fen_b,
+            "black_reply_probs": probs_b,
+            "other_mass": other_b,
+        }
+
+    return {
+        "white_first_move_probs": white_probs,
+        "white_other_mass": white_other,
+        "black_reply_probs_cond_on_white": black_cond,
+        "meta": {
+            "elo_self": elo_self,
+            "elo_oppo": elo_oppo,
+            "temperature": temperature,
+            "maia_type": maia_type,
+            "white_moves_probed": white_first_moves,
+            "black_replies_probed": black_replies,
+        },
+    }
 
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
@@ -150,7 +267,7 @@ def forward_logits(m: torch.nn.Module, board_input: torch.Tensor, es: torch.Tens
 
 def uci_to_vocab_index(all_moves_dict: Dict[str, int], fen: str, uci: str) -> int:
     side = fen.split(" ")[1]
-    uci_eff = mirror_uci_like_board_mirror(uci) if side == "b" else uci
+    uci_eff = mirror_move(uci) if side == "b" else uci
     return int(all_moves_dict.get(uci_eff, -1))
 
 def gather_logprob(logits_masked: torch.Tensor, idxs: torch.Tensor) -> torch.Tensor:
@@ -352,7 +469,7 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 # ----------------------------
 
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_dpo_maia_single_gm.py --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_dpo_maia_single_gm.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/eval_results_twic --model_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--split_name", required=False, default="val", help="train or val")
@@ -361,13 +478,17 @@ def main() -> None:
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--beta", type=float, default=0.1)
     ap.add_argument("--n_boot", type=int, default=100, help="Number of bootstrap resamples for confidence intervals")
-    
+    ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
+    ap.add_argument("--out_dir", required=True, help="Output directory.")
+    ap.add_argument("--model_dir", required=True, help="Model directory.")
     args = ap.parse_args()
-    jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"./processed/single_gm/train_val/{args.gm_name}/policy_best.pt")
-    out_dir = Path(f"./processed/single_gm/train_val/validation_results/{args.gm_name}/")
+    jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
+    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_dpo.pt")
+    out_dir = Path(f"{args.out_dir}/{args.gm_name}/")
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_str(args.device)
+
+    
 
     # Build vocab + elo dict deterministically (avoid prepare() ordering issues)
     all_moves = get_all_possible_moves()
@@ -389,6 +510,21 @@ def main() -> None:
 
     base.eval()
     policy.eval()
+
+    opening_probe = probe_opening_distributions_from_policy(
+        policy,
+        maia_type=args.maia_type,
+        device=device,
+        all_moves=all_moves,
+        all_moves_dict=all_moves_dict,
+        elo_dict=elo_dict,
+        elo_self=2800,
+        elo_oppo=2800,
+        temperature=1.0,
+    )
+    out_dir.joinpath("opening_probe_policy.json").write_text(json.dumps(opening_probe, indent=2))
+    print(f"Opening probe saved to {out_dir.joinpath('opening_probe_policy.json')}")
+
 
     ds = DpoPairs(jsonl)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)

@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import math
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -56,6 +57,39 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # ----------------------------
 # Helpers
 # ----------------------------
+
+def ply_from_fen(fen: str) -> int:
+    parts = fen.split()
+    side = parts[1]
+    fullmove = int(parts[5])
+    return 2 * (fullmove - 1) + (1 if side == "b" else 0)
+
+def kl_lambda_by_ply(ply: torch.Tensor, lam_open: float = 0.20, lam_mid: float = 0.02, lam_end: float = 0.08) -> torch.Tensor:
+    # ply: [B] long
+
+    # example cutoffs (in ply)
+    # opening: <= 20 ply  (~10 moves each side)
+    # middlegame: 21..80 ply
+    # endgame: > 80 ply
+    lam = torch.full_like(ply, lam_mid, dtype=torch.float32)
+
+    lam = torch.where(ply <= 20, torch.tensor(lam_open, device=ply.device), lam)
+    lam = torch.where(ply > 80,  torch.tensor(lam_end,  device=ply.device), lam)
+    return lam
+
+def kl_pi_ref_from_logits(
+    logits_pi: torch.Tensor,   # [B, V] already legal-masked (illegal = -inf)
+    logits_ref: torch.Tensor,  # [B, V] already legal-masked
+) -> torch.Tensor:
+    """
+    Returns KL(pi || ref) per example: [B]
+    """
+    logp_pi = torch.log_softmax(logits_pi, dim=-1)     # [B, V]
+    logp_ref = torch.log_softmax(logits_ref, dim=-1)   # [B, V]
+    p_pi = logp_pi.exp()
+    # KL(pi||ref) = sum_a pi(a) (log pi(a) - log ref(a))
+    kl = (p_pi * (logp_pi - logp_ref)).sum(dim=-1)     # [B]
+    return kl
 
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
@@ -179,7 +213,6 @@ def dpo_loss(
     x = beta * (pi_gap - ref_gap)
     return -torch.nn.functional.logsigmoid(x).mean()
 
-
 # ----------------------------
 # Eval
 # ----------------------------
@@ -219,6 +252,22 @@ def evaluate(
 
         loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
 
+        kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
+        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device="cpu").long() # [B]
+
+        logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
+        p_ref = torch.exp(logp_ref)
+        entropy = -(p_ref * logp_ref).sum(dim=-1)          # [B]
+        num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
+        H_max = torch.log(num_legal).to(entropy.device)
+        entropy_norm = (entropy / H_max).clamp(0.0, 1.0)
+        k_entropy = 0.5
+        lam_t = k_entropy * entropy_norm            # [B]
+        lam_t = lam_t.clamp(min=0.05, max=0.40)   # e.g., 0.05 to 0.40
+
+        kl_term = (lam_t * kl).mean()
+        loss += kl_term
+
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
         n += bs
@@ -231,7 +280,7 @@ def evaluate(
 # ----------------------------
 
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_dpo_maia2.py --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_dpo_maia2.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", type=str, required=True)
 
@@ -245,12 +294,14 @@ def main() -> None:
     ap.add_argument("--grad_clip", type=float, default=1.0)
 
     ap.add_argument("--maia_type", type=str, default="blitz", choices=["blitz", "rapid"])
+    ap.add_argument("--train_val_folder", type=str, required=True)
+    ap.add_argument("--out_dir", type=str, required=True)
 
     args = ap.parse_args()
 
-    train_jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_train_dpo.jsonl")
-    val_jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_val_dpo.jsonl")
-    out_dir = Path(f"./processed/single_gm/train_val/{args.gm_name}")
+    train_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_train_dpo.jsonl")
+    val_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_val_dpo.jsonl")
+    out_dir = Path(f"{args.out_dir}/{args.gm_name}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = device_from_str(args.device)
@@ -307,6 +358,26 @@ def main() -> None:
 
             loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=args.beta)
 
+            kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
+            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device="cpu").long() # [B]
+
+            logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
+            p_ref = torch.exp(logp_ref)
+            entropy = -(p_ref * logp_ref).sum(dim=-1)          # [B]
+            num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
+            H_max = torch.log(num_legal).to(entropy.device)
+            entropy_norm = (entropy / H_max).clamp(0.0, 1.0)
+            k_entropy = 0.5
+            lam_t = k_entropy * entropy_norm            # [B]
+            lam_t = lam_t.clamp(min=0.05, max=0.40)   # e.g., 0.05 to 0.40
+
+            kl_term = (lam_t * kl).mean()
+            loss += kl_term
+
+            if step % 200 == 0:
+                print("lam mean/min/max:", lam_t.mean().item(), lam_t.min().item(), lam_t.max().item())
+                print("kl mean/p95:", kl.mean().item(), torch.quantile(kl.detach(), 0.95).item())
+
             optim.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), args.grad_clip)
@@ -323,13 +394,13 @@ def main() -> None:
         val_loss = metrics["dpo_loss"]
         print(f"[epoch {epoch}] val_dpo_loss={val_loss:.4f}")
 
-        ckpt_path = out_dir / f"policy_epoch{epoch}.pt"
+        ckpt_path = out_dir / f"policy_epoch{epoch}_dpo.pt"
         torch.save(policy.state_dict(), ckpt_path)
         print(f"Saved: {ckpt_path}")
 
         if val_loss < best_val:
             best_val = val_loss
-            best_path = out_dir / "policy_best.pt"
+            best_path = out_dir / "policy_best_dpo.pt"
             torch.save(policy.state_dict(), best_path)
             print(f"Saved best: {best_path} (val_dpo_loss={best_val:.4f})")
 

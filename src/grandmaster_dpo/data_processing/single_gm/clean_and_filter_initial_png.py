@@ -346,7 +346,7 @@ def batch_games(games: Sequence[chess.pgn.Game], batch_size: int) -> Iterator[Li
 # ----------------------------
 
 def main():
-    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/clean_and_filter_initial_png.py  --pgn ./data/raw/pgndownload_magnus.pgn --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/clean_and_filter_initial_png.py  --pgn ./final_experiments_for_paper/experiment1/raw_pgns_twic/carlsen.pgn --gm_name carlsen --out_dir ./final_experiments_for_paper/experiment1/cleaned_and_filtered_pgns_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--pgn", required=True, help="Path to input PGN.")
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
@@ -354,9 +354,10 @@ def main():
     ap.add_argument("--min_plies", type=int, default=20)
     ap.add_argument("--max_seq_len", type=int, default=256)
     ap.add_argument("--batch_size", type=int, default=32)
+    ap.add_argument("--out_dir", required=True, help="Output directory.")
     args = ap.parse_args()
 
-    out_path = Path(f"./processed/single_gm/{args.gm_name}.pgn")
+    out_path = Path(f"{args.out_dir}/{args.gm_name}.pgn")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 1) Filter blitz games (stream)

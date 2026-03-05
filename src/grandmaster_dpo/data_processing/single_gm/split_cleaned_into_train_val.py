@@ -91,15 +91,17 @@ def split_games(
 
 
 def main():
-    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/split_cleaned_into_train_val.py --gm_name magnus
+    # Example usage: python ./src/grandmaster_dpo/data_processing/single_gm/split_cleaned_into_train_val.py --gm_name carlsen --in_dir ./final_experiments_for_paper/experiment1/cleaned_and_filtered_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/train_val_pgns_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction (default 0.2).")
     ap.add_argument("--seed", type=int, default=7, help="Deterministic split seed.")
     ap.add_argument("--no_dedupe", action="store_true", help="Disable deduplication.")
+    ap.add_argument("--in_dir", required=True, help="Input directory.")
+    ap.add_argument("--out_dir", required=True, help="Output directory.")
     args = ap.parse_args()
-    in_pgn = Path(f"./processed/single_gm/{args.gm_name}.pgn")
-    out_dir = Path(f"./processed/single_gm/train_val/")
+    in_pgn = Path(f"{args.in_dir}/{args.gm_name}.pgn")
+    out_dir = Path(f"{args.out_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     games = list(iter_pgn_games(in_pgn))
