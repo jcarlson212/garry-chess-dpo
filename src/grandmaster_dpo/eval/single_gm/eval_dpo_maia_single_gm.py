@@ -491,7 +491,7 @@ def main() -> None:
         kl_extension = "kl_penalty"
         
 
-    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_dpo.pt")
+    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_dpo_no_kl_penalty.pt")
     out_dir = Path(f"{args.out_dir}/{args.gm_name}/")
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_str(args.device)

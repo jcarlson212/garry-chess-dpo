@@ -93,7 +93,7 @@ def pick_rejected_from_stockfish(
     sf_engine: chess.engine.SimpleEngine,
     # Stockfish candidate generation
     multipv: int = 10,
-    depth: int = 8,
+    depth: int = 10,
     # Keep only "near-equal" SF moves (prevents garbage negatives)
     cp_window: int = 40,                 # keep moves with cp >= best_cp - cp_window
     # How to sample within kept SF moves
