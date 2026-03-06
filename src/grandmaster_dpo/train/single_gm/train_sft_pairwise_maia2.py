@@ -62,6 +62,29 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # Helpers
 # ----------------------------
 
+def kl_pi_ref_from_logits(
+    logits_pi: torch.Tensor,   # [B, V] already legal-masked (illegal = -inf)
+    logits_ref: torch.Tensor,  # [B, V] already legal-masked
+) -> torch.Tensor:
+    """
+    Returns KL(pi || ref) per example: [B]
+    """
+    logp_pi = torch.log_softmax(logits_pi, dim=-1)     # [B, V]
+    logp_ref = torch.log_softmax(logits_ref, dim=-1)   # [B, V]
+    p_pi = logp_pi.exp()
+    # KL(pi||ref) = sum_a pi(a) (log pi(a) - log ref(a))
+    kl = (p_pi * (logp_pi - logp_ref)).sum(dim=-1)     # [B]
+    return kl
+
+def ply_from_fen(fen: str) -> int:
+    parts = fen.split()
+    side = parts[1]
+    fullmove = int(parts[5])
+    ply = 2 * (fullmove - 1)
+    if side == "b":
+        ply += 1
+    return ply
+
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
     if s in ("cpu",):
@@ -144,10 +167,11 @@ def forward_logits(
 
 def sft_pairwise_loss(
     logp_pi_ch: torch.Tensor,
-    logp_pi_rj: torch.Tensor
+    logp_pi_rj: torch.Tensor,
+    w: torch.Tensor
 ) -> torch.Tensor:
     pi_gap = logp_pi_ch - logp_pi_rj
-    return -torch.nn.functional.logsigmoid(pi_gap).mean()
+    return (-torch.nn.functional.logsigmoid(pi_gap)*w).mean()
 
 def move_logprob_from_logits(
     logits: torch.Tensor,
@@ -205,7 +229,11 @@ def evaluate(
         logp_pi_ch = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_pi_rj = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-        loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj)
+        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
+        # linear decay from 10 → 0 over first 4 plies
+        w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
+
+        loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj, w)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -283,7 +311,11 @@ def main() -> None:
             logp_pi_ch = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["chosen"], device)
             logp_pi_rj = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-            loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj)
+            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
+            # linear decay from 10 → 0 over first 4 plies
+            w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
+
+            loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj, w)
 
             optim.zero_grad(set_to_none=True)
             loss.backward()

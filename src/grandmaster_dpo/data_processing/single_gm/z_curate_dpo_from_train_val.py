@@ -93,7 +93,7 @@ def pick_rejected_from_stockfish(
     sf_engine: chess.engine.SimpleEngine,
     # Stockfish candidate generation
     multipv: int = 10,
-    depth: int = 12,
+    depth: int = 8,
     # Keep only "near-equal" SF moves (prevents garbage negatives)
     cp_window: int = 40,                 # keep moves with cp >= best_cp - cp_window
     # How to sample within kept SF moves
@@ -228,7 +228,7 @@ def pick_rejected_from_stockfish(
     rejected_idx = all_moves_dict.get(rejected_eff, None)
     rejected_prob = float(probs_maia[rejected_idx].item()) if rejected_idx is not None else 0.0
 
-    return rejected_uci, chosen_prob, rejected_prob, legal_count, rejected_cp, best_cp_all
+    return rejected_uci, chosen_prob, rejected_prob, legal_count, rejected_cp, best_cp_all, sf_moves
 
 def stable_game_id(headers: dict, gm_name: str) -> str:
     key = "|".join([
@@ -332,7 +332,7 @@ def make_pairs_for_game(
                     gives_check = board.gives_check(mv)
                     is_promo = mv.promotion is not None
 
-                    rejected_uci, chosen_prob, rejected_prob, legal_count, rejected_cp, best_cp_all = rejected
+                    rejected_uci, chosen_prob, rejected_prob, legal_count, rejected_cp, best_cp_all, sf_moves = rejected
                     print(f"chosen_prob: {chosen_prob}, rejected_prob: {rejected_prob}, win_prob: {win_prob}, rejected_cp: {rejected_cp}, best_cp_all: {best_cp_all}")
                     yield {
                         # DPO core fields
@@ -369,6 +369,7 @@ def make_pairs_for_game(
                             "stockfish": {
                                 "rejected_cp": rejected_cp,
                                 "best_cp_all": best_cp_all,
+                                "sf_moves_returned": sf_moves
                             },
                             "game_header_hash": stable_game_id(headers, gm_name),
                                     # opening reconstruction helper
@@ -456,6 +457,7 @@ def main():
     ap.add_argument("--max_pairs_per_game", type=int, default=0, help="0 means no cap.")
     ap.add_argument("--skip_first_plies", type=int, default=0, help="Number of plies at beg. to skip.")
     ap.add_argument("--sf_path", type=str, default="/usr/local/bin/stockfish")
+    ap.add_argument("--sf_threads", type=int, default=8)
     args = ap.parse_args()
     split_dir = Path(f"{args.split_dir}")
 
@@ -465,7 +467,7 @@ def main():
     maia = load_maia2(maia_type=args.maia_type, device=args.device, pt_path=pt)
     prepared = inference.prepare()  # Maia-2 inference helper :contentReference[oaicite:1]{index=1}
 
-    sf_engine = make_stockfish(args.sf_path, threads=8, hash_mb=2048)
+    sf_engine = make_stockfish(args.sf_path, threads=args.sf_threads, hash_mb=2048)
 
     process_split(
         args.gm_name,

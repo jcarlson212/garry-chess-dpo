@@ -58,25 +58,6 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # Helpers
 # ----------------------------
 
-def ply_from_fen(fen: str) -> int:
-    parts = fen.split()
-    side = parts[1]
-    fullmove = int(parts[5])
-    return 2 * (fullmove - 1) + (1 if side == "b" else 0)
-
-def kl_lambda_by_ply(ply: torch.Tensor, lam_open: float = 0.20, lam_mid: float = 0.02, lam_end: float = 0.08) -> torch.Tensor:
-    # ply: [B] long
-
-    # example cutoffs (in ply)
-    # opening: <= 20 ply  (~10 moves each side)
-    # middlegame: 21..80 ply
-    # endgame: > 80 ply
-    lam = torch.full_like(ply, lam_mid, dtype=torch.float32)
-
-    lam = torch.where(ply <= 20, torch.tensor(lam_open, device=ply.device), lam)
-    lam = torch.where(ply > 80,  torch.tensor(lam_end,  device=ply.device), lam)
-    return lam
-
 def kl_pi_ref_from_logits(
     logits_pi: torch.Tensor,   # [B, V] already legal-masked (illegal = -inf)
     logits_ref: torch.Tensor,  # [B, V] already legal-masked
@@ -90,6 +71,15 @@ def kl_pi_ref_from_logits(
     # KL(pi||ref) = sum_a pi(a) (log pi(a) - log ref(a))
     kl = (p_pi * (logp_pi - logp_ref)).sum(dim=-1)     # [B]
     return kl
+
+def ply_from_fen(fen: str) -> int:
+    parts = fen.split()
+    side = parts[1]
+    fullmove = int(parts[5])
+    ply = 2 * (fullmove - 1)
+    if side == "b":
+        ply += 1
+    return ply
 
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
@@ -205,13 +195,14 @@ def dpo_loss(
     logp_pi_rj: torch.Tensor,
     logp_ref_ch: torch.Tensor,
     logp_ref_rj: torch.Tensor,
+    weights: torch.Tensor,
     beta: float,
 ) -> torch.Tensor:
     # DPO: -log σ( beta * ((π_ch-π_rj) - (ref_ch-ref_rj)) )
     pi_gap = logp_pi_ch - logp_pi_rj
     ref_gap = logp_ref_ch - logp_ref_rj
     x = beta * (pi_gap - ref_gap)
-    return -torch.nn.functional.logsigmoid(x).mean()
+    return (-torch.nn.functional.logsigmoid(x) * weights).mean()
 
 # ----------------------------
 # Eval
@@ -226,6 +217,7 @@ def evaluate(
     loader: DataLoader,
     device: torch.device,
     beta: float,
+    use_kl: bool,
 ) -> Dict[str, float]:
     policy.eval()
     ref.eval()
@@ -250,23 +242,38 @@ def evaluate(
         logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-        loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
+        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
 
-        kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
-        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device="cpu").long() # [B]
+        # linear decay from 2 → 1 over first 20 plies
+        w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
+        
+        loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, w, beta=beta)
 
-        logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
-        p_ref = torch.exp(logp_ref)
-        entropy = -(p_ref * logp_ref).sum(dim=-1)          # [B]
-        num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
-        H_max = torch.log(num_legal).to(entropy.device)
-        entropy_norm = (entropy / H_max).clamp(0.0, 1.0)
-        k_entropy = 0.5
-        lam_t = k_entropy * entropy_norm            # [B]
-        lam_t = lam_t.clamp(min=0.05, max=0.40)   # e.g., 0.05 to 0.40
+        if use_kl:
+            kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
 
-        kl_term = (lam_t * kl).mean()
-        loss += kl_term
+            logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
+            p_ref = torch.exp(logp_ref)
+            logp_pi = torch.log_softmax(logits_pi, dim=-1)
+            p_pi = torch.exp(logp_pi)
+
+            entropy_ref = -(p_ref * logp_ref).sum(dim=-1)          # [B]
+            entropy_pi = -(p_pi * logp_pi).sum(dim=-1)
+            num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
+            H_max = torch.log(num_legal).to(entropy_ref.device)
+            entropy_ref_norm = (entropy_ref / H_max).clamp(0.0, 1.0)
+            entropy_pi_norm = (entropy_pi / H_max).clamp(0.0, 1.0)
+            
+            margin = 0.05
+            entropy_diff = (entropy_ref_norm - entropy_pi_norm - margin).clamp(min=0.0)  # [B] # punish lower entropy than ref but not higher
+
+            k_entropy_ref = 2.0
+            kl_term = (k_entropy_ref*entropy_diff).detach()            # [B]
+            kl_term = k_entropy_ref*entropy_ref_norm
+
+            kl_loss = kl_term * kl
+
+            # loss += kl_loss.mean()
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -296,6 +303,7 @@ def main() -> None:
     ap.add_argument("--maia_type", type=str, default="blitz", choices=["blitz", "rapid"])
     ap.add_argument("--train_val_folder", type=str, required=True)
     ap.add_argument("--out_dir", type=str, required=True)
+    ap.add_argument("--use_kl_penalty", action="store_true", help="Whether to use kl penalty or not.")
 
     args = ap.parse_args()
 
@@ -356,27 +364,38 @@ def main() -> None:
                 logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
                 logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-            loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=args.beta)
+            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
+            w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
 
-            kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
-            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device="cpu").long() # [B]
+            loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, w, beta=args.beta)
 
-            logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
-            p_ref = torch.exp(logp_ref)
-            entropy = -(p_ref * logp_ref).sum(dim=-1)          # [B]
-            num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
-            H_max = torch.log(num_legal).to(entropy.device)
-            entropy_norm = (entropy / H_max).clamp(0.0, 1.0)
-            k_entropy = 0.5
-            lam_t = k_entropy * entropy_norm            # [B]
-            lam_t = lam_t.clamp(min=0.05, max=0.40)   # e.g., 0.05 to 0.40
 
-            kl_term = (lam_t * kl).mean()
-            loss += kl_term
+            if args.use_kl_penalty:
+                kl = kl_pi_ref_from_logits(logits_pi, logits_ref)        # [B]
 
-            if step % 200 == 0:
-                print("lam mean/min/max:", lam_t.mean().item(), lam_t.min().item(), lam_t.max().item())
-                print("kl mean/p95:", kl.mean().item(), torch.quantile(kl.detach(), 0.95).item())
+                logp_ref = torch.log_softmax(logits_ref, dim=-1)  # [B, V]
+                p_ref = torch.exp(logp_ref)
+                logp_pi = torch.log_softmax(logits_pi, dim=-1)
+                p_pi = torch.exp(logp_pi)
+
+                entropy_ref = -(p_ref * logp_ref).sum(dim=-1)          # [B]
+                entropy_pi = -(p_pi * logp_pi).sum(dim=-1)
+                num_legal = (legal_moves > 0).sum(dim=-1).clamp(min=2).float()  # [B]
+                H_max = torch.log(num_legal).to(entropy_ref.device)
+                entropy_ref_norm = (entropy_ref / H_max).clamp(0.0, 1.0)
+                entropy_pi_norm = (entropy_pi / H_max).clamp(0.0, 1.0)
+                
+                margin = 0.05
+                entropy_diff = (entropy_ref_norm - entropy_pi_norm - margin).clamp(min=0.0)  # [B] # punish lower entropy than ref but not higher
+
+                k_entropy_ref = 2.0
+                kl_term = (k_entropy_ref*entropy_diff).detach()            # [B]
+                kl_term = k_entropy_ref*entropy_ref_norm
+
+                kl_loss = kl_term * kl
+
+                #loss += kl_loss.mean()
+
 
             optim.zero_grad(set_to_none=True)
             loss.backward()
@@ -390,17 +409,21 @@ def main() -> None:
             if step % 50 == 0:
                 print(f"[epoch {epoch}] step={step} train_dpo_loss={running/max(1,seen):.4f}")
 
-        metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=args.beta)
+        metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=args.beta, use_kl=args.use_kl_penalty)
         val_loss = metrics["dpo_loss"]
         print(f"[epoch {epoch}] val_dpo_loss={val_loss:.4f}")
 
-        ckpt_path = out_dir / f"policy_epoch{epoch}_dpo.pt"
+        kl_extension = "no_kl_penalty"
+        if args.use_kl_penalty:
+            kl_extension = "kl_penalty"
+
+        ckpt_path = out_dir / f"policy_epoch{epoch}_dpo_{kl_extension}.pt"
         torch.save(policy.state_dict(), ckpt_path)
         print(f"Saved: {ckpt_path}")
 
         if val_loss < best_val:
             best_val = val_loss
-            best_path = out_dir / "policy_best_dpo.pt"
+            best_path = out_dir / f"policy_best_dpo_{kl_extension}.pt"
             torch.save(policy.state_dict(), best_path)
             print(f"Saved best: {best_path} (val_dpo_loss={best_val:.4f})")
 

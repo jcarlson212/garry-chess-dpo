@@ -478,11 +478,14 @@ def main() -> None:
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--beta", type=float, default=0.1)
     ap.add_argument("--n_boot", type=int, default=100, help="Number of bootstrap resamples for confidence intervals")
+    ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
+    ap.add_argument("--out_dir", required=True, help="Output directory.")
+    ap.add_argument("--model_dir", required=True, help="Model directory.")
     
     args = ap.parse_args()
-    jsonl = Path(f"./processed/single_gm/train_val/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"./processed/single_gm/train_val/{args.gm_name}/policy_pairwise_sft_best.pt")
-    out_dir = Path(f"./processed/single_gm/train_val/validation_results/{args.gm_name}/")
+    jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
+    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_pairwise_sft_best.pt")
+    out_dir = Path(f"{args.out_dir}/{args.gm_name}/")
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_str(args.device)
 
@@ -518,8 +521,8 @@ def main() -> None:
         elo_oppo=2800,
         temperature=1.0,
     )
-    out_dir.joinpath("opening_probe_policy.json").write_text(json.dumps(opening_probe, indent=2))
-    print(f"Opening probe saved to {out_dir.joinpath('opening_probe_policy.json')}")
+    out_dir.joinpath("opening_probe_policy_sft_pairwise.json").write_text(json.dumps(opening_probe, indent=2))
+    print(f"Opening probe saved to {out_dir.joinpath('opening_probe_policy_sft_pairwise.json')}")
 
 
     ds = DpoPairs(jsonl)
@@ -628,6 +631,38 @@ def main() -> None:
 
         sum_kl += float(kl.mean()) * bs
 
+        # NEW: predicted UCI (top-1)
+        pred_idx = logits_pi_m.argmax(dim=-1).tolist()
+        pred_uci = [vocab_index_to_uci(all_moves, fen, i) for fen, i in zip(fens, pred_idx)]
+
+        # NEW: top-10 moves for policy and base
+        k = min(10, logits_pi_m.shape[-1])
+
+        topk_pi_idx = torch.topk(logits_pi_m, k=k, dim=-1).indices      # [B, k]
+        topk_ref_idx = torch.topk(logits_ref_m, k=k, dim=-1).indices    # [B, k]
+
+        topk_pi_uci = [
+            [
+                {
+                    "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                    "logit": float(logits_pi_m[i, idx].item()),
+                }
+                for idx in topk_pi_idx[i].tolist()
+            ]
+            for i in range(bs)
+        ]
+
+        topk_ref_uci = [
+            [
+                {
+                    "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                    "logit": float(logits_ref_m[i, idx].item()),
+                }
+                for idx in topk_ref_idx[i].tolist()
+            ]
+            for i in range(bs)
+        ]
+
         # NEW: per-row output + phase tails
         for i in range(bs):
             fen = fens[i]
@@ -670,6 +705,8 @@ def main() -> None:
                 "p_chosen_ref": float(p_chosen_ref[i].item()),
                 "kl_pi_ref": float(kl[i].item()),
                 "nll_chosen_pi": float((-logp_pi_ch[i]).item()),
+                "top_max10_pi_w_logits": topk_pi_uci[i],
+                "top_max10_ref_w_logits": topk_ref_uci[i]
             }
             per_rows.append(r)
 

@@ -481,19 +481,29 @@ def main() -> None:
     ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
     ap.add_argument("--out_dir", required=True, help="Output directory.")
     ap.add_argument("--model_dir", required=True, help="Model directory.")
+    ap.add_argument("--used_kl_penalty", action="store_true", help="Whether to use kl penalty or not.")
+
     args = ap.parse_args()
     jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
+
+    kl_extension = "no_kl_penalty"
+    if args.used_kl_penalty:
+        kl_extension = "kl_penalty"
+        
+
     policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_dpo.pt")
     out_dir = Path(f"{args.out_dir}/{args.gm_name}/")
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_str(args.device)
 
-    
-
     # Build vocab + elo dict deterministically (avoid prepare() ordering issues)
-    all_moves = get_all_possible_moves()
-    all_moves_dict = {m: i for i, m in enumerate(all_moves)}
-    elo_dict = create_elo_dict()
+    prepared = inference.prepare()
+    all_moves_dict, elo_dict, all_moves_dict_reversed = prepared
+
+    # if you need all_moves as a list:
+    all_moves = [None] * len(all_moves_dict_reversed)
+    for idx, uci in all_moves_dict_reversed.items():
+        all_moves[idx] = uci
 
     # Load base twice; then load policy weights into one
     base = maia_model.from_pretrained(type=args.maia_type, device=str(device)).to(device)
@@ -503,6 +513,9 @@ def main() -> None:
     if any(k.startswith("module.") for k in sd.keys()):
         sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
     missing, unexpected = policy.load_state_dict(sd, strict=False)
+    print("missing", len(missing))
+    print("unexpected", len(unexpected))
+    print("sample missing:", missing[:20])
     if missing:
         print(f"[WARN] missing keys: {len(missing)} (showing 10): {missing[:10]}")
     if unexpected:
@@ -522,9 +535,22 @@ def main() -> None:
         elo_oppo=2800,
         temperature=1.0,
     )
-    out_dir.joinpath("opening_probe_policy.json").write_text(json.dumps(opening_probe, indent=2))
-    print(f"Opening probe saved to {out_dir.joinpath('opening_probe_policy.json')}")
+    out_dir.joinpath(f"opening_probe_policy_dpo.json").write_text(json.dumps(opening_probe, indent=2))
+    print(f"Opening probe saved to {out_dir.joinpath(f'opening_probe_policy_dpo.json')}")
 
+    opening_probe = probe_opening_distributions_from_policy(
+        base,
+        maia_type=args.maia_type,
+        device=device,
+        all_moves=all_moves,
+        all_moves_dict=all_moves_dict,
+        elo_dict=elo_dict,
+        elo_self=2800,
+        elo_oppo=2800,
+        temperature=1.0,
+    )
+    out_dir.joinpath(f"opening_probe_base.json").write_text(json.dumps(opening_probe, indent=2))
+    print(f"Opening probe saved to {out_dir.joinpath(f'opening_probe_base.json')}")
 
     ds = DpoPairs(jsonl)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)
@@ -632,6 +658,38 @@ def main() -> None:
 
         sum_kl += float(kl.mean()) * bs
 
+        # NEW: predicted UCI (top-1)
+        pred_idx = logits_pi_m.argmax(dim=-1).tolist()
+        pred_uci = [vocab_index_to_uci(all_moves, fen, i) for fen, i in zip(fens, pred_idx)]
+
+        # NEW: top-10 moves for policy and base
+        k = min(10, logits_pi_m.shape[-1])
+
+        topk_pi_idx = torch.topk(logits_pi_m, k=k, dim=-1).indices      # [B, k]
+        topk_ref_idx = torch.topk(logits_ref_m, k=k, dim=-1).indices    # [B, k]
+
+        topk_pi_uci = [
+            [
+                {
+                    "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                    "logit": float(logits_pi_m[i, idx].item()),
+                }
+                for idx in topk_pi_idx[i].tolist()
+            ]
+            for i in range(bs)
+        ]
+
+        topk_ref_uci = [
+            [
+                {
+                    "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                    "logit": float(logits_ref_m[i, idx].item()),
+                }
+                for idx in topk_ref_idx[i].tolist()
+            ]
+            for i in range(bs)
+        ]
+
         # NEW: per-row output + phase tails
         for i in range(bs):
             fen = fens[i]
@@ -674,6 +732,8 @@ def main() -> None:
                 "p_chosen_ref": float(p_chosen_ref[i].item()),
                 "kl_pi_ref": float(kl[i].item()),
                 "nll_chosen_pi": float((-logp_pi_ch[i]).item()),
+                "top_max10_pi_w_logits": topk_pi_uci[i],
+                "top_max10_ref_w_logits": topk_ref_uci[i]
             }
             per_rows.append(r)
 

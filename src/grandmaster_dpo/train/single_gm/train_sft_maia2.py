@@ -61,6 +61,29 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # Helpers
 # ----------------------------
 
+def kl_pi_ref_from_logits(
+    logits_pi: torch.Tensor,   # [B, V] already legal-masked (illegal = -inf)
+    logits_ref: torch.Tensor,  # [B, V] already legal-masked
+) -> torch.Tensor:
+    """
+    Returns KL(pi || ref) per example: [B]
+    """
+    logp_pi = torch.log_softmax(logits_pi, dim=-1)     # [B, V]
+    logp_ref = torch.log_softmax(logits_ref, dim=-1)   # [B, V]
+    p_pi = logp_pi.exp()
+    # KL(pi||ref) = sum_a pi(a) (log pi(a) - log ref(a))
+    kl = (p_pi * (logp_pi - logp_ref)).sum(dim=-1)     # [B]
+    return kl
+
+def ply_from_fen(fen: str) -> int:
+    parts = fen.split()
+    side = parts[1]
+    fullmove = int(parts[5])
+    ply = 2 * (fullmove - 1)
+    if side == "b":
+        ply += 1
+    return ply
+
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
     if s in ("cpu",):
@@ -164,6 +187,7 @@ def chosen_index_tensor(
 def supervised_nll_loss(
     logits_masked: torch.Tensor,
     idx_t: torch.Tensor,
+    w: torch.Tensor
 ) -> torch.Tensor:
     """
     Standard supervised fine-tuning objective:
@@ -180,7 +204,7 @@ def supervised_nll_loss(
     safe_idx = idx_t.clamp(min=0)
     gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
     gathered = gathered[valid]
-    return -gathered.mean()
+    return (-gathered*w).mean()
 
 
 # ----------------------------
@@ -209,7 +233,11 @@ def evaluate(
         logits = apply_legal_mask(logits, legal_moves)
 
         idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
-        loss = supervised_nll_loss(logits, idx_t)
+
+        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
+        # linear decay from 10 → 0 over first 4 plies
+        w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
+        loss = supervised_nll_loss(logits, idx_t, w)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -285,7 +313,12 @@ def main() -> None:
             logits = apply_legal_mask(logits, legal_moves)
 
             idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
-            loss = supervised_nll_loss(logits, idx_t)
+
+            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
+            # linear decay from 10 → 0 over first 4 plies
+            w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
+            
+            loss = supervised_nll_loss(logits, idx_t, w)
 
             optim.zero_grad(set_to_none=True)
             loss.backward()
