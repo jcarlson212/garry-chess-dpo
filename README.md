@@ -1,251 +1,344 @@
-# **GarryChess-DPO**
+# GarryChess-DPO
 
-### *Preference-Optimized Policies for Realistic Grandmaster Chess*
-
----
-
-## Overview
-
-**GarryChess-DPO** is a research project exploring whether **Direct Preference Optimization (DPO)** can be used to learn **fine-grained, individual Grandmaster playing styles** from historical chess games—while preserving stability, human-likeness, and tactical soundness.
-
-Starting from **Maia-2**, a neural policy calibrated to human play around the ~2000 Elo level, we apply **preference-based learning** using pairwise move preferences extracted from Grandmaster games. Rather than optimizing for engine strength, the objective is to **systematically prefer the moves a specific Grandmaster would choose over plausible alternatives**, while remaining close to the base human-calibrated policy.
-
-A central theme of this work is **human-centered chess AI**: we are not attempting to surpass modern engines, but to understand and preserve *how* elite humans play. We study how preference-optimized policies interact with **shallow engine search at inference time**, revealing a clear tradeoff between tactical strength and stylistic fidelity.
+### Preference-Optimized Policies for Realistic Grandmaster Chess
 
 ---
 
-## Research Questions
+# Overview
+
+**GarryChess-DPO** is a research project exploring whether **Direct Preference Optimization (DPO)** can be used to learn **fine-grained individual Grandmaster playing styles** from historical chess games while preserving stability, human-likeness, and tactical soundness.
+
+Starting from **Maia-2**, a neural policy calibrated to human play around the ~2000 Elo level (when parameterized with the highest Elo band), we apply **preference-based learning** using pairwise move preferences extracted from Grandmaster games.
+
+Rather than optimizing for engine strength, the objective is to:
+
+> **Systematically prefer the moves a specific Grandmaster would choose over plausible alternatives while remaining close to a human-calibrated base policy.**
+
+A central theme of this work is **human-centered chess AI**. The goal is not to surpass modern engines, but to understand and preserve *how elite humans play*.
+
+We also study how preference-optimized policies interact with **shallow engine search at inference time**, revealing a clear tradeoff between **tactical strength and stylistic fidelity**.
+
+---
+
+# Research Questions
+
+This project investigates several questions:
 
 * Can **Direct Preference Optimization** capture the distinctive styles of individual Grandmasters from game data?
-* How does DPO compare to **supervised fine-tuning (SFT)** and pairwise SFT for stylistic alignment?
+* How does DPO compare to **negative log-likelihood (NLL)** and **pairwise NLL** for stylistic alignment?
+* Can stylistic fidelity be improved using **DPO with preference reweighting inspired by prospect-theoretic optimization (KTO)**?
 * Do learned stylistic preferences persist when combined with **engine-based tactical filtering**?
-* How does increasing search depth affect the balance between **playing strength** and **human-likeness**?
-* Where does human-style play begin to collapse under strong tactical pressure?
+* How does increasing search depth affect the balance between **playing strength and human-likeness**?
+* At what point does **human-style play collapse under strong tactical pressure**?
+* Can stylistic fidelity be **learned rather than heuristically specified**?
+* Can preference learning move beyond pairwise comparisons and incorporate **partial preference orderings**?
 
 ---
 
-## Core Contributions
+# Core Contributions
 
-### **Preference-Based Grandmaster Style Learning**
+## Preference-Based Grandmaster Style Learning
 
-We reframe Grandmaster imitation as a **preference-learning problem**. For each position, the Grandmaster’s played move is treated as a preferred action relative to strong alternatives, and the policy is optimized via DPO to increase this relative likelihood while constraining divergence from the base Maia-2 policy.
+We reframe Grandmaster imitation as a **preference learning problem**.
 
-To our knowledge, this is the **first application of DPO to a non-language, structured board-game domain** with discrete legal action constraints.
+For each position:
 
----
+* the Grandmaster’s move is treated as the **preferred action**
+* alternative legal moves form **rejected actions**
 
-### **DPO vs SFT: Controlled Ablations**
+The policy is optimized via **Direct Preference Optimization (DPO)** to increase the likelihood of preferred moves while constraining divergence from the base **Maia-2** policy.
 
-We compare:
-
-* Standard supervised fine-tuning (next-move prediction)
-* Pairwise supervised fine-tuning
-* Direct Preference Optimization (DPO)
-
-under identical data, initialization, and evaluation conditions.
-
-**Key findings:**
-
-* DPO yields ~2× improvement in mean log-probability gap between the Grandmaster’s chosen move and Maia’s next-best alternative.
-* DPO achieves these gains with **negligible additional KL divergence** from the base Maia-2 policy compared to the strongest SFT baseline.
-* Preference optimization produces **stronger shallow-search performance** with less stylistic drift.
+To our knowledge, this represents one of the **first applications of DPO to a structured board-game domain with discrete legal action constraints**.
 
 ---
 
-### **Quantitative Human-Likeness Evaluation**
+## DPO vs NLL: Controlled Ablations
 
-We evaluate models on **held-out Grandmaster positions** (≈20%, stratified by game phase) using multiple complementary metrics:
+We compare three training strategies:
 
-* Top-1 accuracy on the Grandmaster move
-* Mean log-probability gap (chosen vs rejected)
-* KL divergence from the base Maia-2 policy
-* Phase-wise behavioral statistics (opening / middlegame / endgame)
-* Opening fingerprint similarity (ECO families)
-* Tactical volatility and sacrifice propensity proxies
+* **Standard supervised fine-tuning (NLL)** — next-move prediction
+* **Pairwise supervised fine-tuning**
+* **Direct Preference Optimization (DPO)**
 
-These metrics jointly measure **stylistic fidelity**, not just raw prediction accuracy.
+All models share:
 
----
+* identical datasets
+* identical initialization
+* identical evaluation protocols
 
-### **Inference-Time Tactical Filtering with Engine Search**
+### Key Findings
 
-Because Maia-2 operates below Grandmaster strength, we study whether tactical quality can be improved **without erasing learned style**.
-
-At inference time only:
-
-* Stockfish generates top-K candidate moves via MultiPV.
-* Clear blunders are filtered using a centipawn-gap threshold relative to the best engine move.
-* The learned policy (SFT or DPO) re-ranks the remaining candidates according to stylistic preference.
-
-Importantly, **Stockfish is never used during training**—it acts purely as a tactical constraint during evaluation.
+* DPO yields approximately **2× improvement in mean log-probability gap** between the Grandmaster’s chosen move and Maia’s next-best alternative.
+* DPO achieves these gains with **minimal additional KL divergence** from the base Maia-2 policy.
+* Preference optimization produces **stronger shallow-search performance with less stylistic drift**.
 
 ---
 
-### **Strength vs Human-Likeness Tradeoff**
+## Quantitative Human-Likeness Evaluation
 
-We perform a systematic **search-depth sweep**, varying Stockfish depth during inference:
+Models are evaluated on **held-out Grandmaster positions (~20% of data)** stratified by game phase.
+
+Metrics include:
+
+* **Top-1 accuracy** on the Grandmaster move
+* **Mean log-probability gap** (chosen vs rejected)
+* **KL divergence** from the base Maia-2 policy
+* **Phase-specific behavior statistics**
+
+  * opening
+  * middlegame
+  * endgame
+* **Opening fingerprint similarity** (ECO families)
+* **Tactical volatility and sacrifice propensity proxies**
+
+These metrics collectively measure **stylistic fidelity**, not just prediction accuracy.
+
+---
+
+## Inference-Time Tactical Filtering
+
+Because Maia-2 operates below Grandmaster strength, we investigate whether tactical quality can be improved **without erasing learned style**.
+
+At inference time:
+
+1. **Stockfish** generates candidate moves via MultiPV.
+2. Clear blunders are removed using a **centipawn-gap threshold** relative to the best engine move.
+3. The learned policy **re-ranks the remaining candidates** according to stylistic preference.
+
+Importantly:
+
+> **Stockfish is never used during training.**
+
+It only acts as a **tactical constraint during evaluation**.
+
+---
+
+## Strength vs Human-Likeness Tradeoff
+
+We perform a systematic **search-depth sweep**:
 
 ```
 Search depth ∈ {1, 2, 4, 8, 16}
 ```
 
-For each depth, we measure:
+For each depth we measure:
 
-* Engine-based Elo estimates
-* All human-likeness metrics
+* engine-based Elo estimates
+* all human-likeness metrics
 
-This exposes a clear **Pareto frontier**:
+This reveals a **Pareto frontier**:
 
-* Increasing depth improves tactical strength
-* Beyond a point, stylistic fidelity degrades as engine pressure dominates
+* deeper search → stronger tactical play
+* deeper search → weaker stylistic fidelity
 
-DPO-trained policies retain stylistic alignment **longer under increasing depth** than SFT baselines.
+DPO-trained policies retain stylistic alignment **longer under increasing search depth** than NLL baselines.
 
 ---
 
-## Experiments
+# Experiments
 
-### 1. Grandmaster-Likeness Evaluation
+## 1. Grandmaster-Likeness Evaluation
 
-Held-out positions are used to measure how closely each policy aligns with the original Grandmaster’s decisions across phases and openings.
+Held-out positions evaluate how closely policies match the original Grandmaster decisions.
 
-**Metrics include:**
+Metrics:
 
-* Top-1 move accuracy
+* Top-1 accuracy
 * Log-probability gap statistics
 * KL divergence vs base policy
 * Opening distribution similarity
-* Tactical volatility measures
+* Tactical volatility metrics
 
 ---
 
-### 2. Strength Estimation
+## 2. Strength Estimation
 
-Playing strength is estimated using a **local engine-vs-engine harness**:
+Playing strength is estimated using a **local engine-vs-engine evaluation harness**.
 
-* Fixed time controls
-* Color swapping
-* Elo estimates with confidence intervals
+Setup includes:
 
-**Optional:** public evaluation via the official **Lichess Bot API** to provide an externally visible rating trajectory.
+* fixed time controls
+* color swapping
+* Elo estimation with confidence intervals
 
----
-
-### 3. Depth Ablation (Key Insight)
-
-By increasing tactical filtering strength at inference time, we isolate whether stylistic preferences learned via DPO persist even when decision-making is increasingly constrained by engine evaluation.
-
-This experiment highlights where **human style survives** and where it breaks.
+Optional evaluation is performed using the **Lichess Bot API**.
 
 ---
 
-## Project Goals
+## 3. Depth Ablation
 
-Rather than pushing chess AI beyond human limits, **Grandmaster-DPO** focuses on:
+By increasing tactical filtering strength at inference time, we isolate whether stylistic preferences learned via DPO persist under increasing tactical pressure.
 
-* Faithfully modeling elite human decision-making
-* Preserving stylistic diversity
-* Enabling interpretability and historical analysis
-* Supporting personalized, pedagogical chess AI
+This experiment reveals where **human style survives** and where it breaks down.
 
-All fine-tuned models and evaluation code are released publicly to enable further research and community exploration.
+---
 
+# Project Goals
 
-## Repository Structure
+Rather than pushing chess AI beyond human limits, **GarryChess-DPO** focuses on:
+
+* faithfully modeling elite human decision-making
+* preserving stylistic diversity
+* enabling interpretability and historical analysis
+* supporting pedagogical chess AI
+
+All fine-tuned models and evaluation code are released publicly to enable further research.
+
+---
+
+# Repository Structure
 
 ```
-grandmaster-dpo/
-├── src/                # Training, inference, and evaluation code
-├── scripts/            # Data prep, training, evaluation, deployment
-├── configs/            # Model + training configs
-├── data/               # Raw PGNs and metadata (not all included)
-├── processed/          # Cleaned PGNs, train/val splits, JSONL
-├── results/            # Evaluation outputs and logs
-├── paper/              # Paper source, figures, bibliography
-├── maia2_models/       # Base Maia2 checkpoints (if required)
-├── checkpoints/        # (Ignored) trained model weights
-├── LICENSE             # Apache 2.0 (code only)
-├── NOTICE              # Model / artifact license clarification
-├── CITATION.cff        # Citation metadata
+garrychess-dpo/
+├── src/                           # Training, inference, evaluation code
+├── final_experiments_for_paper/   # Processed datasets, experiment outputs, graphs
+├── maia2_models/                  # Base Maia-2 checkpoints (if required)
+├── LICENSE                        # Apache 2.0 (code only)
+├── NOTICE                         # Model artifact licensing notes
+├── CITATION.cff                   # Citation metadata
 └── README.md
 ```
 
 ---
 
-## Reproducibility
+# Reproducibility
 
-This repository includes:
+The repository includes:
 
-* Scripts for scraping and cleaning PGNs
-* DPO and SFT training pipelines
-* Evaluation harnesses for human-likeness and Elo
-* Search wrappers for depth/beam ablations
-* Optional bot deployment tooling
+* PGN scraping and preprocessing pipelines
+* NLL and DPO training scripts
+* evaluation harnesses for style metrics
+* Elo estimation scripts
+* inference-time search wrappers
 
-Exact commands are documented in `scripts/` and `configs/`.
+Exact experiment commands are documented in:
+
+```
+final_experiments_for_paper/README.md
+```
+
+Some experimental components are still under active development.
 
 ---
 
-[![Magnus style win vs Lichess AI Level 6](https://lichess.org/KuXD9to3.svg)](https://lichess.org/KuXD9to3)
+# Example Game
+
+[![Magnus style win vs Lichess AI Level 8](https://lichess.org/ytgQOLw9.svg)](https://lichess.org/ytgQOLw9)
 
 <details>
-<summary><strong>Maia Tuned on Magnus vs Stockfish level 6 PGN (click to expand)</strong></summary>
-
+<summary><strong>Example PGN (click to expand)</strong></summary>
 
 ```pgn
-[Event "casual correspondence game"]
-[Site "https://lichess.org/KuXD9to3"]
-[Date "2026.01.30"]
-[Round "-"]
-[White "Anonymous"]
-[Black "lichess AI level 6"]
-[Result "1-0"]
-[GameId "KuXD9to3"]
-[UTCDate "2026.01.30"]
-[UTCTime "05:29:17"]
-[WhiteElo "?"]
-[BlackElo "?"]
-[Variant "Standard"]
-[TimeControl "-"]
-[ECO "C25"]
-[Opening "Vienna Game: Anderssen Defense"]
-[Termination "Normal"]
-[Annotator "lichess.org"]
+[Event "casual blitz game"]
+[Site "https://lichess.org/ytgQOLw9"]
+[Date "2026.02.23"]
+[White "lichess AI level 8"]
+[Black "magnuscarlsenstyles"]
 
-1. e4 e5 2. Nc3 Bc5 { C25 Vienna Game: Anderssen Defense } 3. Nf3 d6 4. a3 Nf6 5. Be2 Nc6 6. b4 Bd4 7. Nxd4 Nxd4 8. O-O Be6 9. d3 a5 10. b5 h6 11. Rb1 O-O 12. f4 b6 13. Be3 Nxe2+ 14. Qxe2 Re8 15. Kh1 exf4 16. Rxf4 Qe7 17. Qf2 Ng4 18. Rxg4 Bxg4 19. Nd5 Qd7 20. Qg3 Kh7 21. Bd4 Rg8 22. a4 Rab8 23. h3 Be6 24. Nf4 c5 25. Bb2 c4 26. Qf3 g5 27. Nh5 Rg6 28. Rf1 Qc8 29. d4 Qh8 30. Bc3 g4 31. hxg4 Qg8 32. d5 Bxg4 33. Nf6+ Rxf6 34. Qxf6 Qg6 35. Qxf7+ Qxf7 36. Rxf7+ Kg6 37. Rf4 h5 38. Kh2 Rg8 39. Rf6+ Kh7 40. Rxd6 Bd1 41. Rd7+ Kh6 42. Bd2+ Kg6 43. Rd6+ Kg7 44. Rxb6 Kf7 45. Bxa5 Bxc2 46. Bc3 Rg6 47. Rxg6 Bxe4 48. Rf6+ Kg8 49. a5 Bxd5 50. b6 Be4 51. b7 Bxb7 52. a6 Be4 53. a7 Kh7 54. Rf4 Bd5 55. Rd4 Ba8 56. Rd7+ Kg6 57. Rd6+ Kg5 58. Rb6 Kh4 59. Bf6+ Kg4 60. Rb4 h4 61. Rb8 Be4 62. Rc8 Bd5 63. Rd8 Bc6 64. a8=Q Bxa8 65. Rxa8 h3 66. Rg8+ Kf5 67. Bc3 Ke4 68. Re8+ Kd3 69. Bf6 Kc2 70. gxh3 Kb3 71. Rc8 Kb4 72. Be7+ Kc3 73. h4 Kd4 74. Kg3 Kc3 75. Kf3 Kb3 76. h5 Kc3 77. h6 Kb3 78. h7 Kc2 79. Rxc4+ Kd3 80. h8=Q Kxc4 81. Qe5 Kd3 82. Qe4+ Kd2 83. Qe3+ Kd1 84. Qe2+ Kc1 85. Ke3 Kb1 86. Kd3 Ka1 87. Kc3 Kb1 88. Qb2# { White wins by checkmate. } 1-0
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4 exd4 6. e5 d5
+7. Bb5 Ne4 8. cxd4 Bb6 9. O-O O-O 10. Nc3 Bg4 11. Be3 f5
+...
+1/2-1/2
 ```
+
 </details>
 
 ---
 
-## Lichess Bots Released
-You can play these bots. They mostly get matched against bots at the moment so their ELO is not calibrated against a human playing pool, making them underestimated we beleive, especially given we tweak them from time-to-time to test various configs, causing some temporary ELO decay. 
+# GarryChess Website
 
-List of bots with move time prediction model + Maia2 fine-tuned w/ DPO on blitz tournament games:
+You can play the models online:
 
-Magnus Carlsen: https://lichess.org/@/magnuscarlsenstyles
-Alireza Firouzja: https://lichess.org/@/firouzjastyles
-Rameshbabu Praggnanandhaa: https://lichess.org/@/praggstyle
-
-## Licensing
-
-* **Code:** Apache License 2.0
-* **Model weights and trained artifacts:** released separately under different terms
-
-See `LICENSE` and `NOTICE` for details.
+**[https://www.garrychess.ai](https://www.garrychess.ai)**
 
 ---
 
-## References
+# Lichess Bots
 
-* **AlphaZero**
-* **Maia**
-* **Maia2**
-* **Direct Preference Optimization**
+Example bots trained with Maia-2 + DPO:
+
+* Magnus Carlsen
+  [https://lichess.org/@/magnuscarlsenstyles](https://lichess.org/@/magnuscarlsenstyles)
+
+* Alireza Firouzja
+  [https://lichess.org/@/firouzjastyles](https://lichess.org/@/firouzjastyles)
+
+* Praggnanandhaa
+  [https://lichess.org/@/praggstyle](https://lichess.org/@/praggstyle)
+
+Ratings fluctuate because bots are periodically updated and often play other bots.
 
 ---
 
-## Status
+# Licensing
+
+Code
+Apache License 2.0
+
+Model weights
+Released separately under different licensing terms.
+
+See `LICENSE` and `NOTICE`.
+
+---
+
+# References
+
+Key references used in this project:
+
+**Human chess modeling**
+
+* Maia: Human-Like Neural Network Chess Engines
+  [https://arxiv.org/abs/2006.01855](https://arxiv.org/abs/2006.01855)
+
+* Maia-2: A Unified Model for Human-AI Alignment in Chess
+  [https://arxiv.org/abs/2409.20553](https://arxiv.org/abs/2409.20553)
+
+* Learning Personalized Models of Human Behavior in Chess
+  [https://arxiv.org/abs/2008.10086](https://arxiv.org/abs/2008.10086)
+
+* Modeling Strong and Human-Like Gameplay with KL-Regularized Search
+  [https://arxiv.org/abs/2112.07544](https://arxiv.org/abs/2112.07544)
+
+---
+
+**Preference learning**
+
+* Direct Preference Optimization: Your Language Model Is Secretly a Reward Model
+  [https://arxiv.org/abs/2305.18290](https://arxiv.org/abs/2305.18290)
+
+* Learning from Human Preferences
+  [https://arxiv.org/abs/1706.03741](https://arxiv.org/abs/1706.03741)
+
+* Model Alignment as Prospect Theoretic Optimization (KTO)
+  [https://arxiv.org/abs/2402.01306](https://arxiv.org/abs/2402.01306)
+
+---
+
+**Chess AI**
+
+* Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm (AlphaZero)
+  [https://arxiv.org/abs/1712.01815](https://arxiv.org/abs/1712.01815)
+
+* DeepChess: End-to-End Deep Neural Network for Chess
+  [https://arxiv.org/abs/1711.09667](https://arxiv.org/abs/1711.09667)
+
+* KnightCap: TDLeaf(λ) learning for chess evaluation
+
+* Leela Chess Zero
+  [https://lczero.org](https://lczero.org)
+
+* Stockfish Engine Documentation
+  [https://official-stockfish.github.io/docs/](https://official-stockfish.github.io/docs/)
+
+---
+
+# Status
 
 Active research project.
-Paper and demo in progress.
+
+Initial paper submitted to **IEEE Conference on Games (CoG)**.
+
+Further revisions and follow-up experiments are ongoing.
+
+---
