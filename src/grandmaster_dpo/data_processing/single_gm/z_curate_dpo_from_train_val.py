@@ -20,10 +20,18 @@ from grandmaster_dpo.eval.stockfish_helpers import make_stockfish
 
 
 def iter_pgn_games(pgn_path: Path) -> Iterator[chess.pgn.Game]:
+    print("PATH:", pgn_path)
+    print("EXISTS:", pgn_path.exists())
+    print("SIZE:", pgn_path.stat().st_size if pgn_path.exists() else None)
+
     with open(pgn_path, "r", encoding="utf-8", errors="ignore") as f:
+        head = f.read(500)
+        print("HEAD REPR:", repr(head))
+        print(f"opening path: {pgn_path}")
         while True:
             g = chess.pgn.read_game(f)
             if g is None:
+                print("Found none game")
                 break
             yield g
 
