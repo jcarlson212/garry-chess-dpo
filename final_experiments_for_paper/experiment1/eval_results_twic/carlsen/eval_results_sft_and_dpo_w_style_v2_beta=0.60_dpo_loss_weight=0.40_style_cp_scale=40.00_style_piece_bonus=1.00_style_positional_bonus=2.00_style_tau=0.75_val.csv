@@ -1,0 +1,2 @@
+loss,mean_logp_gap_policy_chosen_rejected,mean_logp_gap_base_chosen_rejected,mean_gap_improvement,top1_accuracy_on_chosen_policy,top1_accuracy_on_chosen_base,mean_p_chosen_policy,mean_p_chosen_base,mean_kl,mean_ent_pi,mean_ent_ref
+2.0373522482960853,2.2517968477198815,1.8577811326721245,0.39401569758683813,0.42326332794830374,0.39768443726440494,0.3373355477101455,0.30536063104530914,0.16878754626728862,1.367019530195155,1.4548020473910586
