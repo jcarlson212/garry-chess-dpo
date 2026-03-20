@@ -1,2 +1,3 @@
-loss,mean_logp_gap_policy_chosen_rejected,mean_logp_gap_base_chosen_rejected,mean_gap_improvement,top1_accuracy_on_chosen_policy,top1_accuracy_on_chosen_base,mean_p_chosen_policy,mean_p_chosen_base,mean_kl,mean_ent_pi,mean_ent_ref
-1.873019626302095,2.0390135108671834,1.6995984155740311,0.3394150974958211,0.4268082663605052,0.40384615388037004,0.32939523971724044,0.30496126149880487,0.17833899581926768,1.4736307336597028,1.5041903177988378
+version https://git-lfs.github.com/spec/v1
+oid sha256:83ff9590c38c930f488b3a62837724c86ec9f08da31c7736a348b5b50e6ca37f
+size 447
