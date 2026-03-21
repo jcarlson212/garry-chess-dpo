@@ -187,7 +187,6 @@ def chosen_index_tensor(
 def supervised_nll_loss(
     logits_masked: torch.Tensor,
     idx_t: torch.Tensor,
-    w: torch.Tensor
 ) -> torch.Tensor:
     """
     Standard supervised fine-tuning objective:
@@ -204,7 +203,7 @@ def supervised_nll_loss(
     safe_idx = idx_t.clamp(min=0)
     gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
     gathered = gathered[valid]
-    return (-gathered*w).mean()
+    return (-gathered).mean()
 
 
 # ----------------------------
@@ -234,10 +233,7 @@ def evaluate(
 
         idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
 
-        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
-        # linear decay from 10 → 0 over first 4 plies
-        w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
-        loss = supervised_nll_loss(logits, idx_t, w)
+        loss = supervised_nll_loss(logits, idx_t)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -280,6 +276,7 @@ def main() -> None:
 
     # Load Maia-2 base weights once (SFT updates these weights)
     policy = maia_model.from_pretrained(type=args.maia_type, device=str(device))
+    policy.train()
     policy.to(device)
 
     # Repo version: prepare() returns [all_moves_dict, elo_dict, all_moves_dict_reversed]
@@ -313,12 +310,8 @@ def main() -> None:
             logits = apply_legal_mask(logits, legal_moves)
 
             idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
-
-            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
-            # linear decay from 10 → 0 over first 4 plies
-            w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
             
-            loss = supervised_nll_loss(logits, idx_t, w)
+            loss = supervised_nll_loss(logits, idx_t)
 
             optim.zero_grad(set_to_none=True)
             loss.backward()

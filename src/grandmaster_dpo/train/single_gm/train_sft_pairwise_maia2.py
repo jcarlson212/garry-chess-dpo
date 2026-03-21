@@ -168,10 +168,9 @@ def forward_logits(
 def sft_pairwise_loss(
     logp_pi_ch: torch.Tensor,
     logp_pi_rj: torch.Tensor,
-    w: torch.Tensor
 ) -> torch.Tensor:
     pi_gap = logp_pi_ch - logp_pi_rj
-    return (-torch.nn.functional.logsigmoid(pi_gap)*w).mean()
+    return (-torch.nn.functional.logsigmoid(pi_gap)).mean()
 
 def move_logprob_from_logits(
     logits: torch.Tensor,
@@ -229,11 +228,7 @@ def evaluate(
         logp_pi_ch = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_pi_rj = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-        ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
-        # linear decay from 10 → 0 over first 4 plies
-        w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
-
-        loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj, w)
+        loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -276,6 +271,7 @@ def main() -> None:
 
     # Load Maia-2 base weights once (SFT updates these weights)
     policy = maia_model.from_pretrained(type=args.maia_type, device=str(device))
+    policy.train()
     policy.to(device)
 
     # Repo version: prepare() returns [all_moves_dict, elo_dict, all_moves_dict_reversed]
@@ -311,11 +307,7 @@ def main() -> None:
             logp_pi_ch = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["chosen"], device)
             logp_pi_rj = move_logprob_from_logits(logits, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-            ply_t = torch.tensor([ply_from_fen(f) for f in batch["fen"]], device=device).float()
-            # linear decay from 10 → 0 over first 4 plies
-            w = 1.0 + torch.clamp(10*(4.0 - ply_t) / 4.0, min=0.0, max=10.0)
-
-            loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj, w)
+            loss = sft_pairwise_loss(logp_pi_ch, logp_pi_rj)
 
             optim.zero_grad(set_to_none=True)
             loss.backward()

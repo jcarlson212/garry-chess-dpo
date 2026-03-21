@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import re
 from pathlib import Path
@@ -28,25 +29,7 @@ class DpoPairs(Dataset):
                 if not line:
                     continue
                 self.rows.append(json.loads(line))
-        self.game_id_and_ply_to_prev_10_plys = {}
-        self.game_id_and_ply_to_fut_10_plys = {}
 
-        def create_window_item(rows, index, target_game):
-            if index < 0:
-                return None 
-            elif index >= len(rows):
-                return None
-            else:
-                if rows[index]["meta"]["game_header_hash"] != target_game:
-                    return None
-                return rows[index]
-
-        for i, r in enumerate(self.rows):
-            hash_key = f'{r["meta"]["game_header_hash"]}_{r["meta"]["ply_idx"]}'
-            self.game_id_and_ply_to_prev_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i-10, i)]
-            self.game_id_and_ply_to_fut_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i+1, i+11)]
-
-            
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -71,6 +54,21 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
             out[k].append(b[k])
     return out
 
+@dataclass
+class TrainConfig:
+    gm_name: str
+    device: str
+    beta: float
+    gamma: float
+    epochs: int
+    batch_size: int
+    lr: float
+    weight_decay: float
+    grad_clip: float
+    maia_type: str
+    train_val_folder: str
+    out_dir: str
+    run_name: str
 
 # ----------------------------
 # Helpers
@@ -208,18 +206,22 @@ def move_logprob_from_logits(
     return gathered
 
 
-def dpo_loss(
+def dpo_w_margin_loss(
     logp_pi_ch: torch.Tensor,
     logp_pi_rj: torch.Tensor,
     logp_ref_ch: torch.Tensor,
     logp_ref_rj: torch.Tensor,
     beta: float,
+    gamma: float,
 ) -> torch.Tensor:
-    # DPO: -log σ( beta * ((π_ch-π_rj) - (ref_ch-ref_rj)) )
-    pi_gap = logp_pi_ch - logp_pi_rj
-    ref_gap = logp_ref_ch - logp_ref_rj
-    x = beta * (pi_gap - ref_gap)
-    return (-torch.nn.functional.logsigmoid(x)).mean()
+    # DPO + margin: -log σ( beta * ((π_ch-π_rj) - (ref_ch-ref_rj)) - gamma )
+
+    pi_gap = (logp_pi_ch - logp_pi_rj) * beta
+    ref_gap = (logp_ref_ch - logp_ref_rj) * beta
+
+    preference_gap = pi_gap - ref_gap - gamma 
+
+    return (-torch.nn.functional.logsigmoid(preference_gap)).mean()
 
 # ----------------------------
 # Eval
@@ -234,6 +236,7 @@ def evaluate(
     loader: DataLoader,
     device: torch.device,
     beta: float,
+    gamma: float,
 ) -> Dict[str, float]:
     policy.eval()
     ref.eval()
@@ -258,7 +261,7 @@ def evaluate(
         logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
         
-        loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
+        loss = dpo_w_margin_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta, gamma=gamma)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -271,13 +274,175 @@ def evaluate(
 # Train
 # ----------------------------
 
+def train_one_run(cfg: TrainConfig) -> None:
+
+    train_jsonl = Path(f"{cfg.train_val_folder}/{cfg.gm_name}_train_dpo.jsonl")
+    val_jsonl = Path(f"{cfg.train_val_folder}/{cfg.gm_name}_val_dpo.jsonl")
+    out_dir = Path(f"{cfg.out_dir}/{cfg.gm_name}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    device = device_from_str(cfg.device)
+
+    # Load Maia-2 base weights twice
+    policy = maia_model.from_pretrained(type=cfg.maia_type, device=str(device))
+    policy.train()
+    ref = maia_model.from_pretrained(type=cfg.maia_type, device=str(device))
+    ref.eval()
+
+    policy.to(device)
+    ref.to(device)
+    for p in ref.parameters():
+        p.requires_grad_(False)
+
+    # Repo version: prepare() returns [all_moves_dict, elo_dict, all_moves_dict_reversed]
+    prep = inference.prepare()
+    all_moves_dict, elo_dict, _ = prep
+
+    train_ds = DpoPairs(train_jsonl)
+    val_ds = DpoPairs(val_jsonl)
+
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0, collate_fn=collate_batch)
+    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)
+
+    optim = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+
+    step = 0
+    best_val = float("inf")
+
+    for epoch in range(1, cfg.epochs + 1):
+        policy.train()
+        running = 0.0
+        seen = 0
+
+        for batch in train_loader:
+            step += 1
+
+            board_input, legal_moves, es_t, eo_t = batch_preprocess(
+                all_moves_dict, elo_dict, batch["fen"], batch["elo_self"], batch["elo_oppo"], device
+            )
+
+            logits_pi = forward_logits(policy, board_input, es_t, eo_t)
+            with torch.no_grad():
+                logits_ref = forward_logits(ref, board_input, es_t, eo_t)
+
+            logits_pi = apply_legal_mask(logits_pi, legal_moves)
+            logits_ref = apply_legal_mask(logits_ref, legal_moves)
+
+            logp_pi_ch = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["chosen"], device)
+            logp_pi_rj = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["rejected"], device)
+
+            with torch.no_grad():
+                logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
+                logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
+
+            loss = dpo_w_margin_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=cfg.beta, gamma=cfg.gamma)
+
+            optim.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), cfg.grad_clip)
+            optim.step()
+
+            bs = len(batch["fen"])
+            running += float(loss.detach()) * bs
+            seen += bs
+
+            if step % 50 == 0:
+                print(f"[epoch {epoch}] step={step} train_dpo_w_margin_loss={running/max(1,seen):.4f}")
+
+        metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=cfg.beta, gamma=cfg.gamma)
+        val_loss = metrics["loss"]
+        print(f"[epoch {epoch}] val_dpo_w_margin_loss={val_loss:.4f}")
+
+        ckpt_path = out_dir / f"policy_epoch{epoch}_dpo_w_margin_{make_run_name(cfg)}.pt"
+        torch.save(policy.state_dict(), ckpt_path)
+        print(f"Saved: {ckpt_path}")
+
+        if val_loss < best_val:
+            best_val = val_loss
+            best_path = out_dir / f"policy_best_dpo_w_margin_{make_run_name(cfg)}.pt"
+            torch.save(policy.state_dict(), best_path)
+            print(f"Saved best: {best_path} (val_dpo_w_margin_loss={best_val:.4f})")
+
+def make_run_name(cfg: TrainConfig) -> str:
+    return f"beta={cfg.beta:.2f}_gamma={cfg.gamma:.2f}"
+    
+
+
+def build_runs(args) -> list[TrainConfig]:
+    base = dict(
+        gm_name=args.gm_name,
+        device=args.device,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        grad_clip=args.grad_clip,
+        maia_type=args.maia_type,
+        train_val_folder=args.train_val_folder,
+        out_dir=args.out_dir,
+    )
+
+    runs = []
+
+    if args.preset == "single":
+        cfg = TrainConfig(
+            **base,
+            beta=args.beta,
+            gamma=args.gamma,
+            run_name=f"single_beta={args.beta:.2f}_gamma={args.gamma:.2f}",
+        )
+        runs.append(cfg)
+
+    elif args.preset == "overnight":
+        combos = [
+            {"beta": 0.4, "gamma": 0.5},
+            {"beta": 0.4, "gamma": 1.0},
+            {"beta": 0.6, "gamma": 0.5},
+            {"beta": 0.6, "gamma": 1.0},
+            {"beta": 0.8, "gamma": 0.5},
+            {"beta": 0.8, "gamma": 1.0},
+            {"beta": 1.0, "gamma": 0.5},
+            {"beta": 1.0, "gamma": 1.0},
+        ]
+        for d in combos:
+            beta = d["beta"]
+            gamma = d["gamma"]
+            cfg = TrainConfig(
+                **base,
+                beta=beta,
+                gamma=gamma,
+                run_name=f"beta={beta:.2f}_gamma={gamma:.2f}",
+            )
+            runs.append(cfg)
+
+    elif args.preset == "overnight4_part2":
+        combos = [
+            {"beta": 1.2, "gamma": 0.5},
+            {"beta": 1.2, "gamma": 1.0},
+            {"beta": 0.6, "gamma": 0.5},
+            {"beta": 0.6, "gamma": 1.0},
+        ]
+        for d in combos:
+            beta = d["beta"]
+            gamma = d["gamma"]
+            cfg = TrainConfig(
+                **base,
+                beta=beta,
+                gamma=gamma,
+                run_name=f"beta={beta:.2f}_gamma={gamma:.2f}",
+            )
+            runs.append(cfg)
+
+    return runs
+
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_dpo_maia2.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic
+    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_dpo_w_margin_maia2.py --gm_name caruana --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic --beta 0.8 --gamma 1.2 --preset overnight
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", type=str, required=True)
 
     ap.add_argument("--device", type=str, default="cpu")  # "mps" works too if your torch build supports it
-    ap.add_argument("--betas", type=float, nargs="+", default=[0.02, 0.05, 0.1, 0.2, 0.4, 0.6], help="List of beta values (e.g. --betas 0.1 0.2 0.4)")
+    ap.add_argument("--beta", type=float, default=0.8)
+    ap.add_argument("--gamma", type=float, default=1.2)
 
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch_size", type=int, default=64)
@@ -289,95 +454,22 @@ def main() -> None:
     ap.add_argument("--train_val_folder", type=str, required=True)
     ap.add_argument("--out_dir", type=str, required=True)
 
+    ap.add_argument("--preset", type=str, default="single", choices=["single", "overnight", "overnight4_part2"])
+
     args = ap.parse_args()
 
-    for beta in args.betas:
-        train_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_train_dpo.jsonl")
-        val_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_val_dpo.jsonl")
-        out_dir = Path(f"{args.out_dir}/{args.gm_name}")
-        out_dir.mkdir(parents=True, exist_ok=True)
+    runs = build_runs(args)
 
-        device = device_from_str(args.device)
+    print("Generated run configs:")
+    for cfg in runs:
+        print(make_run_name(cfg))
 
-        # Load Maia-2 base weights twice
-        policy = maia_model.from_pretrained(type=args.maia_type, device=str(device))
-        policy.train()
-        ref = maia_model.from_pretrained(type=args.maia_type, device=str(device))
-        ref.eval()
-
-        policy.to(device)
-        ref.to(device)
-        for p in ref.parameters():
-            p.requires_grad_(False)
-
-        # Repo version: prepare() returns [all_moves_dict, elo_dict, all_moves_dict_reversed]
-        prep = inference.prepare()
-        all_moves_dict, elo_dict, _ = prep
-
-        train_ds = DpoPairs(train_jsonl)
-        val_ds = DpoPairs(val_jsonl)
-
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, collate_fn=collate_batch)
-        val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)
-
-        optim = torch.optim.AdamW(policy.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
-        step = 0
-        best_val = float("inf")
-
-        for epoch in range(1, args.epochs + 1):
-            policy.train()
-            running = 0.0
-            seen = 0
-
-            for batch in train_loader:
-                step += 1
-
-                board_input, legal_moves, es_t, eo_t = batch_preprocess(
-                    all_moves_dict, elo_dict, batch["fen"], batch["elo_self"], batch["elo_oppo"], device
-                )
-
-                logits_pi = forward_logits(policy, board_input, es_t, eo_t)
-                with torch.no_grad():
-                    logits_ref = forward_logits(ref, board_input, es_t, eo_t)
-
-                logits_pi = apply_legal_mask(logits_pi, legal_moves)
-                logits_ref = apply_legal_mask(logits_ref, legal_moves)
-
-                logp_pi_ch = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["chosen"], device)
-                logp_pi_rj = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["rejected"], device)
-
-                with torch.no_grad():
-                    logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
-                    logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
-
-                loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
-
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(policy.parameters(), args.grad_clip)
-                optim.step()
-
-                bs = len(batch["fen"])
-                running += float(loss.detach()) * bs
-                seen += bs
-
-                if step % 50 == 0:
-                    print(f"[epoch {epoch}] step={step} train_dpo_loss={running/max(1,seen):.4f}")
-
-            metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=beta)
-            val_loss = metrics["loss"]
-            print(f"[epoch {epoch}] val_dpo_loss={val_loss:.4f}")
-
-            ckpt_path = out_dir / f"policy_epoch{epoch}_dpo_beta={beta:.2f}.pt"
-            torch.save(policy.state_dict(), ckpt_path)
-            print(f"Saved: {ckpt_path}")
-
-            if val_loss < best_val:
-                best_val = val_loss
-                best_path = out_dir / f"policy_best_dpo_beta={beta:.2f}.pt"
-                torch.save(policy.state_dict(), best_path)
-                print(f"Saved best: {best_path} (val_dpo_loss={best_val:.4f})")
+    for i, cfg in enumerate(runs, start=1):
+        print("=" * 80)
+        print(f"Starting run {i}/{len(runs)}: {cfg.run_name}")
+        print(cfg)
+        print("=" * 80)
+        train_one_run(cfg)
 
 
 if __name__ == "__main__":

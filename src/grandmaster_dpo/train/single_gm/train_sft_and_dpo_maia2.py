@@ -28,25 +28,7 @@ class DpoPairs(Dataset):
                 if not line:
                     continue
                 self.rows.append(json.loads(line))
-        self.game_id_and_ply_to_prev_10_plys = {}
-        self.game_id_and_ply_to_fut_10_plys = {}
 
-        def create_window_item(rows, index, target_game):
-            if index < 0:
-                return None 
-            elif index >= len(rows):
-                return None
-            else:
-                if rows[index]["meta"]["game_header_hash"] != target_game:
-                    return None
-                return rows[index]
-
-        for i, r in enumerate(self.rows):
-            hash_key = f'{r["meta"]["game_header_hash"]}_{r["meta"]["ply_idx"]}'
-            self.game_id_and_ply_to_prev_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i-10, i)]
-            self.game_id_and_ply_to_fut_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i+1, i+11)]
-
-            
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -125,6 +107,23 @@ def apply_legal_mask(logits: torch.Tensor, legal_moves: torch.Tensor) -> torch.T
     neg_inf = torch.finfo(logits.dtype).min
     return torch.where(legal_moves > 0, logits, torch.full_like(logits, neg_inf))
 
+def chosen_index_tensor(
+    fens: List[str],
+    all_moves_dict: Dict[str, int],
+    moves_uci: List[str],
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
+    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
+    """
+    idxs: List[int] = []
+    for fen, uci in zip(fens, moves_uci):
+        side = fen.split(" ")[1]
+        uci_eff = mirror_move(uci) if side == "b" else uci
+        idx = all_moves_dict.get(uci_eff, None)
+        idxs.append(-1 if idx is None else int(idx))
+    return torch.tensor(idxs, device=device, dtype=torch.long)
 
 def batch_preprocess(
     all_moves_dict: Dict[str, int],
@@ -221,6 +220,26 @@ def dpo_loss(
     x = beta * (pi_gap - ref_gap)
     return (-torch.nn.functional.logsigmoid(x)).mean()
 
+def supervised_nll_loss(
+    logits_masked: torch.Tensor,
+    idx_t: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Standard supervised fine-tuning objective:
+      loss = -mean(log p(chosen_move))
+    ignoring examples where chosen move isn't in vocab (idx == -1).
+    """
+    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
+
+    valid = idx_t >= 0
+    if valid.sum().item() == 0:
+        # return a zero scalar that still has grad
+        return logits_masked.sum() * 0.0
+
+    safe_idx = idx_t.clamp(min=0)
+    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
+    gathered = gathered[valid]
+    return (-gathered).mean()
 # ----------------------------
 # Eval
 # ----------------------------
@@ -234,6 +253,7 @@ def evaluate(
     loader: DataLoader,
     device: torch.device,
     beta: float,
+    dpo_loss_weight: float,
 ) -> Dict[str, float]:
     policy.eval()
     ref.eval()
@@ -251,14 +271,15 @@ def evaluate(
 
         logits_pi = apply_legal_mask(logits_pi, legal_moves)
         logits_ref = apply_legal_mask(logits_ref, legal_moves)
-
+        idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
+        
         logp_pi_ch = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_pi_rj = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["rejected"], device)
 
         logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
         logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
         
-        loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
+        loss = dpo_loss_weight*dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta) + supervised_nll_loss(logits_pi, idx_t)
 
         bs = len(batch["fen"])
         total_loss += float(loss) * bs
@@ -272,12 +293,13 @@ def evaluate(
 # ----------------------------
 
 def main() -> None:
-    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_dpo_maia2.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic
+    # Example usage: python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_maia2.py --gm_name caruana --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", type=str, required=True)
 
     ap.add_argument("--device", type=str, default="cpu")  # "mps" works too if your torch build supports it
-    ap.add_argument("--betas", type=float, nargs="+", default=[0.02, 0.05, 0.1, 0.2, 0.4, 0.6], help="List of beta values (e.g. --betas 0.1 0.2 0.4)")
+    ap.add_argument("--beta", type=float, default=0.6)
+    ap.add_argument("--dpo_loss_weights", type=float, nargs="+", default=[0.1, 0.2, 0.4], help="List of beta values (e.g. --dpo_loss_weight 0.1 0.2 0.4)")
 
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch_size", type=int, default=64)
@@ -291,7 +313,7 @@ def main() -> None:
 
     args = ap.parse_args()
 
-    for beta in args.betas:
+    for dpo_loss_weight in args.dpo_loss_weights:
         train_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_train_dpo.jsonl")
         val_jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_val_dpo.jsonl")
         out_dir = Path(f"{args.out_dir}/{args.gm_name}")
@@ -343,6 +365,7 @@ def main() -> None:
 
                 logits_pi = apply_legal_mask(logits_pi, legal_moves)
                 logits_ref = apply_legal_mask(logits_ref, legal_moves)
+                idx_t = chosen_index_tensor(batch["fen"], all_moves_dict, batch["chosen"], device)
 
                 logp_pi_ch = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["chosen"], device)
                 logp_pi_rj = move_logprob_from_logits(logits_pi, batch["fen"], all_moves_dict, batch["rejected"], device)
@@ -351,7 +374,7 @@ def main() -> None:
                     logp_ref_ch = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["chosen"], device)
                     logp_ref_rj = move_logprob_from_logits(logits_ref, batch["fen"], all_moves_dict, batch["rejected"], device)
 
-                loss = dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta)
+                loss = dpo_loss_weight*dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=args.beta) + supervised_nll_loss(logits_pi, idx_t)
 
                 optim.zero_grad(set_to_none=True)
                 loss.backward()
@@ -363,21 +386,22 @@ def main() -> None:
                 seen += bs
 
                 if step % 50 == 0:
-                    print(f"[epoch {epoch}] step={step} train_dpo_loss={running/max(1,seen):.4f}")
+                    print(f"[epoch {epoch}] step={step} train_sft_and_dpo_loss={running/max(1,seen):.4f}")
 
-            metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=beta)
+            metrics = evaluate(policy, ref, all_moves_dict, elo_dict, val_loader, device=device, beta=args.beta, dpo_loss_weight=dpo_loss_weight)
             val_loss = metrics["loss"]
-            print(f"[epoch {epoch}] val_dpo_loss={val_loss:.4f}")
+            print(f"[epoch {epoch}] val_sft_and_dpo_loss={val_loss:.4f}")
 
-            ckpt_path = out_dir / f"policy_epoch{epoch}_dpo_beta={beta:.2f}.pt"
+
+            ckpt_path = out_dir / f"policy_epoch{epoch}_sft_and_dpo_beta={args.beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt"
             torch.save(policy.state_dict(), ckpt_path)
             print(f"Saved: {ckpt_path}")
 
             if val_loss < best_val:
                 best_val = val_loss
-                best_path = out_dir / f"policy_best_dpo_beta={beta:.2f}.pt"
+                best_path = out_dir / f"policy_best_sft_and_dpo_beta={args.beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt"
                 torch.save(policy.state_dict(), best_path)
-                print(f"Saved best: {best_path} (val_dpo_loss={best_val:.4f})")
+                print(f"Saved best: {best_path} (val_sft_and_dpo_loss={best_val:.4f})")
 
 
 if __name__ == "__main__":
