@@ -7,13 +7,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 import statistics
 import chess
+import itertools
 
 import torch
 from torch.utils.data import DataLoader, Dataset
 
 from maia2 import inference, model as maia_model
 from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
-from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import run_eval
 
 
 # ----------------------------
@@ -48,7 +48,7 @@ class DpoPairs(Dataset):
             hash_key = f'{r["meta"]["game_header_hash"]}_{r["meta"]["ply_idx"]}'
             self.game_id_and_ply_to_prev_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i-10, i)]
             self.game_id_and_ply_to_fut_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i+1, i+11)]
-
+            
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -689,44 +689,6 @@ def entropy_from_logits(masked_logits: torch.Tensor) -> torch.Tensor:
     entropy = -(p * logp).sum(dim=-1)            # [B]
     return entropy
 
-def chosen_index_tensor(
-    fens: List[str],
-    all_moves_dict: Dict[str, int],
-    moves_uci: List[str],
-    device: torch.device,
-) -> torch.Tensor:
-    """
-    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
-    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
-    """
-    idxs: List[int] = []
-    for fen, uci in zip(fens, moves_uci):
-        side = fen.split(" ")[1]
-        uci_eff = mirror_move(uci) if side == "b" else uci
-        idx = all_moves_dict.get(uci_eff, None)
-        idxs.append(-1 if idx is None else int(idx))
-    return torch.tensor(idxs, device=device, dtype=torch.long)
-
-def supervised_nll_loss(
-    logits_masked: torch.Tensor,
-    idx_t: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Standard supervised fine-tuning objective:
-      loss = -mean(log p(chosen_move))
-    ignoring examples where chosen move isn't in vocab (idx == -1).
-    """
-    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
-
-    valid = idx_t >= 0
-    if valid.sum().item() == 0:
-        # return a zero scalar that still has grad
-        return logits_masked.sum() * 0.0
-
-    safe_idx = idx_t.clamp(min=0)
-    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
-    gathered = gathered[valid]
-    return (-gathered).mean()
 
 @torch.no_grad()
 def probe_opening_distributions_from_policy(
@@ -915,9 +877,22 @@ def gather_logprob(logits_masked: torch.Tensor, idxs: torch.Tensor) -> torch.Ten
     return gathered
 
 
-def dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta: float) -> torch.Tensor:
-    x = beta * ((logp_pi_ch - logp_pi_rj) - (logp_ref_ch - logp_ref_rj))
-    return -torch.nn.functional.logsigmoid(x).mean()
+def dpo_w_margin_loss(
+    logp_pi_ch: torch.Tensor,
+    logp_pi_rj: torch.Tensor,
+    logp_ref_ch: torch.Tensor,
+    logp_ref_rj: torch.Tensor,
+    beta: float,
+    gamma: float,
+) -> torch.Tensor:
+    # DPO + margin: -log σ( beta * ((π_ch-π_rj) - (ref_ch-ref_rj)) - gamma )
+
+    pi_gap = (logp_pi_ch - logp_pi_rj) * beta
+    ref_gap = (logp_ref_ch - logp_ref_rj) * beta
+
+    preference_gap = pi_gap - ref_gap - gamma 
+
+    return (-torch.nn.functional.logsigmoid(preference_gap)).mean()
 
 
 @torch.no_grad()
@@ -1105,58 +1080,427 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 # ----------------------------
 
 def main() -> None:
-    # Example usage: 
-    # python .\src\grandmaster_dpo\eval\single_gm\eval_sft_maia_single_gm.py --gm_name carlsen --train_val_folder .\final_experiments_for_paper\experiment1\train_val_pgns_twic --out_dir .\final_experiments_for_paper\experiment1\eval_results_twic --model_dir .\final_experiments_for_paper\experiment1\trained_models_twic
+    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_dpo_w_margin_maia_single_gm.py --gm_name carlsen --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/eval_results_twic --model_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--split_name", required=False, default="val", help="train or val")
     ap.add_argument("--maia_type", default="blitz", choices=["blitz", "rapid"])
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--batch_size", type=int, default=64)
-    ap.add_argument("--beta", type=float, default=0.1)
+    ap.add_argument("--betas", type=float, nargs="+", default=[0.4,0.6,0.8,1.0], help="List of beta values (e.g. --betas 0.1,0.2,0.4)")
+    ap.add_argument("--gammas", type=float, nargs="+", default=[0.5,1.0])
     ap.add_argument("--n_boot", type=int, default=100, help="Number of bootstrap resamples for confidence intervals")
     ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
     ap.add_argument("--out_dir", required=True, help="Output directory.")
     ap.add_argument("--model_dir", required=True, help="Model directory.")
-    
+
     args = ap.parse_args()
     jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_sft_best.pt")
-    full_name = "sft"
 
-    def supplied_loss_function(logp_pi_ch, 
-                                logp_pi_rj, 
-                                logp_ref_ch, 
-                                logp_ref_rj, 
-                                logits_pi_m, 
-                                logits_ref_m, 
-                                idx_t, 
-                                chosen_cps, 
-                                rejected_cps, 
-                                prev_fens_batch,
-                                next_fens_chosen_batch,
-                                next_fens_rejected_batch,
-                                batch_meta_data
-    ):
-        loss = supervised_nll_loss(logits_pi_m, idx_t)
-        return loss
+    for beta, gamma in itertools.product(args.betas, args.gammas):
+        policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}.pt")
+        out_dir = Path(f"{args.out_dir}/{args.gm_name}/")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        device = device_from_str(args.device)
+
+        # Build vocab + elo dict deterministically (avoid prepare() ordering issues)
+        prep = inference.prepare()
+        all_moves_dict, elo_dict, all_moves_dict_reversed = prep
+        all_moves = [None] * len(all_moves_dict)
+        for mv, idx in all_moves_dict.items():
+            all_moves[idx] = mv
+
+        # if you need all_moves as a list:
+        all_moves = [None] * len(all_moves_dict_reversed)
+        for idx, uci in all_moves_dict_reversed.items():
+            all_moves[idx] = uci
+
+        # Load base twice; then load policy weights into one
+        base = maia_model.from_pretrained(type=args.maia_type, device=str(device)).to(device)
+        policy = maia_model.from_pretrained(type=args.maia_type, device=str(device)).to(device)
+
+        sd = torch.load(policy_pt, map_location="cpu")
+        if any(k.startswith("module.") for k in sd.keys()):
+            sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+        missing, unexpected = policy.load_state_dict(sd, strict=False)
+        print("missing", len(missing))
+        print("unexpected", len(unexpected))
+        print("sample missing:", missing[:20])
+        if missing:
+            print(f"[WARN] missing keys: {len(missing)} (showing 10): {missing[:10]}")
+        if unexpected:
+            print(f"[WARN] unexpected keys: {len(unexpected)} (showing 10): {unexpected[:10]}")
+
+        base.eval()
+        policy.eval()
+
+        opening_probe = probe_opening_distributions_from_policy(
+            policy,
+            maia_type=args.maia_type,
+            device=device,
+            all_moves=all_moves,
+            all_moves_dict=all_moves_dict,
+            elo_dict=elo_dict,
+            elo_self=2800,
+            elo_oppo=2800,
+            temperature=1.0,
+        )
+        out_dir.joinpath(f"opening_probe_policy_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}.json").write_text(json.dumps(opening_probe, indent=2))
+        print(f"Opening probe saved to {out_dir.joinpath(f'opening_probe_policy_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}.json')}")
+
+        opening_probe = probe_opening_distributions_from_policy(
+            base,
+            maia_type=args.maia_type,
+            device=device,
+            all_moves=all_moves,
+            all_moves_dict=all_moves_dict,
+            elo_dict=elo_dict,
+            elo_self=2800,
+            elo_oppo=2800,
+            temperature=1.0,
+        )
+        out_dir.joinpath(f"opening_probe_base.json").write_text(json.dumps(opening_probe, indent=2))
+        print(f"Opening probe saved to {out_dir.joinpath(f'opening_probe_base.json')}")
+
+        ds = DpoPairs(jsonl)
+        loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)
+
+        # Aggregate metrics
+        n = 0
+        sum_loss = 0.0
+
+        sum_pi_gap = 0.0
+        sum_ref_gap = 0.0
+        sum_gap_improvement = 0.0
+
+        sum_top1_pi = 0.0
+        sum_top1_ref = 0.0
+
+        sum_p_chosen_pi = 0.0
+        sum_p_chosen_ref = 0.0
+
+        sum_kl = 0.0
+
+        sum_ent_pi = 0.0
+        sum_ent_ref = 0.0
+
+        # NEW: per-row metrics store
+        per_rows: List[Dict[str, Any]] = []
+
+        # NEW: phase buckets for tails
+        phase_buckets: Dict[Tuple[str, str], List[float]] = defaultdict(list)
+
+        # NEW: opening family distribution (per game)
+        opening_by_game: Dict[str, str] = {}
+
+
+
+        for batch in loader:
+            fens = batch["fen"]
+            es = batch["elo_self"]
+            eo = batch["elo_oppo"]
+            chosen = batch["chosen"]
+            rejected = batch["rejected"]
+            bs = len(fens)
+            game_ids = batch["game_id"]
+            ply_idxs = batch["ply_idx"]
+            opening_prefixes = batch["opening_prefix_uci_20"]
+
+            board_input, legal_moves, es_t, eo_t = batch_preprocess(all_moves_dict, elo_dict, fens, es, eo, device)
+
+            logits_pi = forward_logits(policy, board_input, es_t, eo_t)
+            logits_ref = forward_logits(base, board_input, es_t, eo_t)
+
+            logits_pi_m = apply_legal_mask(logits_pi, legal_moves)
+            logits_ref_m = apply_legal_mask(logits_ref, legal_moves)
+
+            probs_pi = torch.softmax(logits_pi_m, dim=-1)
+            probs_ref = torch.softmax(logits_ref_m, dim=-1)
+
+            entropy_pi = entropy_from_logits(logits_pi_m)     # [B]
+            entropy_ref = entropy_from_logits(logits_ref_m)   # [B]
+
+            entropy_diff = entropy_pi - entropy_ref           # [B]
+
+            # indices for chosen/rejected
+            chosen_idx = torch.tensor([uci_to_vocab_index(all_moves_dict, fen, u) for fen, u in zip(fens, chosen)],
+                                    device=device, dtype=torch.long)
+            rejected_idx = torch.tensor([uci_to_vocab_index(all_moves_dict, fen, u) for fen, u in zip(fens, rejected)],
+                                        device=device, dtype=torch.long)
+
+            chosen_ok = (chosen_idx >= 0) & (legal_moves.gather(1, chosen_idx.clamp(min=0).view(-1,1)).squeeze(1) > 0)
+            rejected_ok = (rejected_idx >= 0) & (legal_moves.gather(1, rejected_idx.clamp(min=0).view(-1,1)).squeeze(1) > 0)
+            bad = ~(chosen_ok & rejected_ok)
+            if bad.any():
+                j = int(bad.nonzero()[0])
+                raise RuntimeError(f"Illegal chosen/rejected under mask. fen={fens[j]} chosen={chosen[j]} rejected={rejected[j]}")
+
+            logp_pi_ch = gather_logprob(logits_pi_m, chosen_idx)
+            logp_pi_rj = gather_logprob(logits_pi_m, rejected_idx)
+            logp_ref_ch = gather_logprob(logits_ref_m, chosen_idx)
+            logp_ref_rj = gather_logprob(logits_ref_m, rejected_idx)
+
+            loss = dpo_w_margin_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta, gamma=gamma)
+
+            pi_gap = (logp_pi_ch - logp_pi_rj)          # [B]
+            ref_gap = (logp_ref_ch - logp_ref_rj)       # [B]
+            gap_improve = (pi_gap - ref_gap)            # [B]
+
+            top1_pi = top1_accuracy(logits_pi_m, fens, all_moves_dict, chosen)
+            top1_ref = top1_accuracy(logits_ref_m, fens, all_moves_dict, chosen)
+
+            p_chosen_pi = chosen_probability(logits_pi_m, fens, all_moves_dict, chosen)
+            p_chosen_ref = chosen_probability(logits_ref_m, fens, all_moves_dict, chosen)
+
+            kl = kl_policy_base_from_logits(logits_pi_m, logits_ref_m)     # [B]
+
+            # NEW: ranking metrics
+            rank_ch = chosen_rank(logits_pi_m, chosen_idx)  # [B]
+            hit3 = hit_at_k(logits_pi_m, chosen_idx, k=3)
+            hit5 = hit_at_k(logits_pi_m, chosen_idx, k=5)
+            hit10 = hit_at_k(logits_pi_m, chosen_idx, k=10)
+
+            # NEW: predicted UCI (top-1)
+            pred_idx = logits_pi_m.argmax(dim=-1).tolist()
+            pred_uci = [vocab_index_to_uci(all_moves, fen, i) for fen, i in zip(fens, pred_idx)]
+
+            n += bs
+            sum_loss += float(loss) * bs
+
+            sum_pi_gap += float(pi_gap.mean()) * bs
+            sum_ref_gap += float(ref_gap.mean()) * bs
+            sum_gap_improvement += float(gap_improve.mean()) * bs
+
+            sum_top1_pi += float(top1_pi.mean()) * bs
+            sum_top1_ref += float(top1_ref.mean()) * bs
+
+            sum_p_chosen_pi += float(p_chosen_pi.mean()) * bs
+            sum_p_chosen_ref += float(p_chosen_ref.mean()) * bs
+
+            sum_kl += float(kl.mean()) * bs
+
+            sum_ent_pi += float(entropy_pi.mean()) * bs
+            sum_ent_ref += float(entropy_ref.mean()) * bs
+
+            # NEW: predicted UCI (top-1)
+            pred_idx = logits_pi_m.argmax(dim=-1).tolist()
+            pred_uci = [vocab_index_to_uci(all_moves, fen, i) for fen, i in zip(fens, pred_idx)]
+
+            # NEW: top-10 moves for policy and base
+            k = min(10, logits_pi_m.shape[-1])
+
+            topk_pi_idx = torch.topk(logits_pi_m, k=k, dim=-1).indices      # [B, k]
+            topk_ref_idx = torch.topk(logits_ref_m, k=k, dim=-1).indices    # [B, k]
+
+            topk_pi_uci = [
+                [
+                    {
+                        "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                        "logit": float(logits_pi_m[i, idx].item()),
+                        "prob": float(probs_pi[i, idx].item())
+                    }
+                    for idx in topk_pi_idx[i].tolist()
+                ]
+                for i in range(bs)
+            ]
+
+            topk_ref_uci = [
+                [
+                    {
+                        "uci": vocab_index_to_uci(all_moves, fens[i], int(idx)),
+                        "logit": float(logits_ref_m[i, idx].item()),
+                        "prob": float(probs_ref[i, idx].item())
+                    }
+                    for idx in topk_ref_idx[i].tolist()
+                ]
+                for i in range(bs)
+            ]
+
+            # NEW: per-row output + phase tails
+            for i in range(bs):
+                fen = fens[i]
+                ply_abs = fen_to_ply(fen)
+                phase = ply_to_phase(ply_abs)
+
+                gid = str(game_ids[i] or "")
+                if gid and gid not in opening_by_game:
+                    pref = opening_prefixes[i] or []
+                    opening_by_game[gid] = coarse_opening_family_from_prefix(pref)
+
+                correct = float(top1_pi[i].item())
+                # binary precision/recall/F1 are identical to accuracy in this formulation
+                precision = correct
+                recall = correct
+                f1 = correct
+
+                r = {
+                    "game_id": gid,
+                    "ply_idx": int(ply_idxs[i]) if ply_idxs[i] is not None else -1,
+                    "ply_abs": int(ply_abs),
+                    "phase": phase,
+                    "fen": fen,
+                    "chosen_uci": chosen[i],
+                    "rejected_uci": rejected[i],
+                    "pred_uci": pred_uci[i],
+                    "correct_top1": correct,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                    "hit_top3": float(hit3[i].item()),
+                    "hit_top5": float(hit5[i].item()),
+                    "hit_top10": float(hit10[i].item()),
+                    "rank_chosen": int(rank_ch[i].item()) if rank_ch[i].item() < 1e8 else -1,
+                    "mrr": float(0.0 if rank_ch[i].item() >= 1e8 else 1.0 / float(rank_ch[i].item())),
+                    "logp_gap_pi": float(pi_gap[i].item()),
+                    "logp_gap_ref": float(ref_gap[i].item()),
+                    "gap_improve": float(gap_improve[i].item()),
+                    "p_chosen_pi": float(p_chosen_pi[i].item()),
+                    "p_chosen_ref": float(p_chosen_ref[i].item()),
+                    "kl_pi_ref": float(kl[i].item()),
+                    "nll_chosen_pi": float((-logp_pi_ch[i]).item()),
+                    "top_max10_pi_w_logits": topk_pi_uci[i],
+                    "top_max10_ref_w_logits": topk_ref_uci[i],
+                    "stockfish": batch["meta"][i]["stockfish"],
+                    "entropy_pi": float(entropy_pi[i].item()),
+                    "entropy_ref": float(entropy_ref[i].item()),
+                    "entropy_diff_pi_vs_ref": float(entropy_diff[i].item())
+                }
+                per_rows.append(r)
+
+                phase_buckets[("kl_pi_ref", phase)].append(r["kl_pi_ref"])
+                phase_buckets[("logp_gap_pi", phase)].append(r["logp_gap_pi"])
+                phase_buckets[("p_chosen_pi", phase)].append(r["p_chosen_pi"])
+                phase_buckets[("correct_top1", phase)].append(r["correct_top1"])
+
+
+
+        def avg(x: float) -> float:
+            return x / max(1, n)
+
+        # ----------------------------
+        # Phase-wise tails (median + p90/p95/p99)
+        # ----------------------------
+        phase_summary: Dict[str, Dict[str, Any]] = {}
+        for (metric, phase), xs in phase_buckets.items():
+            phase_summary.setdefault(metric, {})
+            phase_summary[metric][phase] = {
+                "n": len(xs),
+                "mean": mean(xs),
+                "median": statistics.median(xs) if xs else float("nan"),
+                **quantiles(xs, ps=(0.9, 0.95, 0.99)),
+            }
+
+        # ----------------------------
+        # Opening fingerprint distribution (per game)
+        # ----------------------------
+        opening_counts = Counter(opening_by_game.values())
+        opening_dist = {k: v for k, v in opening_counts.most_common()}
+
+        # ----------------------------
+        # Bootstrap confidence intervals
+        # ----------------------------
+        acc_vals = [r["correct_top1"] for r in per_rows]
+        gap_vals = [r["logp_gap_pi"] for r in per_rows]
+        pch_vals = [r["p_chosen_pi"] for r in per_rows]
+        mrr_vals = [r["mrr"] for r in per_rows]
+
+        ci_row = {
+            "accuracy_top1": bootstrap_ci(acc_vals, mean, n_boot=args.n_boot, seed=0),
+            "mean_logp_gap_pi": bootstrap_ci(gap_vals, mean, n_boot=args.n_boot, seed=1),
+            "mean_p_chosen_pi": bootstrap_ci(pch_vals, mean, n_boot=args.n_boot, seed=2),
+            "mrr": bootstrap_ci(mrr_vals, mean, n_boot=args.n_boot, seed=3),
+        }
+
+        # cluster bootstrap if we have game ids
+        ci_cluster = {
+            "accuracy_top1": cluster_bootstrap_ci(per_rows, "game_id", "correct_top1", mean, n_boot=args.n_boot, seed=10),
+            "mean_logp_gap_pi": cluster_bootstrap_ci(per_rows, "game_id", "logp_gap_pi", mean, n_boot=args.n_boot, seed=11),
+            "mean_p_chosen_pi": cluster_bootstrap_ci(per_rows, "game_id", "p_chosen_pi", mean, n_boot=args.n_boot, seed=12),
+            "mrr": cluster_bootstrap_ci(per_rows, "game_id", "mrr", mean, n_boot=args.n_boot, seed=13),
+        }
+        # drop Nones
+        ci_cluster = {k: v for k, v in ci_cluster.items() if v is not None}
+
+
+        print("\n=== Eval summary ===")
+        print(f"GM: {args.gm_name}")
+        print(f"examples: {n}")
+        print(f"loss: {avg(sum_loss):.4f}")
+        print("")
+        print(f"mean logp_gap policy (chosen - rejected): {avg(sum_pi_gap):.4f}")
+        print(f"mean logp_gap base   (chosen - rejected): {avg(sum_ref_gap):.4f}")
+        print(f"mean gap improvement (policy - base):     {avg(sum_gap_improvement):.4f}")
+        print("")
+        print(f"top1 accuracy on chosen (policy): {avg(sum_top1_pi):.4f}")
+        print(f"top1 accuracy on chosen (base):   {avg(sum_top1_ref):.4f}")
+        print("")
+        print(f"mean P(chosen) (policy): {avg(sum_p_chosen_pi):.4f}")
+        print(f"mean P(chosen) (base):   {avg(sum_p_chosen_ref):.4f}")
+        print("")
+        print(f"mean KL(policy || base) over legal moves: {avg(sum_kl):.4f}")
+        print("")
+
+        agg = {
+            "loss": avg(sum_loss),
+            "mean_logp_gap_policy_chosen_rejected": avg(sum_pi_gap),
+            "mean_logp_gap_base_chosen_rejected": avg(sum_ref_gap),
+            "mean_gap_improvement": avg(sum_gap_improvement),
+            "top1_accuracy_on_chosen_policy": avg(sum_top1_pi),
+            "top1_accuracy_on_chosen_base": avg(sum_top1_ref),
+            "mean_p_chosen_policy": avg(sum_p_chosen_pi),
+            "mean_p_chosen_base": avg(sum_p_chosen_ref),
+            "mean_kl": avg(sum_kl),
+            "mean_ent_pi": avg(sum_ent_pi),
+            "mean_ent_ref": avg(sum_ent_ref)
+        }
+
+
+        out_dir.joinpath(f"eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.json").write_text(json.dumps(agg))
+        print(f"Eval results saved to {out_dir.joinpath(f'eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.json')}")
+        print(f"Eval results saved to {out_dir.joinpath(f'eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.json')}")
+        # Now we write csv to out_dir.joinpath(f"eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.csv")
+
+        # 2) Extended JSON: phase tails + CIs + opening dist
         
-    run_eval(jsonl, 
-                policy_pt, 
-                args.out_dir, 
-                args.gm_name, 
-                args.device, 
-                args.maia_type, 
-                f"opening_probe_policy_{full_name}.json",
-                args.n_boot,
-                args.batch_size,
-                args.split_name,
-                f"eval_results_{full_name}_{args.split_name}.json",
-                f"eval_results_{full_name}_extended_{args.split_name}.json",
-                f"eval_results_{full_name}_{args.split_name}.csv",
-                f"eval_per_row_metrics_{full_name}_{args.split_name}.jsonl",
-                supplied_loss_function
-    )
-            
+        ext = {
+            **agg,
+            "n_rows": len(per_rows),
+            "phase_summary": phase_summary,
+            "bootstrap_ci_row": ci_row,
+            "bootstrap_ci_cluster_by_game_player_chosen": ci_cluster,
+            "opening_family_counts_by_game_player_chosen": opening_dist,
+            "notes": {
+                "opening_family_is_coarse_heuristic_player_chosen": True,
+                "precision_recall_f1_equals_accuracy_for_top1_hit": True,
+            },
+        }
+        out_ext = out_dir.joinpath(f"eval_results_extended_dpo_beta={beta:.2f}_{args.split_name}.json")
+        out_ext.write_text(json.dumps(ext, indent=2))
+        print(f"Extended eval saved to {out_ext}")
+
+
+        import csv
+        with open(out_dir.joinpath(f"eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.csv"), "w") as f:
+            writer = csv.writer(f)
+            writer.writerow(["loss", "mean_logp_gap_policy_chosen_rejected", "mean_logp_gap_base_chosen_rejected", 
+                            "mean_gap_improvement", "top1_accuracy_on_chosen_policy", "top1_accuracy_on_chosen_base", 
+                            "mean_p_chosen_policy", "mean_p_chosen_base", "mean_kl", "mean_ent_pi", "mean_ent_ref"])
+            writer.writerow([avg(sum_loss), avg(sum_pi_gap), avg(sum_ref_gap), avg(sum_gap_improvement), avg(sum_top1_pi), avg(sum_top1_ref), avg(sum_p_chosen_pi), avg(sum_p_chosen_ref), avg(sum_kl), avg(sum_ent_pi), avg(sum_ent_ref)])
+        print(f"CSV saved to {out_dir.joinpath(f'eval_results_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.csv')}")
+
+        # 4) Per-row metrics CSV
+        if per_rows:
+            per_row_json_path = out_dir.joinpath(f"eval_per_row_metrics_dpo_w_margin_beta={beta:.2f}_gamma={gamma:.2f}_{args.split_name}.jsonl")
+
+            per_rows_sorted = sorted(
+                per_rows,
+                key=lambda r: (r.get("game_id"), r.get("ply_idx"))
+            )
+
+            per_rows_sorted = add_piece_selection_per_row_stats(per_rows_sorted)
+
+            with open(per_row_json_path, "w", encoding="utf-8") as f:
+                f.writelines(json.dumps(row) + "\n" for row in per_rows_sorted)
+
 if __name__ == "__main__":
     main()

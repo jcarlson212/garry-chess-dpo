@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 import statistics
 import chess
+import itertools
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -14,7 +15,6 @@ from torch.utils.data import DataLoader, Dataset
 from maia2 import inference, model as maia_model
 from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
 from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import run_eval
-
 
 # ----------------------------
 # Dataset
@@ -48,7 +48,7 @@ class DpoPairs(Dataset):
             hash_key = f'{r["meta"]["game_header_hash"]}_{r["meta"]["ply_idx"]}'
             self.game_id_and_ply_to_prev_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i-10, i)]
             self.game_id_and_ply_to_fut_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i+1, i+11)]
-
+            
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -111,6 +111,97 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # ----------------------------
 # Helpers (match training)
 # ----------------------------
+
+def extract_move_cp(meta: dict, uci: str) -> float:
+    sf_moves = meta["stockfish"]["sf_moves_returned"]
+    for sf_uci, cp in sf_moves:
+        if sf_uci == uci:
+            return float(cp)
+        
+    cp_values = [cp for _, cp in sf_moves]
+    fallback_cp = float(min(cp_values)) if cp_values else 0.0
+    #print(
+        #f"[WARN] move {uci} not found in sf_moves_returned "
+        #f"(game={meta.get('game_header_hash')}, ply={meta.get('ply_idx')}). "
+        #f"Using fallback cp={fallback_cp}"
+    #)
+    return fallback_cp
+
+def is_positional(board: chess.Board, move: chess.Move) -> bool:
+    if move.promotion is not None:
+        return False
+    if board.is_capture(move):
+        return False
+    if board.gives_check(move):
+        return False
+    return True
+
+
+def same_piece_type(board: chess.Board, move_a: chess.Move, move_b: chess.Move) -> bool:
+    piece_a = board.piece_at(move_a.from_square)
+    piece_b = board.piece_at(move_b.from_square)
+    if piece_a is None or piece_b is None:
+        return False
+    return piece_a.piece_type == piece_b.piece_type
+
+
+def compute_style_score(
+    fen: str,
+    chosen_uci: str,
+    rejected_uci: str,
+    chosen_cp: float,
+    rejected_cp: float,
+    cp_scale: float = 40.0,
+    piece_bonus: float = 2.0,
+    positional_bonus: float = 2.0,
+) -> float:
+    board = chess.Board(fen)
+    ch = chess.Move.from_uci(chosen_uci)
+    rj = chess.Move.from_uci(rejected_uci)
+
+    same_piece = same_piece_type(board, ch, rj)
+    same_pos = (is_positional(board, ch) == is_positional(board, rj))
+    cp_sim = math.exp(-abs(float(chosen_cp) - float(rejected_cp)) / max(cp_scale, 1e-6))
+
+    score = cp_sim
+    if same_piece:
+        score *= piece_bonus
+    if same_pos:
+        score *= positional_bonus
+    return float(score)
+
+def extract_move_cp(meta: dict, uci: str) -> float:
+    sf_moves = meta["stockfish"]["sf_moves_returned"]
+    for sf_uci, cp in sf_moves:
+        if sf_uci == uci:
+            return float(cp)
+        
+    cp_values = [cp for _, cp in sf_moves]
+    fallback_cp = float(min(cp_values)) if cp_values else 0.0
+    #print(
+        #f"[WARN] move {uci} not found in sf_moves_returned "
+        #f"(game={meta.get('game_header_hash')}, ply={meta.get('ply_idx')}). "
+        #f"Using fallback cp={fallback_cp}"
+    #)
+    return fallback_cp
+
+def chosen_index_tensor(
+    fens: List[str],
+    all_moves_dict: Dict[str, int],
+    moves_uci: List[str],
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
+    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
+    """
+    idxs: List[int] = []
+    for fen, uci in zip(fens, moves_uci):
+        side = fen.split(" ")[1]
+        uci_eff = mirror_move(uci) if side == "b" else uci
+        idx = all_moves_dict.get(uci_eff, None)
+        idxs.append(-1 if idx is None else int(idx))
+    return torch.tensor(idxs, device=device, dtype=torch.long)
 
 PIECE_TYPE_NAMES = {
     chess.PAWN: "pawn",
@@ -689,44 +780,14 @@ def entropy_from_logits(masked_logits: torch.Tensor) -> torch.Tensor:
     entropy = -(p * logp).sum(dim=-1)            # [B]
     return entropy
 
-def chosen_index_tensor(
-    fens: List[str],
-    all_moves_dict: Dict[str, int],
-    moves_uci: List[str],
-    device: torch.device,
+
+def sft_pairwise_loss(
+    logp_pi_ch: torch.Tensor,
+    logp_pi_rj: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
-    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
-    """
-    idxs: List[int] = []
-    for fen, uci in zip(fens, moves_uci):
-        side = fen.split(" ")[1]
-        uci_eff = mirror_move(uci) if side == "b" else uci
-        idx = all_moves_dict.get(uci_eff, None)
-        idxs.append(-1 if idx is None else int(idx))
-    return torch.tensor(idxs, device=device, dtype=torch.long)
+    pi_gap = logp_pi_ch - logp_pi_rj
+    return (-torch.nn.functional.logsigmoid(pi_gap)).mean()
 
-def supervised_nll_loss(
-    logits_masked: torch.Tensor,
-    idx_t: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Standard supervised fine-tuning objective:
-      loss = -mean(log p(chosen_move))
-    ignoring examples where chosen move isn't in vocab (idx == -1).
-    """
-    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
-
-    valid = idx_t >= 0
-    if valid.sum().item() == 0:
-        # return a zero scalar that still has grad
-        return logits_masked.sum() * 0.0
-
-    safe_idx = idx_t.clamp(min=0)
-    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
-    gathered = gathered[valid]
-    return (-gathered).mean()
 
 @torch.no_grad()
 def probe_opening_distributions_from_policy(
@@ -915,10 +976,43 @@ def gather_logprob(logits_masked: torch.Tensor, idxs: torch.Tensor) -> torch.Ten
     return gathered
 
 
-def dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta: float) -> torch.Tensor:
-    x = beta * ((logp_pi_ch - logp_pi_rj) - (logp_ref_ch - logp_ref_rj))
-    return -torch.nn.functional.logsigmoid(x).mean()
+def dpo_loss_style_weighted(
+    logp_pi_ch: torch.Tensor,
+    logp_pi_rj: torch.Tensor,
+    logp_ref_ch: torch.Tensor,
+    logp_ref_rj: torch.Tensor,
+    style_score: torch.Tensor,
+    beta: float,
+    tau: float,
+) -> torch.Tensor:
+    pi_gap = logp_pi_ch - logp_pi_rj
+    ref_gap = logp_ref_ch - logp_ref_rj
+    x = beta * (pi_gap - ref_gap)
 
+    per_example_loss = -torch.nn.functional.logsigmoid(x)
+    weights = torch.exp(-style_score / tau)
+    return (weights * per_example_loss).sum() / weights.sum().clamp_min(1e-12)
+
+def supervised_nll_loss(
+    logits_masked: torch.Tensor,
+    idx_t: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Standard supervised fine-tuning objective:
+      loss = -mean(log p(chosen_move))
+    ignoring examples where chosen move isn't in vocab (idx == -1).
+    """
+    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
+
+    valid = idx_t >= 0
+    if valid.sum().item() == 0:
+        # return a zero scalar that still has grad
+        return logits_masked.sum() * 0.0
+
+    safe_idx = idx_t.clamp(min=0)
+    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
+    gathered = gathered[valid]
+    return (-gathered).mean()
 
 @torch.no_grad()
 def kl_policy_base_from_logits(logits_pi_masked: torch.Tensor, logits_ref_masked: torch.Tensor) -> torch.Tensor:
@@ -1105,58 +1199,95 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 # ----------------------------
 
 def main() -> None:
-    # Example usage: 
-    # python .\src\grandmaster_dpo\eval\single_gm\eval_sft_maia_single_gm.py --gm_name carlsen --train_val_folder .\final_experiments_for_paper\experiment1\train_val_pgns_twic --out_dir .\final_experiments_for_paper\experiment1\eval_results_twic --model_dir .\final_experiments_for_paper\experiment1\trained_models_twic
+    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_sft_and_dpo_w_style_sim_utility_weight_maia2.py --gm_name caruana --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/eval_results_twic --model_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--split_name", required=False, default="val", help="train or val")
     ap.add_argument("--maia_type", default="blitz", choices=["blitz", "rapid"])
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--batch_size", type=int, default=64)
-    ap.add_argument("--beta", type=float, default=0.1)
+    ap.add_argument("--betas", type=float, nargs="+", default=[0.6], help="List of beta values (e.g. --betas 0.1 0.2 0.4)")
+    ap.add_argument("--dpo_loss_weights", type=float, nargs="+", default=[0.1, 0.2, 0.4], help="List of beta values (e.g. --dpo_loss_weight 0.1 0.2 0.4)")
+    
+    ap.add_argument("--style_cp_scale", type=float, default=40)
+    ap.add_argument("--style_piece_bonus", type=float, default=1.0)
+    ap.add_argument("--style_positional_bonus", type=float, default=2.0)
+    ap.add_argument("--style_taus", type=float, nargs="+", default=[0.25, 0.75, 1.25], help="List of style taus for tuning how much style similarity reweights loss")
+
     ap.add_argument("--n_boot", type=int, default=100, help="Number of bootstrap resamples for confidence intervals")
     ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
     ap.add_argument("--out_dir", required=True, help="Output directory.")
     ap.add_argument("--model_dir", required=True, help="Model directory.")
-    
-    args = ap.parse_args()
-    jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_sft_best.pt")
-    full_name = "sft"
 
-    def supplied_loss_function(logp_pi_ch, 
-                                logp_pi_rj, 
-                                logp_ref_ch, 
-                                logp_ref_rj, 
-                                logits_pi_m, 
-                                logits_ref_m, 
-                                idx_t, 
-                                chosen_cps, 
-                                rejected_cps, 
-                                prev_fens_batch,
-                                next_fens_chosen_batch,
-                                next_fens_rejected_batch,
-                                batch_meta_data
-    ):
-        loss = supervised_nll_loss(logits_pi_m, idx_t)
-        return loss
-        
-    run_eval(jsonl, 
-                policy_pt, 
-                args.out_dir, 
-                args.gm_name, 
-                args.device, 
-                args.maia_type, 
-                f"opening_probe_policy_{full_name}.json",
-                args.n_boot,
-                args.batch_size,
-                args.split_name,
-                f"eval_results_{full_name}_{args.split_name}.json",
-                f"eval_results_{full_name}_extended_{args.split_name}.json",
-                f"eval_results_{full_name}_{args.split_name}.csv",
-                f"eval_per_row_metrics_{full_name}_{args.split_name}.jsonl",
-                supplied_loss_function
-    )
-            
+    args = ap.parse_args()
+
+    for beta, dpo_loss_weight, style_tau in itertools.product(args.betas, args.dpo_loss_weights, args.style_taus):
+        full_name = f"sft_and_dpo_w_style_sim_utility_weight_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale={args.style_cp_scale:.2f}_style_piece_bonus={args.style_piece_bonus:.2f}_style_positional_bonus={args.style_positional_bonus:.2f}_style_tau={style_tau:.2f}"
+        jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
+
+        def supplied_loss_function(logp_pi_ch, 
+                                    logp_pi_rj, 
+                                    logp_ref_ch, 
+                                    logp_ref_rj, 
+                                    logits_pi_m, 
+                                    logits_ref_m, 
+                                    idx_t, 
+                                    chosen_cps, 
+                                    rejected_cps, 
+                                    prev_fens_batch,
+                                    next_fens_chosen_batch,
+                                    next_fens_rejected_batch,
+                                    batch_meta_data
+        ):
+            style_scores = torch.tensor(
+                [
+                    compute_style_score(
+                        fen=fen,
+                        chosen_uci=ch,
+                        rejected_uci=rj,
+                        chosen_cp=ch_cp,
+                        rejected_cp=rj_cp,
+                        cp_scale=args.style_cp_scale,
+                        piece_bonus=args.style_piece_bonus,
+                        positional_bonus=args.style_positional_bonus,
+                    )
+                    for fen, ch, rj, ch_cp, rj_cp, _, _, _, _ in batch_meta_data
+                ],
+                dtype=torch.float32,
+                device=args.device,
+            )
+
+            loss = (
+                dpo_loss_weight
+                * dpo_loss_style_weighted(
+                    logp_pi_ch=logp_pi_ch,
+                    logp_pi_rj=logp_pi_rj,
+                    logp_ref_ch=logp_ref_ch,
+                    logp_ref_rj=logp_ref_rj,
+                    style_score=style_scores,
+                    beta=beta,
+                    tau=style_tau,
+                )
+                + supervised_nll_loss(logits_pi_m, idx_t)
+            )
+            return loss
+
+        run_eval(jsonl, 
+            f"{args.model_dir}/{args.gm_name}/policy_best_{full_name}.pt", 
+            args.out_dir, 
+            args.gm_name, 
+            args.device, 
+            args.maia_type, 
+            f"opening_probe_policy_{full_name}.json",
+            args.n_boot,
+            args.batch_size,
+            args.split_name,
+            f"eval_results_{full_name}_{args.split_name}.json",
+            f"eval_results_extended_{full_name}_{args.split_name}.json",
+            f"eval_results_{full_name}_{args.split_name}.csv",
+            f"eval_per_row_metrics_{full_name}_{args.split_name}.jsonl",
+            supplied_loss_function
+        )
+
 if __name__ == "__main__":
     main()

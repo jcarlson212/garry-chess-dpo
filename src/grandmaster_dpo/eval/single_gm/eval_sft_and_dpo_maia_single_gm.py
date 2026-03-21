@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 import statistics
 import chess
+import itertools
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -14,7 +15,6 @@ from torch.utils.data import DataLoader, Dataset
 from maia2 import inference, model as maia_model
 from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
 from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import run_eval
-
 
 # ----------------------------
 # Dataset
@@ -31,23 +31,6 @@ class DpoPairs(Dataset):
                 if not line:
                     continue
                 self.rows.append(json.loads(line))
-        self.game_id_and_ply_to_prev_10_plys = {}
-        self.game_id_and_ply_to_fut_10_plys = {}
-
-        def create_window_item(rows, index, target_game):
-            if index < 0:
-                return None 
-            elif index >= len(rows):
-                return None
-            else:
-                if rows[index]["meta"]["game_header_hash"] != target_game:
-                    return None
-                return rows[index]
-
-        for i, r in enumerate(self.rows):
-            hash_key = f'{r["meta"]["game_header_hash"]}_{r["meta"]["ply_idx"]}'
-            self.game_id_and_ply_to_prev_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i-10, i)]
-            self.game_id_and_ply_to_fut_10_plys[hash_key] = [create_window_item(self.rows, i, r["meta"]["game_header_hash"]) for i in range(i+1, i+11)]
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -111,6 +94,24 @@ def collate_batch(batch: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
 # ----------------------------
 # Helpers (match training)
 # ----------------------------
+
+def chosen_index_tensor(
+    fens: List[str],
+    all_moves_dict: Dict[str, int],
+    moves_uci: List[str],
+    device: torch.device,
+) -> torch.Tensor:
+    """
+    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
+    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
+    """
+    idxs: List[int] = []
+    for fen, uci in zip(fens, moves_uci):
+        side = fen.split(" ")[1]
+        uci_eff = mirror_move(uci) if side == "b" else uci
+        idx = all_moves_dict.get(uci_eff, None)
+        idxs.append(-1 if idx is None else int(idx))
+    return torch.tensor(idxs, device=device, dtype=torch.long)
 
 PIECE_TYPE_NAMES = {
     chess.PAWN: "pawn",
@@ -689,44 +690,14 @@ def entropy_from_logits(masked_logits: torch.Tensor) -> torch.Tensor:
     entropy = -(p * logp).sum(dim=-1)            # [B]
     return entropy
 
-def chosen_index_tensor(
-    fens: List[str],
-    all_moves_dict: Dict[str, int],
-    moves_uci: List[str],
-    device: torch.device,
+
+def sft_pairwise_loss(
+    logp_pi_ch: torch.Tensor,
+    logp_pi_rj: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Convert UCI -> Maia vocab index (mirroring if fen is black-to-move).
-    Returns idx_t with -1 for unknown moves (should be rare; those will be ignored).
-    """
-    idxs: List[int] = []
-    for fen, uci in zip(fens, moves_uci):
-        side = fen.split(" ")[1]
-        uci_eff = mirror_move(uci) if side == "b" else uci
-        idx = all_moves_dict.get(uci_eff, None)
-        idxs.append(-1 if idx is None else int(idx))
-    return torch.tensor(idxs, device=device, dtype=torch.long)
+    pi_gap = logp_pi_ch - logp_pi_rj
+    return (-torch.nn.functional.logsigmoid(pi_gap)).mean()
 
-def supervised_nll_loss(
-    logits_masked: torch.Tensor,
-    idx_t: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Standard supervised fine-tuning objective:
-      loss = -mean(log p(chosen_move))
-    ignoring examples where chosen move isn't in vocab (idx == -1).
-    """
-    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
-
-    valid = idx_t >= 0
-    if valid.sum().item() == 0:
-        # return a zero scalar that still has grad
-        return logits_masked.sum() * 0.0
-
-    safe_idx = idx_t.clamp(min=0)
-    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
-    gathered = gathered[valid]
-    return (-gathered).mean()
 
 @torch.no_grad()
 def probe_opening_distributions_from_policy(
@@ -915,10 +886,39 @@ def gather_logprob(logits_masked: torch.Tensor, idxs: torch.Tensor) -> torch.Ten
     return gathered
 
 
-def dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta: float) -> torch.Tensor:
-    x = beta * ((logp_pi_ch - logp_pi_rj) - (logp_ref_ch - logp_ref_rj))
-    return -torch.nn.functional.logsigmoid(x).mean()
+def dpo_loss(
+    logp_pi_ch: torch.Tensor,
+    logp_pi_rj: torch.Tensor,
+    logp_ref_ch: torch.Tensor,
+    logp_ref_rj: torch.Tensor,
+    beta: float,
+) -> torch.Tensor:
+    # DPO: -log σ( beta * ((π_ch-π_rj) - (ref_ch-ref_rj)) )
+    pi_gap = logp_pi_ch - logp_pi_rj
+    ref_gap = logp_ref_ch - logp_ref_rj
+    x = beta * (pi_gap - ref_gap)
+    return (-torch.nn.functional.logsigmoid(x)).mean()
 
+def supervised_nll_loss(
+    logits_masked: torch.Tensor,
+    idx_t: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Standard supervised fine-tuning objective:
+      loss = -mean(log p(chosen_move))
+    ignoring examples where chosen move isn't in vocab (idx == -1).
+    """
+    logp_all = torch.log_softmax(logits_masked, dim=-1)  # [B, V]
+
+    valid = idx_t >= 0
+    if valid.sum().item() == 0:
+        # return a zero scalar that still has grad
+        return logits_masked.sum() * 0.0
+
+    safe_idx = idx_t.clamp(min=0)
+    gathered = logp_all.gather(dim=1, index=safe_idx.view(-1, 1)).squeeze(1)  # [B]
+    gathered = gathered[valid]
+    return (-gathered).mean()
 
 @torch.no_grad()
 def kl_policy_base_from_logits(logits_pi_masked: torch.Tensor, logits_ref_masked: torch.Tensor) -> torch.Tensor:
@@ -1105,26 +1105,29 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 # ----------------------------
 
 def main() -> None:
-    # Example usage: 
-    # python .\src\grandmaster_dpo\eval\single_gm\eval_sft_maia_single_gm.py --gm_name carlsen --train_val_folder .\final_experiments_for_paper\experiment1\train_val_pgns_twic --out_dir .\final_experiments_for_paper\experiment1\eval_results_twic --model_dir .\final_experiments_for_paper\experiment1\trained_models_twic
+    # Example usage: python ./src/grandmaster_dpo/eval/single_gm/eval_sft_and_dpo_maia_single_gm.py --gm_name caruana --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment1/eval_results_twic --model_dir ./final_experiments_for_paper/experiment1/trained_models_twic
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", required=True, help="Name of the grandmaster.")
     ap.add_argument("--split_name", required=False, default="val", help="train or val")
     ap.add_argument("--maia_type", default="blitz", choices=["blitz", "rapid"])
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--batch_size", type=int, default=64)
-    ap.add_argument("--beta", type=float, default=0.1)
+    ap.add_argument("--betas", type=float, nargs="+", default=[0.6], help="List of beta values (e.g. --betas 0.1 0.2 0.4)")
+    ap.add_argument("--dpo_loss_weights", type=float, nargs="+", default=[0.1, 0.2, 0.4], help="List of beta values (e.g. --dpo_loss_weight 0.1 0.2 0.4)")
     ap.add_argument("--n_boot", type=int, default=100, help="Number of bootstrap resamples for confidence intervals")
     ap.add_argument("--train_val_folder", required=True, help="Train/val folder.")
     ap.add_argument("--out_dir", required=True, help="Output directory.")
     ap.add_argument("--model_dir", required=True, help="Model directory.")
-    
-    args = ap.parse_args()
-    jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
-    policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_sft_best.pt")
-    full_name = "sft"
 
-    def supplied_loss_function(logp_pi_ch, 
+    args = ap.parse_args()
+
+    for beta, dpo_loss_weight in itertools.product(args.betas, args.dpo_loss_weights):
+        jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
+            
+
+        policy_pt = Path(f"{args.model_dir}/{args.gm_name}/policy_best_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt")
+
+        def supplied_loss_function(logp_pi_ch, 
                                 logp_pi_rj, 
                                 logp_ref_ch, 
                                 logp_ref_rj, 
@@ -1136,27 +1139,28 @@ def main() -> None:
                                 prev_fens_batch,
                                 next_fens_chosen_batch,
                                 next_fens_rejected_batch,
-                                batch_meta_data
-    ):
-        loss = supervised_nll_loss(logits_pi_m, idx_t)
-        return loss
-        
-    run_eval(jsonl, 
-                policy_pt, 
-                args.out_dir, 
-                args.gm_name, 
-                args.device, 
-                args.maia_type, 
-                f"opening_probe_policy_{full_name}.json",
-                args.n_boot,
-                args.batch_size,
-                args.split_name,
-                f"eval_results_{full_name}_{args.split_name}.json",
-                f"eval_results_{full_name}_extended_{args.split_name}.json",
-                f"eval_results_{full_name}_{args.split_name}.csv",
-                f"eval_per_row_metrics_{full_name}_{args.split_name}.jsonl",
-                supplied_loss_function
-    )
-            
+                                batch_meta_data):
+            loss = dpo_loss_weight*dpo_loss(logp_pi_ch, logp_pi_rj, logp_ref_ch, logp_ref_rj, beta=beta) + supervised_nll_loss(logits_pi_m, idx_t)
+
+            return loss
+
+        run_eval(jsonl, 
+            policy_pt,
+            args.out_dir, 
+            args.gm_name, 
+            args.device, 
+            args.maia_type, 
+            f"opening_probe_policy_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.json",
+            args.n_boot,
+            args.batch_size,
+            args.split_name,
+            f"eval_results_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_{args.split_name}.json",
+            f"eval_results_extended_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_{args.split_name}.json",
+            f"eval_results_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_{args.split_name}.csv",
+            f"eval_per_row_metrics_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_{args.split_name}.jsonl",
+            supplied_loss_function
+        )
+
+
 if __name__ == "__main__":
     main()
