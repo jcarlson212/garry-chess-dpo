@@ -211,6 +211,7 @@ _GLOBALS: Dict[str, Any] = {
 
 _GLOBALS["sf"] = None
 
+
 def get_stockfish() -> chess.engine.SimpleEngine:
     if _GLOBALS["sf"] is None:
         stockfish_path = os.environ.get("STOCKFISH_PATH", "/opt/bin/stockfish")
@@ -296,6 +297,9 @@ def get_or_load_gm_bundle(profile: EngineProfile) -> Dict[str, Any]:
     _GLOBALS["models"][key] = bundle
     return bundle
 
+get_stockfish()
+get_or_load_gm_bundle(GAME_TYPE_TO_PROFILE["gm_carlsen_blitz"])
+get_or_load_gm_bundle(GAME_TYPE_TO_PROFILE["gm_kasparov_blitz"])
 
 # ----------------------------
 # Game state (ElastiCache pseudo-code)
