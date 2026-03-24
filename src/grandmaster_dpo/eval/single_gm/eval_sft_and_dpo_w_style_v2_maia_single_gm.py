@@ -1,21 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
-from collections import defaultdict, Counter
+from typing import Any, Dict, List, Optional, Sequence
 from dataclasses import dataclass
-import statistics
 import chess
 import itertools
 import math
 
 import torch
-from torch.utils.data import DataLoader, Dataset
 
-from maia2 import inference, model as maia_model
-from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
 from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import run_eval
 
 

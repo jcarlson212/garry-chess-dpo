@@ -1,25 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from collections import defaultdict, Counter
-import statistics
-import chess
 
 import torch
-from torch.utils.data import DataLoader, Dataset
 
-from maia2 import inference, model as maia_model
-from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
 from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import run_eval
 
-
-
-# ----------------------------
-# Helpers (match training)
-# ----------------------------
 
 def sft_pairwise_loss(
     logp_pi_ch: torch.Tensor,
@@ -27,9 +14,6 @@ def sft_pairwise_loss(
 ) -> torch.Tensor:
     pi_gap = logp_pi_ch - logp_pi_rj
     return (-torch.nn.functional.logsigmoid(pi_gap)).mean()
-
-
-
 
 
 # ----------------------------
