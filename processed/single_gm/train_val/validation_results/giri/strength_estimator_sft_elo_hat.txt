@@ -1,1 +1,0 @@
-Estimated Elo: 2134.2  (anchored: base_elo_value=2000.0)

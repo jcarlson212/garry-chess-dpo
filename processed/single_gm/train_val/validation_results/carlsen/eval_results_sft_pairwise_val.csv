@@ -1,2 +1,0 @@
-dpo_loss,mean_logp_gap_policy_chosen_rejected,mean_logp_gap_base_chosen_rejected,mean_gap_improvement,top1_accuracy_on_chosen_policy,top1_accuracy_on_chosen_base,mean_p_chosen_policy,mean_p_chosen_base,mean_kl
-0.6814395600599691,0.09569702008123314,-0.1848315383926846,0.2805285616736717,0.46952401465212196,0.4596166273989401,0.331557547355453,0.36343824211929265,0.18165409320898412
