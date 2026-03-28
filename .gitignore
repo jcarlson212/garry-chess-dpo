@@ -56,6 +56,12 @@ outputs/
 runs/
 artifacts/
 *.pgn
+./final_experiments_for_paper/experiment2_style_model/flattened_style_jsonl/
+./final_experiments_for_paper/experiment2_style_model/splits/
+./final_experiments_for_paper/experiment2_style_model/pairs_v1/
+./final_experiments_for_paper/experiment2_style_model/pairs_v1/
+./final_experiments_for_paper/experiment2_style_model/pairs_*/
+./final_experiments_for_paper/experiment2_style_model/training_models/
 
 # =========================
 # OS / editor
