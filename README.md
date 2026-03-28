@@ -137,7 +137,7 @@ DPO-trained policies retain stylistic alignment **longer under increasing search
 
 # Experiments
 
-## 1. Grandmaster-Likeness Evaluation
+## 1. Grandmaster-Likeness Evaluation [Complete] (part of paper submitted to CoG)
 
 Held-out positions evaluate how closely policies match the original Grandmaster decisions.
 
@@ -151,7 +151,7 @@ Metrics:
 
 ---
 
-## 2. Strength Estimation
+## 2. Strength Estimation 
 
 Playing strength is estimated using a **local engine-vs-engine evaluation harness**.
 
