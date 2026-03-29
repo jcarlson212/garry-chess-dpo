@@ -62,6 +62,8 @@ artifacts/
 ./final_experiments_for_paper/experiment2_style_model/pairs_v1/
 ./final_experiments_for_paper/experiment2_style_model/pairs_*/
 ./final_experiments_for_paper/experiment2_style_model/training_models/
+./final_experiments_for_paper/experiment2_style_model/pairs_v1_cached/
+./final_experiments_for_paper/experiment2_style_model/pairs_v2_cached/
 
 # =========================
 # OS / editor

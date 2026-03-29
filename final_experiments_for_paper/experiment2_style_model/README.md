@@ -57,6 +57,12 @@ For negative pairs we only match between same game type, different GMs in the sa
         --max-negatives-per-anchor 32 \
         --require-positive \
         --require-negative
+
+    python ./src/grandmaster_dpo/data_processing/style_embeddings_for_gms/ prepare_style_training_cache.py \ 
+    --train-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/train \ 
+    --eval-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/eval \ 
+    --test-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/test \ 
+    --out-root ./final_experiments_for_paper/experiment2_style_model/pairs_v1_cached
 ```
 
 ### Variant 2...

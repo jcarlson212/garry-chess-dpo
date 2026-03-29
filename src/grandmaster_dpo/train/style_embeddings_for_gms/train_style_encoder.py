@@ -11,12 +11,13 @@ import time
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
+import numpy as np
 
 from .dataset_schema import ExampleRow, PairRow, TrainConfig
 from .pair_variants import validate_pair_row
@@ -113,85 +114,102 @@ def example_to_features(ex: Dict[str, Any], variant_name: str) -> Dict[str, torc
 
     return feat
 
-class PairJsonlDataset(Dataset):
+class PairShardedDataset(Dataset):
     def __init__(
         self,
         input_dir: str,
-        variant: str,
         model_variant_name: str,
-        max_rows: int | None = None,
+        max_rows: Optional[int] = None,
     ) -> None:
-        self.variant = variant
         self.model_variant_name = model_variant_name
-        self.index: List[tuple[str, int]] = []
+    
+        shard_dirs = sorted(Path(input_dir).glob("shard_*"))
+        if not shard_dirs:
+            raise ValueError(f"No shard_* dirs found in {input_dir}")
 
-        paths = sorted(Path(input_dir).glob("*.jsonl"))
-        print("[dataset] paths:", [p.name for p in paths])
-        print("[dataset] num_paths:", len(paths))
-        if not paths:
-            raise FileNotFoundError(f"No jsonl files found in {input_dir}")
+        self.shards = []
+        self.lengths = []
 
-        bad = 0
-        kept = 0
+        total_rows = 0
+        for sd in shard_dirs:
+            shard = {
+                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
 
-        for path in paths:
-            print(f"[dataset] indexing {path}")
-            with path.open("r", encoding="utf-8") as f:
-                while True:
-                    offset = f.tell()
-                    line = f.readline()
-                    if not line:
-                        break
+                "anchor_idx": np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
+                "pos_flat": np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
+                "pos_offsets": np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
+                "neg_flat": np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
+                "neg_offsets": np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
+            }
 
-                    line = line.strip()
-                    if not line:
-                        continue
+            self.shards.append(shard)
+            self.lengths.append(len(shard["anchor_idx"]))
 
-                    self.index.append((str(path), offset))
-                    kept += 1
-
-                    if kept % 10000 == 0:
-                        print(f"[dataset] indexed={kept:,} bad={bad:,}")
-
-                    if max_rows is not None and kept >= max_rows:
-                        print(f"[dataset] reached max_rows={max_rows:,}")
-                        break
-
-            if max_rows is not None and kept >= max_rows:
+            total_rows += len(shard["anchor_idx"])
+            if max_rows and total_rows > max_rows:
                 break
 
-        if not self.index:
-            raise RuntimeError(f"No usable rows found in {input_dir}")
+        # prefix sum for global indexing
+        self.cum_lengths = np.cumsum(self.lengths)
 
-        self._file_handles: dict[str, Any] = {}
-        print(f"[dataset] indexed {len(self.index):,} rows; bad={bad:,}")
+        print(f"[dataset] loaded {len(self.shards)} shards")
+        print(f"[dataset] total rows={self.__len__():,}")
 
     def __len__(self) -> int:
-        return len(self.index)
+        return int(self.cum_lengths[-1])
 
-    def _get_file_handle(self, path: str):
-        worker_info = torch.utils.data.get_worker_info()
-        worker_id = worker_info.id if worker_info is not None else 0
-        key = f"{worker_id}:{path}"
-        if key not in self._file_handles:
-            self._file_handles[key] = open(path, "r", encoding="utf-8")
-        return self._file_handles[key]
+    def _locate(self, idx: int):
+        shard_id = np.searchsorted(self.cum_lengths, idx, side="right")
+        prev = 0 if shard_id == 0 else self.cum_lengths[shard_id - 1]
+        local_idx = idx - prev
+        return shard_id, local_idx
+
+    def _example_features(self, shard, ex_idx: int) -> Dict[str, torch.Tensor]:
+        boards = shard["boards"][ex_idx]   # [5,64]
+        move = shard["moves"][ex_idx]      # [3]
+
+        # convert to one-hot planes [5,12,8,8]
+        boards = torch.from_numpy(boards).long()  # [5,64]
+        boards = F.one_hot(boards, num_classes=13)[..., 1:]  # drop empty
+        boards = boards.permute(0, 2, 1).reshape(5, 12, 8, 8).float()
+
+        feat = {
+            "boards": boards,
+            "move": torch.from_numpy(move).long(),
+        }
+
+        if self.model_variant_name in {"phi1", "phi3"}:
+            feat["game_type"] = torch.tensor(
+                int(shard["game_types"][ex_idx]),
+                dtype=torch.long,
+            )
+
+        if self.model_variant_name == "phi3":
+            feat["opponent_context"] = torch.zeros(32, dtype=torch.float32)
+
+        return feat
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        path, offset = self.index[idx]
-        f = self._get_file_handle(path)
-        f.seek(offset)
-        line = f.readline()
-        row = json.loads(line)
+        shard_id, local_idx = self._locate(idx)
+        shard = self.shards[shard_id]
 
-        pos = random.choice(row["positives"])
-        neg = random.choice(row["negatives"])
+        anchor_idx = int(shard["anchor_idx"][local_idx])
+
+        ps = int(shard["pos_offsets"][local_idx])
+        pe = int(shard["pos_offsets"][local_idx + 1])
+        ns = int(shard["neg_offsets"][local_idx])
+        ne = int(shard["neg_offsets"][local_idx + 1])
+
+        pos_idx = int(shard["pos_flat"][np.random.randint(ps, pe)])
+        neg_idx = int(shard["neg_flat"][np.random.randint(ns, ne)])
 
         return {
-            "anchor": example_to_features(row["anchor"], self.model_variant_name),
-            "positive": example_to_features(pos, self.model_variant_name),
-            "negative": example_to_features(neg, self.model_variant_name),
-            "anchor_player_id": row["anchor"]["player_id"],
+            "anchor": self._example_features(shard, anchor_idx),
+            "positive": self._example_features(shard, pos_idx),
+            "negative": self._example_features(shard, neg_idx),
+            "anchor_player_id": 0,  # optional now
         }
 
 def _stack_feature_dict(items: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
@@ -420,18 +438,24 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
     set_seed(cfg.seed)
     device = pick_device()
     print(f"[train] device={device}")
+    print(f"[train] run_name={cfg.run_name()}")
+    print(f"[train] model_variant={cfg.model.variant_name}")
+    print(f"[train] pair_variant={cfg.pair_variant}")
+    print(f"[train] max_train_rows={cfg.max_train_rows}")
+    print(f"[train] max_eval_rows={cfg.max_eval_rows}")
+    print(f"[train] train dir={cfg.train_dir}")
+    print(f"[train] eval dir={cfg.eval_dir}")
 
-    train_ds = PairJsonlDataset(
+    train_ds = PairShardedDataset(
         input_dir=cfg.train_dir,
-        variant=cfg.pair_variant,
         model_variant_name=cfg.model.variant_name,
-        max_rows=getattr(cfg, "max_train_rows", None),
+        max_rows=cfg.max_train_rows,
     )
-    eval_ds = PairJsonlDataset(
+
+    eval_ds = PairShardedDataset(
         input_dir=cfg.eval_dir,
-        variant=cfg.pair_variant,
         model_variant_name=cfg.model.variant_name,
-        max_rows=getattr(cfg, "max_eval_rows", None),
+        max_rows=cfg.max_eval_rows,
     )
 
     train_loader = DataLoader(
@@ -442,16 +466,6 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         collate_fn=collate_pairs,
         persistent_workers=(cfg.num_workers > 0 and cfg.persistent_workers),
         prefetch_factor=(cfg.prefetch_factor if cfg.num_workers > 0 else None),
-        pin_memory=cfg.pin_memory,
-    )
-    eval_loader = DataLoader(
-        eval_ds,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        num_workers=max(0, min(4, cfg.num_workers)),
-        collate_fn=collate_pairs,
-        persistent_workers=False,
-        prefetch_factor=(2 if cfg.num_workers > 0 else None),
         pin_memory=cfg.pin_memory,
     )
 
@@ -479,11 +493,14 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         "num_eval_rows": len(eval_ds),
     })
 
+    total_samples_per_hour = 0.0
+    number_of_samples_measured = 0
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         train_metrics: List[Dict[str, float]] = []
         train_losses: List[float] = []
 
+        start_time = time.time()
         for step_idx, batch in enumerate(train_loader, start=1):
             if cfg.max_steps_per_epoch is not None and step_idx > cfg.max_steps_per_epoch:
                 break
@@ -506,9 +523,42 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
             train_metrics.append(stats)
             if step_idx % 50 == 0:
                 print(f"[train] epoch {epoch} step {step_idx} loss={loss.item():.4f} acc={stats['pair_acc']:.4f}", end="\r")
+            if step_idx % 100 == 0 and step_idx > 0:
+                new_start_time = time.time()
+                elapsed = new_start_time - start_time
+                total_samples_per_hour += step_idx * cfg.batch_size / elapsed* 3600
+                number_of_samples_measured += 1
+                print(f"[train] samples / hour: {step_idx * cfg.batch_size / elapsed * 3600:.2f}")
+                
+                avg_step_time = elapsed / step_idx
+
+                steps_left_this_epoch = len(train_loader) - step_idx
+                steps_left_future_epochs = (cfg.epochs - epoch) * len(train_loader)
+
+                total_steps_left = steps_left_this_epoch + steps_left_future_epochs
+
+                print(
+                    f"[train] estimated total time remaining: "
+                    f"{total_steps_left * avg_step_time / 3600:.2f} hours"
+                )
+                print(f"[train] estimated time remaining for this epoch: "
+                    f"{steps_left_this_epoch * avg_step_time / 3600:.2f} hours"
+                )
+                start_time = new_start_time
 
         train_summary = summarize_metrics(train_metrics)
         train_summary["loss"] = sum(train_losses) / max(1, len(train_losses))
+
+        eval_loader = DataLoader(
+            eval_ds,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            num_workers=max(0, min(4, cfg.num_workers)),
+            collate_fn=collate_pairs,
+            persistent_workers=False,
+            prefetch_factor=(2 if cfg.num_workers > 0 else None),
+            pin_memory=cfg.pin_memory,
+        )
 
         eval_summary = run_eval(
             model=model,
@@ -524,6 +574,7 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
             "epoch": epoch,
             "train": train_summary,
             "eval": eval_summary,
+            "samples_per_hour": total_samples_per_hour / max(1, number_of_samples_measured),
         }
         append_jsonl(summary_path, row)
 
