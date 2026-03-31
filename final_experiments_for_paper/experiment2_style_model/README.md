@@ -58,7 +58,7 @@ For negative pairs we only match between same game type, different GMs in the sa
         --require-positive \
         --require-negative
 
-    python ./src/grandmaster_dpo/data_processing/style_embeddings_for_gms/ prepare_style_training_cache.py \ 
+    python ./src/grandmaster_dpo/data_processing/style_embeddings_for_gms/prepare_style_training_cache.py \ 
     --train-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/train \ 
     --eval-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/eval \ 
     --test-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1/test \ 
@@ -83,7 +83,27 @@ For negative pairs we only match between same game type, different GMs in the sa
         --max-negatives-per-anchor 32 \
         --require-positive \
         --require-negative
+
+    python ./src/grandmaster_dpo/data_processing/style_embeddings_for_gms/prepare_style_training_cache.py \ 
+        --train-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v2/train \ 
+        --eval-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v2/eval \ 
+        --test-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v2/test \ 
+        --out-root ./final_experiments_for_paper/experiment2_style_model/pairs_v2_cached
 ```
+
+### Variant 3
+
+We took variant 2 and filtered it to just the 8 negatives that are furthest away. This dataset is used to further tune an already trained model on variant 2 to get it even better on harder negatives / upweight them.
+
+```bash
+python ./src/grandmaster_dpo/data_processing/style_embeddings_for_gms/prepare_style_training_cache_v3_hardneg.py \
+    --in-root ./final_experiments_for_paper/experiment2_style_model/pairs_v2_cached \
+    --out-root ./final_experiments_for_paper/experiment2_style_model/pairs_v3_cached \
+    --hard-negatives-per-pair 8 \
+    --embedding-batch-size 4096
+```
+
+The model used for determining hard vs soft negatives was `screen_v1_phi0_tau0_75__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.75__seed-42`.
 
 ### Stockfish Post-Processing Metadata
 The below call requires more than 64 GB of ram to reliably run:
@@ -118,96 +138,13 @@ python -m src.grandmaster_dpo.train.style_embeddings_for_gms.run_studies \
   --studies v1_phi0_small v1_phi1_base v2_phi1_base
 ```
 
-#### Hyper-parameter Tuning Summary
+### Eval
 
-1) Temperature (tau)
-0.03, 0.05, 0.07, 0.1, 0.15, 0.2
-
-2) Embedding dimension
-128, 256, 512
-
-3) Batch size / negatives per batch
-InfoNCE benefits a lot from more negatives
-128, 256, 512
-
-4) Positive construction
-same GM, nearby era vs same GM across all eras
-same GM with similar phase/opening vs completely unrestricted
-
-5) Negative construction
-random other GM
-hard negatives: other GMs with similar openings / similar engine choices
-
-6) Learning rate
-1e-4, 3e-4, 1e-3
-
-7) Sequence/input design (w/ ablations)
-i) phi0: 5 boards + move
-ii) phi1: 5 boards + move + game_type (blitz / rapid / classical)
-iii) phi3: 5 boards + move + game_type + avg phi1 of oponent nearest neighbors from black if no move yet else avg move near their last move state
-
-The hope is i) -> ii) -> iii) all improve.
-
-Stage 1: build the static example dataset
-
-From the PGNs, create one row per usable position-window.
-
-For each row store:
-
-5-board history
-played move
-GM id
-opponent id
-time control
-phase
-opening bucket
-maybe engine metadata later, but not required
-
-Also save mapping dictionaries:
-
-player_to_examples
-time_control_to_examples
-phase_to_examples
-opening_to_examples
-
-This can live as:
-
-parquet
-Arrow
-numpy memmap
-LMDB
-or sharded pt files
-
-For your machine, parquet + Arrow / numpy memmap is probably enough.
-
-Stage 2: train with random positives + random/semihard negatives
-
-For each anchor:
-
-positive: same GM, maybe same time control
-negatives: batch negatives or sampled negatives from other GMs
-
-This gives you a clean baseline.
-
-Stage 3: add hard negative mining
-
-Only after you see baseline learning.
-
-At that point:
-
-run encoder over a large sample or full dataset
-save embeddings
-build FAISS / ANN index
-for each anchor, retrieve:
-nearest other-GM examples as hard negatives
-nearest same-GM examples as hard positives if you want
-
-Then freeze those mined pairs for the next training round or epoch block.
-
-This means you do not rebuild the index every checkpoint. Instead you rebuild it:
-
-every few epochs
-or once per training stage
-or once after warmup
-
-That is much more practical
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir ./final_experiments_for_paper/experiment2_style_model/trained_models/screen_v1_phi0_tau0_75__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.75__seed-42 \
+--pairs-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir ./final_experiments_for_paper/experiment2_style_model/eval_outputs/screen_v1_phi0_tau0_75 \
+--checkpoint-name best \
+--save-embeddings
+```
