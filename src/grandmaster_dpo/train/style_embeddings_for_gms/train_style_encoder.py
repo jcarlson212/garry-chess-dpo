@@ -22,97 +22,17 @@ import numpy as np
 from .dataset_schema import ExampleRow, PairRow, TrainConfig
 from .pair_variants import validate_pair_row
 from .train_configs import STUDIES
+from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
+    cached_arrays_to_model_features,
+    model_variant_uses_game_type,
+    model_variant_uses_opponent_context,
+    move_feature_dict_to_device,
+    pick_device,
+    raw_example_to_model_features,
+    set_seed,
+    stack_feature_dicts,
+)
 
-
-PIECE_TO_ID = {
-    "P": 1, "N": 2, "B": 3, "R": 4, "Q": 5, "K": 6,
-    "p": 7, "n": 8, "b": 9, "r": 10, "q": 11, "k": 12,
-}
-GAME_TYPE_TO_ID = {"blitz": 1, "rapid": 2, "classical": 3}
-PHASE_TO_ID = {"opening": 1, "middlegame": 2, "endgame": 3}
-
-
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    torch.manual_seed(seed)
-
-
-def pick_device() -> torch.device:
-    if torch.backends.mps.is_available():
-        print("[device] using MPS (Apple GPU)")
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def encode_square(s: str) -> int:
-    file_idx = ord(s[0]) - ord("a")
-    rank_idx = int(s[1]) - 1
-    return 1 + rank_idx * 8 + file_idx
-
-
-def encode_move_uci(move: str) -> List[int]:
-    # simple fixed-length move tokenization: from, to, promo
-    if len(move) < 4:
-        return [0, 0, 0]
-    frm = encode_square(move[:2])
-    to = encode_square(move[2:4])
-    promo = 0
-    if len(move) >= 5:
-        promo_map = {"q": 1, "r": 2, "b": 3, "n": 4}
-        promo = promo_map.get(move[4].lower(), 0)
-    return [frm, to, promo]
-
-
-def encode_fen_board_planes(fen: str) -> List[List[List[int]]]:
-    planes = [[[0 for _ in range(8)] for _ in range(8)] for _ in range(12)]
-
-    piece_map = {
-        "P": 0, "N": 1, "B": 2, "R": 3, "Q": 4, "K": 5,
-        "p": 6, "n": 7, "b": 8, "r": 9, "q": 10, "k": 11,
-    }
-
-    board = fen.split()[0]
-    row = 0
-    col = 0
-
-    for ch in board:
-        if ch == "/":
-            row += 1
-            col = 0
-        elif ch.isdigit():
-            col += int(ch)
-        else:
-            plane_idx = piece_map[ch]
-            planes[plane_idx][row][col] = 1
-            col += 1
-
-    return planes  # [12, 8, 8]
-
-
-def example_to_features(ex: Dict[str, Any], variant_name: str) -> Dict[str, torch.Tensor]:
-    boards = torch.tensor([
-        encode_fen_board_planes(ex["board_t_minus_4"]),
-        encode_fen_board_planes(ex["board_t_minus_3"]),
-        encode_fen_board_planes(ex["board_t_minus_2"]),
-        encode_fen_board_planes(ex["board_t_minus_1"]),
-        encode_fen_board_planes(ex["board_t"]),
-    ], dtype=torch.float32)  # [5, 12, 8, 8]
-    move = encode_move_uci(ex["move_played"])
-
-    feat: Dict[str, torch.Tensor] = {
-        "boards": boards,  # [5, 12, 8, 8]
-        "move": torch.tensor(move, dtype=torch.long),      # [3]
-    }
-
-    if variant_name in {"phi1", "phi3"}:
-        feat["game_type"] = torch.tensor(
-            GAME_TYPE_TO_ID.get(ex["game_type"], 0), dtype=torch.long
-        )
-
-    if variant_name == "phi3":
-        feat["opponent_context"] = torch.zeros(32, dtype=torch.float32)
-
-    return feat
 
 class PairShardedDataset(Dataset):
     def __init__(
@@ -167,29 +87,12 @@ class PairShardedDataset(Dataset):
         return shard_id, local_idx
 
     def _example_features(self, shard, ex_idx: int) -> Dict[str, torch.Tensor]:
-        boards = shard["boards"][ex_idx]   # [5,64]
-        move = shard["moves"][ex_idx]      # [3]
-
-        # convert to one-hot planes [5,12,8,8]
-        boards = torch.from_numpy(boards).long()  # [5,64]
-        boards = F.one_hot(boards, num_classes=13)[..., 1:]  # drop empty
-        boards = boards.permute(0, 2, 1).reshape(5, 12, 8, 8).float()
-
-        feat = {
-            "boards": boards,
-            "move": torch.from_numpy(move).long(),
-        }
-
-        if self.model_variant_name in {"phi1", "phi3"}:
-            feat["game_type"] = torch.tensor(
-                int(shard["game_types"][ex_idx]),
-                dtype=torch.long,
-            )
-
-        if self.model_variant_name == "phi3":
-            feat["opponent_context"] = torch.zeros(32, dtype=torch.float32)
-
-        return feat
+        return cached_arrays_to_model_features(
+            boards_5x64=shard["boards"][ex_idx],
+            move_3=shard["moves"][ex_idx],
+            game_type=int(shard["game_types"][ex_idx]),
+            variant_name=self.model_variant_name,
+        )
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         shard_id, local_idx = self._locate(idx)
@@ -212,19 +115,11 @@ class PairShardedDataset(Dataset):
             "anchor_player_id": 0,  # optional now
         }
 
-def _stack_feature_dict(items: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-    out: Dict[str, List[torch.Tensor]] = defaultdict(list)
-    for item in items:
-        for k, v in item.items():
-            out[k].append(v)
-    return {k: torch.stack(v, dim=0) for k, v in out.items()}
-
-
 def collate_pairs(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
-        "anchor": _stack_feature_dict([x["anchor"] for x in batch]),
-        "positive": _stack_feature_dict([x["positive"] for x in batch]),
-        "negative": _stack_feature_dict([x["negative"] for x in batch]),
+        "anchor": stack_feature_dicts([x["anchor"] for x in batch]),
+        "positive": stack_feature_dicts([x["positive"] for x in batch]),
+        "negative": stack_feature_dicts([x["negative"] for x in batch]),
         "anchor_player_id": [x["anchor_player_id"] for x in batch],
     }
 
@@ -318,13 +213,6 @@ class StyleEncoder(nn.Module):
         z = F.normalize(z, p=2, dim=-1)
         return z
 
-def move_to_device(batch_part: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
-    out = {}
-    for k, v in batch_part.items():
-        out[k] = v.to(device)
-    return out
-
-
 def info_nce_triplet_loss(
     z_anchor: torch.Tensor,
     z_pos: torch.Tensor,
@@ -417,9 +305,9 @@ def run_eval(
         if max_batches is not None and batch_idx >= max_batches:
             break
 
-        anchor = move_to_device(batch["anchor"], device)
-        positive = move_to_device(batch["positive"], device)
-        negative = move_to_device(batch["negative"], device)
+        anchor = move_feature_dict_to_device(batch["anchor"], device)
+        positive = move_feature_dict_to_device(batch["positive"], device)
+        negative = move_feature_dict_to_device(batch["negative"], device)
 
         z_anchor = model(anchor)
         z_pos = model(positive)
@@ -436,7 +324,7 @@ def run_eval(
 
 def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
     set_seed(cfg.seed)
-    device = pick_device()
+    device = pick_device("auto")
     print(f"[train] device={device}")
     print(f"[train] run_name={cfg.run_name()}")
     print(f"[train] model_variant={cfg.model.variant_name}")
@@ -468,6 +356,9 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         prefetch_factor=(cfg.prefetch_factor if cfg.num_workers > 0 else None),
         pin_memory=cfg.pin_memory,
     )
+
+    # For metrics and ETA estimation
+    steps_per_epoch = math.ceil(len(train_loader) / cfg.batch_size)
 
     model = StyleEncoder(cfg).to(device)
     optimizer = torch.optim.AdamW(
@@ -504,9 +395,10 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         for step_idx, batch in enumerate(train_loader, start=1):
             if cfg.max_steps_per_epoch is not None and step_idx > cfg.max_steps_per_epoch:
                 break
-            anchor = move_to_device(batch["anchor"], device)
-            positive = move_to_device(batch["positive"], device)
-            negative = move_to_device(batch["negative"], device)
+
+            anchor = move_feature_dict_to_device(batch["anchor"], device)
+            positive = move_feature_dict_to_device(batch["positive"], device)
+            negative = move_feature_dict_to_device(batch["negative"], device)
 
             optimizer.zero_grad(set_to_none=True)
 
@@ -545,6 +437,25 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
                     f"{steps_left_this_epoch * avg_step_time / 3600:.2f} hours"
                 )
                 start_time = new_start_time
+
+                append_jsonl(summary_path, {
+                    "event": "step_end",
+                    "time": time.time(),
+                    "epoch": epoch,
+                    "step": step_idx,
+                    "global_step": (epoch - 1) * steps_per_epoch + step_idx,
+                    "train_loss": float(loss.detach().cpu().item()),
+                    "pair_acc": stats["pair_acc"],
+                    "pos_l2": stats["pos_l2"],
+                    "neg_l2": stats["neg_l2"],
+                    "margin_l2": stats["neg_l2"] - stats["pos_l2"],
+                    "pos_cos": stats["pos_cos"],
+                    "neg_cos": stats["neg_cos"],
+                    "margin_cos": stats["margin_cos"],
+                    "samples_per_hour_inst": step_idx * cfg.batch_size / elapsed * 3600,
+                    "eta_total_hours": total_steps_left * avg_step_time / 3600,
+                    "eta_epoch_hours": steps_left_this_epoch * avg_step_time / 3600
+                })
 
         train_summary = summarize_metrics(train_metrics)
         train_summary["loss"] = sum(train_losses) / max(1, len(train_losses))

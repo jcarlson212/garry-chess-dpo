@@ -1,0 +1,1416 @@
+from __future__ import annotations
+
+import argparse
+import gc
+import json
+import math
+import os
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
+import orjson
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+
+# Adjust these imports to match your repo layout.
+from grandmaster_dpo.train.style_embeddings_for_gms.dataset_schema import TrainConfig
+from grandmaster_dpo.train.style_embeddings_for_gms.train_style_encoder import StyleEncoder
+from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
+    PHASE_TO_ID,
+    assert_model_dir_matches_variant,
+    model_variant_uses_game_type,
+    model_variant_uses_opponent_context,
+    move_feature_dict_to_device,
+    pick_device,
+    raw_example_to_cached_arrays,
+    resolve_checkpoint,
+    set_seed,
+    stack_feature_dicts,
+)
+
+
+DEFAULT_EVAL_TAUS = [0.05, 0.1, 0.25, 0.75, 1.25, 1.75, 2.25]
+DEFAULT_PERCENTILES = [10, 25, 50, 75, 90]
+
+
+
+@dataclass
+class ExampleMeta:
+    player_id: Optional[str]
+    opponent_id: Optional[str]
+    game_id: Optional[str]
+    ply_idx: Optional[int]
+    move_color: Optional[str]
+    game_type: Optional[str]
+    opening_bucket: Optional[str]
+    phase: Optional[str]
+    example_id: Optional[str]
+    engine_rank: Optional[int] = None
+    engine_cp_gap: Optional[float] = None
+
+
+@dataclass
+class EvalCacheShardBuilder:
+    shard_idx: int
+    example_key_to_local_idx: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    example_boards: List[np.ndarray] = field(default_factory=list)
+    example_moves: List[np.ndarray] = field(default_factory=list)
+    example_game_types: List[np.uint8] = field(default_factory=list)
+    example_player_ids: List[str] = field(default_factory=list)
+    example_phase_ids: List[np.uint8] = field(default_factory=list)
+    example_engine_ranks: List[np.int16] = field(default_factory=list)
+    example_engine_cp_gaps: List[np.float32] = field(default_factory=list)
+    example_ids: List[str] = field(default_factory=list)
+
+    pair_anchor_idx: List[int] = field(default_factory=list)
+    pos_flat: List[int] = field(default_factory=list)
+    pos_offsets: List[int] = field(default_factory=lambda: [0])
+    neg_flat: List[int] = field(default_factory=list)
+    neg_offsets: List[int] = field(default_factory=lambda: [0])
+
+    rows_read_in_shard: int = 0
+    rows_kept_in_shard: int = 0
+    total_pos_candidates: int = 0
+    total_neg_candidates: int = 0
+    skipped_no_pos: int = 0
+    skipped_no_neg: int = 0
+
+    def is_empty(self) -> bool:
+        return self.rows_kept_in_shard == 0
+
+    def num_unique_examples(self) -> int:
+        return len(self.example_boards)
+
+    def clear(self) -> None:
+        self.example_key_to_local_idx.clear()
+        self.example_boards.clear()
+        self.example_moves.clear()
+        self.example_game_types.clear()
+        self.example_player_ids.clear()
+        self.example_phase_ids.clear()
+        self.example_engine_ranks.clear()
+        self.example_engine_cp_gaps.clear()
+        self.example_ids.clear()
+        self.pair_anchor_idx.clear()
+        self.pos_flat.clear()
+        self.pos_offsets = [0]
+        self.neg_flat.clear()
+        self.neg_offsets = [0]
+        self.rows_read_in_shard = 0
+        self.rows_kept_in_shard = 0
+        self.total_pos_candidates = 0
+        self.total_neg_candidates = 0
+        self.skipped_no_pos = 0
+        self.skipped_no_neg = 0
+
+def load_checkpoint(
+    checkpoint_path: Path,
+    device: torch.device,
+) -> Tuple[Dict[str, Any], TrainConfig]:
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    cfg = TrainConfig.from_dict(ckpt["config"])
+    return ckpt, cfg
+
+def build_model_from_checkpoint(
+    checkpoint_path: Path,
+    device: torch.device,
+) -> Tuple[StyleEncoder, TrainConfig, Dict[str, Any]]:
+    ckpt, cfg = load_checkpoint(checkpoint_path, device)
+    model = StyleEncoder(cfg).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+    return model, cfg, ckpt
+
+def example_meta_from_raw(ex: Dict[str, Any]) -> ExampleMeta:
+    engine_rank = None
+    engine_cp_gap = None
+    for key in ["engine_rank", "stockfish_rank", "move_engine_rank"]:
+        if ex.get(key) is not None:
+            engine_rank = int(ex[key])
+            break
+    for key in ["engine_cp_gap", "stockfish_cp_gap", "move_cp_gap"]:
+        if ex.get(key) is not None:
+            engine_cp_gap = float(ex[key])
+            break
+    return ExampleMeta(
+        player_id=ex.get("player_id"),
+        opponent_id=ex.get("opponent_id"),
+        game_id=ex.get("game_id"),
+        ply_idx=int(ex["ply_idx"]) if ex.get("ply_idx") is not None else None,
+        move_color=ex.get("move_color"),
+        game_type=ex.get("game_type"),
+        opening_bucket=ex.get("opening_bucket"),
+        phase=ex.get("phase"),
+        example_id=ex.get("example_id"),
+        engine_rank=engine_rank,
+        engine_cp_gap=engine_cp_gap,
+    )
+
+
+def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int]) -> Iterable[Dict[str, Any]]:
+    seen = 0
+    for path in sorted(input_dir.glob("*.jsonl")):
+        print(f"[read] file={path}")
+        with path.open("rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                yield orjson.loads(line)
+                seen += 1
+                if seen % 10_000 == 0:
+                    print(f"[read] rows={seen:,}")
+                if max_rows is not None and seen >= max_rows:
+                    return
+
+def normalize_string_array(values: Sequence[Optional[str]]) -> Tuple[np.ndarray, List[str]]:
+    vocab: Dict[str, int] = {}
+    rev: List[str] = [""]
+    out = np.zeros(len(values), dtype=np.int32)
+    for i, value in enumerate(values):
+        key = "" if value is None else str(value)
+        maybe = vocab.get(key)
+        if maybe is None:
+            maybe = len(rev)
+            vocab[key] = maybe
+            rev.append(key)
+        out[i] = maybe
+    return out, rev
+
+
+def get_or_add_example(builder: EvalCacheShardBuilder, ex: Dict[str, Any], dataset_tag: str) -> int:
+    meta = example_meta_from_raw(ex)
+    example_id = meta.example_id or ""
+    key = (dataset_tag, example_id)
+    if example_id:
+        maybe_idx = builder.example_key_to_local_idx.get(key)
+        if maybe_idx is not None:
+            return maybe_idx
+
+    boards, move, game_type = raw_example_to_cached_arrays(ex)
+    idx = len(builder.example_boards)
+
+    if example_id:
+        builder.example_key_to_local_idx[key] = idx
+
+    builder.example_boards.append(boards)
+    builder.example_moves.append(move)
+    builder.example_game_types.append(game_type)
+    builder.example_player_ids.append(meta.player_id or "")
+    builder.example_phase_ids.append(np.uint8(PHASE_TO_ID.get(meta.phase or "", 0)))
+    builder.example_engine_ranks.append(np.int16(meta.engine_rank if meta.engine_rank is not None else -1))
+    builder.example_engine_cp_gaps.append(np.float32(meta.engine_cp_gap if meta.engine_cp_gap is not None else math.nan))
+    builder.example_ids.append(example_id)
+    return idx
+
+
+def add_pair_row(builder: EvalCacheShardBuilder, row: Dict[str, Any], dataset_tag: str) -> None:
+    builder.rows_read_in_shard += 1
+
+    anchor_idx = get_or_add_example(builder, row["anchor"], dataset_tag)
+    pos_indices = [get_or_add_example(builder, x, dataset_tag) for x in row.get("positives", [])]
+    neg_indices = [get_or_add_example(builder, x, dataset_tag) for x in row.get("negatives", [])]
+
+    if not pos_indices:
+        builder.skipped_no_pos += 1
+        return
+    if not neg_indices:
+        builder.skipped_no_neg += 1
+        return
+
+    builder.pair_anchor_idx.append(anchor_idx)
+    builder.pos_flat.extend(pos_indices)
+    builder.pos_offsets.append(len(builder.pos_flat))
+    builder.neg_flat.extend(neg_indices)
+    builder.neg_offsets.append(len(builder.neg_flat))
+    builder.rows_kept_in_shard += 1
+    builder.total_pos_candidates += len(pos_indices)
+    builder.total_neg_candidates += len(neg_indices)
+
+
+def save_eval_cache_shard(builder: EvalCacheShardBuilder, split_out_dir: Path) -> Dict[str, Any]:
+    shard_dir = split_out_dir / f"shard_{builder.shard_idx:06d}"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+
+    if builder.is_empty():
+        meta = {
+            "shard_idx": builder.shard_idx,
+            "rows_read_in_shard": builder.rows_read_in_shard,
+            "rows_kept_in_shard": 0,
+            "num_unique_examples": 0,
+            "skipped_no_pos": builder.skipped_no_pos,
+            "skipped_no_neg": builder.skipped_no_neg,
+            "empty_shard": True,
+        }
+        with (shard_dir / "meta.json").open("w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        return meta
+
+    boards = np.stack(builder.example_boards, axis=0).astype(np.uint8, copy=False)
+    moves = np.stack(builder.example_moves, axis=0).astype(np.uint8, copy=False)
+    game_types = np.asarray(builder.example_game_types, dtype=np.uint8)
+    player_ids, player_vocab = normalize_string_array(builder.example_player_ids)
+    example_ids, example_vocab = normalize_string_array(builder.example_ids)
+    phase_ids = np.asarray(builder.example_phase_ids, dtype=np.uint8)
+    engine_ranks = np.asarray(builder.example_engine_ranks, dtype=np.int16)
+    engine_cp_gaps = np.asarray(builder.example_engine_cp_gaps, dtype=np.float32)
+
+    pair_anchor_idx = np.asarray(builder.pair_anchor_idx, dtype=np.int32)
+    pos_flat = np.asarray(builder.pos_flat, dtype=np.int32)
+    pos_offsets = np.asarray(builder.pos_offsets, dtype=np.int64)
+    neg_flat = np.asarray(builder.neg_flat, dtype=np.int32)
+    neg_offsets = np.asarray(builder.neg_offsets, dtype=np.int64)
+
+    np.save(shard_dir / "examples_board_tokens.uint8.npy", boards, allow_pickle=False)
+    np.save(shard_dir / "examples_moves.uint8.npy", moves, allow_pickle=False)
+    np.save(shard_dir / "examples_game_type.uint8.npy", game_types, allow_pickle=False)
+    np.save(shard_dir / "examples_player_id.int32.npy", player_ids, allow_pickle=False)
+    np.save(shard_dir / "examples_phase_id.uint8.npy", phase_ids, allow_pickle=False)
+    np.save(shard_dir / "examples_engine_rank.int16.npy", engine_ranks, allow_pickle=False)
+    np.save(shard_dir / "examples_engine_cp_gap.float32.npy", engine_cp_gaps, allow_pickle=False)
+    np.save(shard_dir / "examples_id.int32.npy", example_ids, allow_pickle=False)
+
+    np.save(shard_dir / "pair_anchor_idx.int32.npy", pair_anchor_idx, allow_pickle=False)
+    np.save(shard_dir / "pair_pos_flat.int32.npy", pos_flat, allow_pickle=False)
+    np.save(shard_dir / "pair_pos_offsets.int64.npy", pos_offsets, allow_pickle=False)
+    np.save(shard_dir / "pair_neg_flat.int32.npy", neg_flat, allow_pickle=False)
+    np.save(shard_dir / "pair_neg_offsets.int64.npy", neg_offsets, allow_pickle=False)
+
+    with (shard_dir / "player_id_vocab.json").open("w", encoding="utf-8") as f:
+        json.dump(player_vocab, f, indent=2)
+    with (shard_dir / "example_id_vocab.json").open("w", encoding="utf-8") as f:
+        json.dump(example_vocab, f, indent=2)
+
+    meta = {
+        "shard_idx": builder.shard_idx,
+        "rows_read_in_shard": builder.rows_read_in_shard,
+        "rows_kept_in_shard": int(builder.rows_kept_in_shard),
+        "num_unique_examples": int(boards.shape[0]),
+        "boards_shape": list(boards.shape),
+        "moves_shape": list(moves.shape),
+        "game_types_shape": list(game_types.shape),
+        "player_ids_shape": list(player_ids.shape),
+        "phase_ids_shape": list(phase_ids.shape),
+        "engine_ranks_shape": list(engine_ranks.shape),
+        "engine_cp_gaps_shape": list(engine_cp_gaps.shape),
+        "example_ids_shape": list(example_ids.shape),
+        "pair_anchor_idx_shape": list(pair_anchor_idx.shape),
+        "pair_pos_flat_shape": list(pos_flat.shape),
+        "pair_pos_offsets_shape": list(pos_offsets.shape),
+        "pair_neg_flat_shape": list(neg_flat.shape),
+        "pair_neg_offsets_shape": list(neg_offsets.shape),
+        "avg_pos_candidates_per_pair": float(builder.total_pos_candidates / max(1, builder.rows_kept_in_shard)),
+        "avg_neg_candidates_per_pair": float(builder.total_neg_candidates / max(1, builder.rows_kept_in_shard)),
+        "skipped_no_pos": builder.skipped_no_pos,
+        "skipped_no_neg": builder.skipped_no_neg,
+        "dtype_notes": {
+            "boards": "uint8 piece ids, [N, 5, 64]",
+            "moves": "uint8 move encoding [from, to, promo]",
+            "game_types": "uint8 ids",
+            "player_ids": "int32 ids with player_id_vocab.json",
+            "phase_ids": "uint8 ids",
+            "engine_ranks": "int16, -1 means missing",
+            "engine_cp_gaps": "float32, NaN means missing",
+            "example_ids": "int32 ids with example_id_vocab.json",
+        },
+    }
+    with (shard_dir / "meta.json").open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+
+
+def build_eval_cache_from_pairs(
+    input_dir: Path,
+    output_dir: Path,
+    rows_per_shard: int,
+    max_rows: Optional[int],
+    dataset_tag: str,
+) -> Dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    shard_idx = 0
+    builder = EvalCacheShardBuilder(shard_idx=shard_idx)
+
+    split_rows_read = 0
+    split_rows_kept = 0
+    split_examples = 0
+    split_pos = 0
+    split_neg = 0
+    split_skipped_no_pos = 0
+    split_skipped_no_neg = 0
+    shard_count = 0
+
+    for row in iter_jsonl_rows(input_dir, max_rows=max_rows):
+        split_rows_read += 1
+        add_pair_row(builder, row, dataset_tag=dataset_tag)
+
+        if split_rows_read % 10_000 == 0:
+            print(
+                f"[cache-build] split={input_dir.name} rows={split_rows_read:,} "
+                f"current_shard={builder.shard_idx} kept_in_shard={builder.rows_kept_in_shard:,} "
+                f"unique_examples_in_shard={builder.num_unique_examples():,}"
+            )
+
+        if builder.rows_read_in_shard >= rows_per_shard:
+            meta = save_eval_cache_shard(builder, output_dir)
+            shard_count += 1
+            split_rows_kept += meta.get("rows_kept_in_shard", 0)
+            split_examples += meta.get("num_unique_examples", 0)
+            split_pos += int(meta.get("pair_pos_flat_shape", [0])[0]) if "pair_pos_flat_shape" in meta else 0
+            split_neg += int(meta.get("pair_neg_flat_shape", [0])[0]) if "pair_neg_flat_shape" in meta else 0
+            split_skipped_no_pos += meta.get("skipped_no_pos", 0)
+            split_skipped_no_neg += meta.get("skipped_no_neg", 0)
+            print(
+                f"[cache-flush] split={input_dir.name} shard={builder.shard_idx:06d} "
+                f"kept={meta.get('rows_kept_in_shard', 0):,} unique_examples={meta.get('num_unique_examples', 0):,}"
+            )
+            builder.clear()
+            gc.collect()
+            shard_idx += 1
+            builder = EvalCacheShardBuilder(shard_idx=shard_idx)
+
+    if builder.rows_read_in_shard > 0:
+        meta = save_eval_cache_shard(builder, output_dir)
+        shard_count += 1
+        split_rows_kept += meta.get("rows_kept_in_shard", 0)
+        split_examples += meta.get("num_unique_examples", 0)
+        split_pos += int(meta.get("pair_pos_flat_shape", [0])[0]) if "pair_pos_flat_shape" in meta else 0
+        split_neg += int(meta.get("pair_neg_flat_shape", [0])[0]) if "pair_neg_flat_shape" in meta else 0
+        split_skipped_no_pos += meta.get("skipped_no_pos", 0)
+        split_skipped_no_neg += meta.get("skipped_no_neg", 0)
+        print(
+            f"[cache-flush] split={input_dir.name} shard={builder.shard_idx:06d} "
+            f"kept={meta.get('rows_kept_in_shard', 0):,} unique_examples={meta.get('num_unique_examples', 0):,}"
+        )
+
+    split_meta = {
+        "input_dir": str(input_dir),
+        "output_dir": str(output_dir),
+        "rows_per_shard": rows_per_shard,
+        "max_rows": max_rows,
+        "dataset_tag": dataset_tag,
+        "num_shards": shard_count,
+        "num_pair_rows_read": split_rows_read,
+        "num_pair_rows_kept": split_rows_kept,
+        "sum_unique_examples_across_shards": split_examples,
+        "sum_pos_candidates_across_shards": split_pos,
+        "sum_neg_candidates_across_shards": split_neg,
+        "skipped_no_pos": split_skipped_no_pos,
+        "skipped_no_neg": split_skipped_no_neg,
+        "note": "Examples are deduped within shard only, not globally across the whole split.",
+    }
+    with (output_dir / "_split_meta.json").open("w", encoding="utf-8") as f:
+        json.dump(split_meta, f, indent=2)
+    return split_meta
+
+
+@dataclass
+class OptionalFeatureFiles:
+    player_ids: Optional[Path] = None
+    phase_ids: Optional[Path] = None
+    engine_rank: Optional[Path] = None
+    engine_cp_gap: Optional[Path] = None
+    example_ids: Optional[Path] = None
+    player_vocab: Optional[Path] = None
+    example_vocab: Optional[Path] = None
+
+
+def detect_optional_feature_files(shard_dir: Path) -> OptionalFeatureFiles:
+    def pick(*names: str) -> Optional[Path]:
+        for name in names:
+            path = shard_dir / name
+            if path.exists():
+                return path
+        return None
+
+    return OptionalFeatureFiles(
+        player_ids=pick(
+            "examples_player_id.int32.npy",
+            "examples_player_ids.int32.npy",
+            "examples_player.uint16.npy",
+            "examples_player.uint32.npy",
+        ),
+        phase_ids=pick(
+            "examples_phase.uint8.npy",
+            "examples_phase_id.uint8.npy",
+            "examples_phase_ids.uint8.npy",
+        ),
+        engine_rank=pick(
+            "examples_engine_rank.int16.npy",
+            "examples_engine_rank.uint8.npy",
+            "examples_stockfish_rank.uint8.npy",
+            "examples_move_engine_rank.uint8.npy",
+        ),
+        engine_cp_gap=pick(
+            "examples_engine_cp_gap.float32.npy",
+            "examples_stockfish_cp_gap.float32.npy",
+            "examples_move_cp_gap.float32.npy",
+        ),
+        example_ids=pick(
+            "examples_id.int32.npy",
+            "examples_id.npy",
+            "examples_ids.npy",
+            "examples_example_id.npy",
+        ),
+        player_vocab=pick("player_id_vocab.json"),
+        example_vocab=pick("example_id_vocab.json"),
+    )
+
+
+def load_vocab(path: Optional[Path]) -> Optional[List[str]]:
+    if path is None or not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    return list(data)
+
+class PairEvalDataset(Dataset):
+    def __init__(
+        self,
+        input_dir: str | Path,
+        model_variant_name: str,
+        max_rows: Optional[int] = None,
+    ) -> None:
+        self.input_dir = Path(input_dir)
+        self.model_variant_name = model_variant_name
+
+        shard_dirs = sorted(self.input_dir.glob("shard_*"))
+        if not shard_dirs:
+            raise ValueError(f"No shard_* dirs found in {self.input_dir}")
+
+        self.shards: List[Dict[str, Any]] = []
+        self.lengths: List[int] = []
+        self.optional_files: List[OptionalFeatureFiles] = []
+        self.player_vocabs: List[Optional[List[str]]] = []
+        self.example_vocabs: List[Optional[List[str]]] = []
+
+        total_rows = 0
+        for sd in shard_dirs:
+            shard = {
+                "path": sd,
+                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
+                "anchor_idx": np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
+                "pos_flat": np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
+                "pos_offsets": np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
+                "neg_flat": np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
+                "neg_offsets": np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
+            }
+            self.shards.append(shard)
+            self.lengths.append(len(shard["anchor_idx"]))
+
+            files = detect_optional_feature_files(sd)
+            self.optional_files.append(files)
+            self.player_vocabs.append(load_vocab(files.player_vocab))
+            self.example_vocabs.append(load_vocab(files.example_vocab))
+
+            total_rows += len(shard["anchor_idx"])
+            if max_rows is not None and total_rows >= max_rows:
+                break
+
+        self.cum_lengths = np.cumsum(self.lengths)
+        print(f"[pair-dataset] loaded {len(self.shards)} shards from {self.input_dir}")
+        print(f"[pair-dataset] total rows={len(self):,}")
+
+    def __len__(self) -> int:
+        return int(self.cum_lengths[-1])
+
+    def _locate(self, idx: int) -> Tuple[int, int]:
+        shard_id = int(np.searchsorted(self.cum_lengths, idx, side="right"))
+        prev = 0 if shard_id == 0 else int(self.cum_lengths[shard_id - 1])
+        local_idx = idx - prev
+        return shard_id, local_idx
+
+    def _candidate_indices(self, flat: np.ndarray, offsets: np.ndarray, row_idx: int) -> np.ndarray:
+        start = int(offsets[row_idx])
+        end = int(offsets[row_idx + 1])
+        if end <= start:
+            raise ValueError(f"Row {row_idx} has no candidates in {self.input_dir}")
+        return np.asarray(flat[start:end], dtype=np.int64)
+
+    def _load_optional(self, shard_id: int, key: str) -> Optional[np.ndarray]:
+        files = self.optional_files[shard_id]
+        path = getattr(files, key)
+        if path is None:
+            return None
+        return np.load(path, mmap_mode="r")
+
+    def _decode_vocab(self, vocab: Optional[List[str]], encoded_value: Any) -> Optional[str]:
+        if vocab is None or encoded_value is None:
+            return None
+        idx = int(encoded_value)
+        if idx < 0 or idx >= len(vocab):
+            return None
+        value = vocab[idx]
+        return value if value != "" else None
+
+    def _example_features(self, shard: Dict[str, Any], ex_idx: int) -> Dict[str, torch.Tensor]:
+        boards = torch.from_numpy(shard["boards"][ex_idx]).long()
+        boards = F.one_hot(boards, num_classes=13)[..., 1:]
+        boards = boards.permute(0, 2, 1).reshape(5, 12, 8, 8).float()
+
+        feat: Dict[str, torch.Tensor] = {
+            "boards": boards,
+            "move": torch.from_numpy(shard["moves"][ex_idx]).long(),
+        }
+        if model_variant_uses_game_type(self.model_variant_name):
+            feat["game_type"] = torch.tensor(int(shard["game_types"][ex_idx]), dtype=torch.long)
+        if model_variant_uses_opponent_context(self.model_variant_name):
+            feat["opponent_context"] = torch.zeros(32, dtype=torch.float32)
+        return feat
+
+    def _many_example_features(self, shard: Dict[str, Any], ex_indices: np.ndarray) -> Dict[str, torch.Tensor]:
+        boards = torch.from_numpy(np.asarray(shard["boards"][ex_indices])).long()   # [K, 5, 64]
+        boards = F.one_hot(boards, num_classes=13)[..., 1:]                         # [K, 5, 64, 12]
+        boards = boards.permute(0, 1, 3, 2).reshape(len(ex_indices), 5, 12, 8, 8).float()
+
+        feat: Dict[str, torch.Tensor] = {
+            "boards": boards,
+            "move": torch.from_numpy(np.asarray(shard["moves"][ex_indices])).long(),   # [K, 3]
+        }
+        if model_variant_uses_game_type(self.model_variant_name):
+            feat["game_type"] = torch.from_numpy(
+                np.asarray(shard["game_types"][ex_indices])
+            ).long()  # [K]
+        if model_variant_uses_opponent_context(self.model_variant_name):
+            feat["opponent_context"] = torch.zeros((len(ex_indices), 32), dtype=torch.float32)
+        return feat
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        shard_id, local_idx = self._locate(idx)
+        shard = self.shards[shard_id]
+
+        anchor_idx = int(shard["anchor_idx"][local_idx])
+        pos_indices = self._candidate_indices(shard["pos_flat"], shard["pos_offsets"], local_idx)
+        neg_indices = self._candidate_indices(shard["neg_flat"], shard["neg_offsets"], local_idx)
+
+        player_ids = self._load_optional(shard_id, "player_ids")
+        phase_ids = self._load_optional(shard_id, "phase_ids")
+        engine_rank = self._load_optional(shard_id, "engine_rank")
+        engine_cp_gap = self._load_optional(shard_id, "engine_cp_gap")
+        example_ids = self._load_optional(shard_id, "example_ids")
+        player_vocab = self.player_vocabs[shard_id]
+        example_vocab = self.example_vocabs[shard_id]
+
+        return {
+            "anchor": self._example_features(shard, anchor_idx),
+            "positive_all": self._many_example_features(shard, pos_indices),
+            "negative_all": self._many_example_features(shard, neg_indices),
+            "pos_count": int(len(pos_indices)),
+            "neg_count": int(len(neg_indices)),
+            "meta": {
+                "shard_id": shard_id,
+                "row_idx": local_idx,
+                "anchor_idx": anchor_idx,
+                "anchor_player_id": self._decode_vocab(player_vocab, player_ids[anchor_idx]) if player_ids is not None else None,
+                "anchor_phase_id": int(phase_ids[anchor_idx]) if phase_ids is not None else None,
+                "anchor_engine_rank": int(engine_rank[anchor_idx]) if engine_rank is not None and int(engine_rank[anchor_idx]) >= 0 else None,
+                "anchor_engine_cp_gap": float(engine_cp_gap[anchor_idx]) if engine_cp_gap is not None and not math.isnan(float(engine_cp_gap[anchor_idx])) else None,
+                "anchor_example_id": self._decode_vocab(example_vocab, example_ids[anchor_idx]) if example_ids is not None else None,
+                "n_pos": int(len(pos_indices)),
+                "n_neg": int(len(neg_indices)),
+            },
+        }
+
+class ExampleEmbeddingDataset(Dataset):
+    def __init__(self, input_dir: str | Path, model_variant_name: str, max_examples: Optional[int] = None) -> None:
+        self.input_dir = Path(input_dir)
+        self.model_variant_name = model_variant_name
+        self.shards: List[Dict[str, Any]] = []
+        self.lengths: List[int] = []
+        self.optional_files: List[OptionalFeatureFiles] = []
+        self.player_vocabs: List[Optional[List[str]]] = []
+        self.example_vocabs: List[Optional[List[str]]] = []
+
+        shard_dirs = sorted(self.input_dir.glob("shard_*"))
+        if not shard_dirs:
+            raise ValueError(f"No shard_* dirs found in {self.input_dir}")
+
+        total_examples = 0
+        for sd in shard_dirs:
+            shard = {
+                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
+            }
+            self.shards.append(shard)
+            self.lengths.append(len(shard["boards"]))
+
+            files = detect_optional_feature_files(sd)
+            self.optional_files.append(files)
+            self.player_vocabs.append(load_vocab(files.player_vocab))
+            self.example_vocabs.append(load_vocab(files.example_vocab))
+
+            total_examples += len(shard["boards"])
+            if max_examples is not None and total_examples >= max_examples:
+                break
+
+        self.cum_lengths = np.cumsum(self.lengths)
+        print(f"[example-dataset] loaded {len(self.shards)} shards from {self.input_dir}")
+        print(f"[example-dataset] total examples={len(self):,}")
+
+    def __len__(self) -> int:
+        return int(self.cum_lengths[-1])
+
+    def _locate(self, idx: int) -> Tuple[int, int]:
+        shard_id = int(np.searchsorted(self.cum_lengths, idx, side="right"))
+        prev = 0 if shard_id == 0 else int(self.cum_lengths[shard_id - 1])
+        local_idx = idx - prev
+        return shard_id, local_idx
+
+    def _load_optional(self, shard_id: int, key: str) -> Optional[np.ndarray]:
+        files = self.optional_files[shard_id]
+        path = getattr(files, key)
+        if path is None:
+            return None
+        return np.load(path, mmap_mode="r")
+
+    def _decode_vocab(self, vocab: Optional[List[str]], encoded_value: Any) -> Optional[str]:
+        if vocab is None or encoded_value is None:
+            return None
+        idx = int(encoded_value)
+        if idx < 0 or idx >= len(vocab):
+            return None
+        value = vocab[idx]
+        return value if value != "" else None
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        shard_id, local_idx = self._locate(idx)
+        shard = self.shards[shard_id]
+        boards = torch.from_numpy(shard["boards"][local_idx]).long()
+        boards = F.one_hot(boards, num_classes=13)[..., 1:]
+        boards = boards.permute(0, 2, 1).reshape(5, 12, 8, 8).float()
+
+        feat: Dict[str, torch.Tensor] = {
+            "boards": boards,
+            "move": torch.from_numpy(shard["moves"][local_idx]).long(),
+        }
+        if model_variant_uses_game_type(self.model_variant_name):
+            feat["game_type"] = torch.tensor(int(shard["game_types"][local_idx]), dtype=torch.long)
+        if model_variant_uses_opponent_context(self.model_variant_name):
+            feat["opponent_context"] = torch.zeros(32, dtype=torch.float32)
+
+        player_ids = self._load_optional(shard_id, "player_ids")
+        phase_ids = self._load_optional(shard_id, "phase_ids")
+        engine_rank = self._load_optional(shard_id, "engine_rank")
+        engine_cp_gap = self._load_optional(shard_id, "engine_cp_gap")
+        example_ids = self._load_optional(shard_id, "example_ids")
+        player_vocab = self.player_vocabs[shard_id]
+        example_vocab = self.example_vocabs[shard_id]
+
+        return {
+            "features": feat,
+            "meta": {
+                "shard_id": shard_id,
+                "example_idx": local_idx,
+                "player_id": self._decode_vocab(player_vocab, player_ids[local_idx]) if player_ids is not None else None,
+                "phase_id": int(phase_ids[local_idx]) if phase_ids is not None else None,
+                "engine_rank": int(engine_rank[local_idx]) if engine_rank is not None and int(engine_rank[local_idx]) >= 0 else None,
+                "engine_cp_gap": float(engine_cp_gap[local_idx]) if engine_cp_gap is not None and not math.isnan(float(engine_cp_gap[local_idx])) else None,
+                "example_id": self._decode_vocab(example_vocab, example_ids[local_idx]) if example_ids is not None else None,
+            },
+        }
+
+def collate_pair_eval(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def stack_dicts(items: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        out: Dict[str, List[torch.Tensor]] = defaultdict(list)
+        for item in items:
+            for k, v in item.items():
+                out[k].append(v)
+        return {k: torch.stack(v, dim=0) for k, v in out.items()}
+
+    def concat_dicts(items: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        out: Dict[str, List[torch.Tensor]] = defaultdict(list)
+        for item in items:
+            for k, v in item.items():
+                out[k].append(v)
+        return {k: torch.cat(v, dim=0) for k, v in out.items()}
+
+    return {
+        "anchor": stack_dicts([x["anchor"] for x in batch]),                 # [B, ...]
+        "positive_all": concat_dicts([x["positive_all"] for x in batch]),    # [sum_pos, ...]
+        "negative_all": concat_dicts([x["negative_all"] for x in batch]),    # [sum_neg, ...]
+        "pos_counts": torch.tensor([x["pos_count"] for x in batch], dtype=torch.long),
+        "neg_counts": torch.tensor([x["neg_count"] for x in batch], dtype=torch.long),
+        "meta": [x["meta"] for x in batch],
+    }
+
+
+def collate_example_embeddings(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    out: Dict[str, List[torch.Tensor]] = defaultdict(list)
+    for row in batch:
+        for k, v in row["features"].items():
+            out[k].append(v)
+    return {
+        "features": {k: torch.stack(v, dim=0) for k, v in out.items()},
+        "meta": [x["meta"] for x in batch],
+    }
+
+
+def move_to_device(batch_part: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
+    return {k: v.to(device) for k, v in batch_part.items()}
+
+
+def percentiles_dict(values: np.ndarray, prefix: str, percentiles: Sequence[int] = DEFAULT_PERCENTILES) -> Dict[str, float]:
+    if values.size == 0:
+        return {f"{prefix}_mean": math.nan, **{f"{prefix}_p{p}": math.nan for p in percentiles}}
+    out = {f"{prefix}_mean": float(np.mean(values))}
+    for p in percentiles:
+        out[f"{prefix}_p{p}"] = float(np.percentile(values, p))
+    return out
+
+
+def safe_auc_from_scores(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
+    y_true = np.asarray(y_true).astype(np.int64)
+    scores = np.asarray(scores).astype(np.float64)
+    n_pos = int(y_true.sum())
+    n_neg = int((1 - y_true).sum())
+    if n_pos == 0 or n_neg == 0:
+        return None
+    order = np.argsort(scores)
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(1, len(scores) + 1)
+    pos_rank_sum = float(ranks[y_true == 1].sum())
+    auc = (pos_rank_sum - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+    return float(auc)
+
+
+def precision_recall_curve_points(y_true: np.ndarray, scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    order = np.argsort(-scores)
+    y_sorted = y_true[order]
+    s_sorted = scores[order]
+    tp = np.cumsum(y_sorted == 1)
+    fp = np.cumsum(y_sorted == 0)
+    precision = tp / np.maximum(tp + fp, 1)
+    recall = tp / max(int((y_true == 1).sum()), 1)
+    return precision, recall, s_sorted
+
+
+def average_precision(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
+    n_pos = int((y_true == 1).sum())
+    if n_pos == 0:
+        return None
+    precision, recall, _ = precision_recall_curve_points(y_true, scores)
+    recall_prev = np.concatenate([[0.0], recall[:-1]])
+    return float(np.sum((recall - recall_prev) * precision))
+
+
+def pairwise_cosine(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    return a @ b.T
+
+
+def normalize_rows(x: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(x, axis=1, keepdims=True)
+    norms = np.clip(norms, 1e-12, None)
+    return x / norms
+
+def compute_pair_metrics(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    eval_taus: Sequence[float],
+    max_batches: Optional[int] = None,
+) -> Dict[str, Any]:
+    def concat_or_empty(xs: List[np.ndarray]) -> np.ndarray:
+        return np.concatenate(xs) if xs else np.array([], dtype=np.float32)
+
+    cand_pos_l2_all: List[np.ndarray] = []
+    cand_neg_l2_all: List[np.ndarray] = []
+    cand_pos_cos_all: List[np.ndarray] = []
+    cand_neg_cos_all: List[np.ndarray] = []
+
+    row_mean_pos_l2_all: List[np.ndarray] = []
+    row_mean_neg_l2_all: List[np.ndarray] = []
+    row_best_pos_l2_all: List[np.ndarray] = []
+    row_hardest_neg_l2_all: List[np.ndarray] = []
+
+    row_mean_pos_cos_all: List[np.ndarray] = []
+    row_mean_neg_cos_all: List[np.ndarray] = []
+    row_best_pos_cos_all: List[np.ndarray] = []
+    row_hardest_neg_cos_all: List[np.ndarray] = []
+
+    engine_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+
+            anchor = move_feature_dict_to_device(batch["anchor"], device)
+            positive_all = move_feature_dict_to_device(batch["positive_all"], device)
+            negative_all = move_feature_dict_to_device(batch["negative_all"], device)
+
+            pos_counts = batch["pos_counts"].to(device)
+            neg_counts = batch["neg_counts"].to(device)
+            meta = batch["meta"]
+
+            z_anchor = model(anchor)                 # [B, D]
+            z_pos_all = model(positive_all)         # [sum_pos, D]
+            z_neg_all = model(negative_all)         # [sum_neg, D]
+
+            pos_owner = torch.repeat_interleave(
+                torch.arange(z_anchor.shape[0], device=device),
+                pos_counts,
+            )
+            neg_owner = torch.repeat_interleave(
+                torch.arange(z_anchor.shape[0], device=device),
+                neg_counts,
+            )
+
+            pos_anchor = z_anchor[pos_owner]
+            neg_anchor = z_anchor[neg_owner]
+
+            pos_l2_flat = torch.linalg.norm(pos_anchor - z_pos_all, dim=-1).cpu().numpy()
+            neg_l2_flat = torch.linalg.norm(neg_anchor - z_neg_all, dim=-1).cpu().numpy()
+            pos_cos_flat = torch.sum(pos_anchor * z_pos_all, dim=-1).cpu().numpy()
+            neg_cos_flat = torch.sum(neg_anchor * z_neg_all, dim=-1).cpu().numpy()
+
+            cand_pos_l2_all.append(pos_l2_flat)
+            cand_neg_l2_all.append(neg_l2_flat)
+            cand_pos_cos_all.append(pos_cos_flat)
+            cand_neg_cos_all.append(neg_cos_flat)
+
+            pos_counts_np = batch["pos_counts"].cpu().numpy().astype(np.int64)
+            neg_counts_np = batch["neg_counts"].cpu().numpy().astype(np.int64)
+            pos_offsets = np.concatenate([[0], np.cumsum(pos_counts_np)])
+            neg_offsets = np.concatenate([[0], np.cumsum(neg_counts_np)])
+
+            row_mean_pos_l2 = np.zeros(len(meta), dtype=np.float32)
+            row_mean_neg_l2 = np.zeros(len(meta), dtype=np.float32)
+            row_best_pos_l2 = np.zeros(len(meta), dtype=np.float32)
+            row_hardest_neg_l2 = np.zeros(len(meta), dtype=np.float32)
+
+            row_mean_pos_cos = np.zeros(len(meta), dtype=np.float32)
+            row_mean_neg_cos = np.zeros(len(meta), dtype=np.float32)
+            row_best_pos_cos = np.zeros(len(meta), dtype=np.float32)
+            row_hardest_neg_cos = np.zeros(len(meta), dtype=np.float32)
+
+            for i, m in enumerate(meta):
+                p0, p1 = int(pos_offsets[i]), int(pos_offsets[i + 1])
+                n0, n1 = int(neg_offsets[i]), int(neg_offsets[i + 1])
+
+                pos_l2_row = pos_l2_flat[p0:p1]
+                neg_l2_row = neg_l2_flat[n0:n1]
+                pos_cos_row = pos_cos_flat[p0:p1]
+                neg_cos_row = neg_cos_flat[n0:n1]
+
+                row_mean_pos_l2[i] = float(np.mean(pos_l2_row))
+                row_mean_neg_l2[i] = float(np.mean(neg_l2_row))
+                row_best_pos_l2[i] = float(np.min(pos_l2_row))        # closest true positive
+                row_hardest_neg_l2[i] = float(np.min(neg_l2_row))     # closest negative
+
+                row_mean_pos_cos[i] = float(np.mean(pos_cos_row))
+                row_mean_neg_cos[i] = float(np.mean(neg_cos_row))
+                row_best_pos_cos[i] = float(np.max(pos_cos_row))      # strongest true positive
+                row_hardest_neg_cos[i] = float(np.max(neg_cos_row))   # strongest negative
+
+                rank = m.get("anchor_engine_rank")
+                if rank is None:
+                    continue
+                if rank <= 3:
+                    bucket = "engine_like"
+                elif rank > 10:
+                    bucket = "engine_unlike"
+                else:
+                    bucket = "engine_middle"
+
+                engine_buckets[bucket]["row_mean_pos_l2"].append(float(row_mean_pos_l2[i]))
+                engine_buckets[bucket]["row_mean_neg_l2"].append(float(row_mean_neg_l2[i]))
+                engine_buckets[bucket]["row_best_pos_l2"].append(float(row_best_pos_l2[i]))
+                engine_buckets[bucket]["row_hardest_neg_l2"].append(float(row_hardest_neg_l2[i]))
+
+                engine_buckets[bucket]["row_mean_pos_cos"].append(float(row_mean_pos_cos[i]))
+                engine_buckets[bucket]["row_mean_neg_cos"].append(float(row_mean_neg_cos[i]))
+                engine_buckets[bucket]["row_best_pos_cos"].append(float(row_best_pos_cos[i]))
+                engine_buckets[bucket]["row_hardest_neg_cos"].append(float(row_hardest_neg_cos[i]))
+
+            row_mean_pos_l2_all.append(row_mean_pos_l2)
+            row_mean_neg_l2_all.append(row_mean_neg_l2)
+            row_best_pos_l2_all.append(row_best_pos_l2)
+            row_hardest_neg_l2_all.append(row_hardest_neg_l2)
+
+            row_mean_pos_cos_all.append(row_mean_pos_cos)
+            row_mean_neg_cos_all.append(row_mean_neg_cos)
+            row_best_pos_cos_all.append(row_best_pos_cos)
+            row_hardest_neg_cos_all.append(row_hardest_neg_cos)
+
+    cand_pos_l2 = concat_or_empty(cand_pos_l2_all)
+    cand_neg_l2 = concat_or_empty(cand_neg_l2_all)
+    cand_pos_cos = concat_or_empty(cand_pos_cos_all)
+    cand_neg_cos = concat_or_empty(cand_neg_cos_all)
+
+    row_mean_pos_l2 = concat_or_empty(row_mean_pos_l2_all)
+    row_mean_neg_l2 = concat_or_empty(row_mean_neg_l2_all)
+    row_best_pos_l2 = concat_or_empty(row_best_pos_l2_all)
+    row_hardest_neg_l2 = concat_or_empty(row_hardest_neg_l2_all)
+
+    row_mean_pos_cos = concat_or_empty(row_mean_pos_cos_all)
+    row_mean_neg_cos = concat_or_empty(row_mean_neg_cos_all)
+    row_best_pos_cos = concat_or_empty(row_best_pos_cos_all)
+    row_hardest_neg_cos = concat_or_empty(row_hardest_neg_cos_all)
+
+    out: Dict[str, Any] = {
+        "n_anchor_rows": int(len(row_mean_pos_l2)),
+        "n_pos_candidates": int(len(cand_pos_l2)),
+        "n_neg_candidates": int(len(cand_neg_l2)),
+        "candidate_level": {
+            "l2": {
+                "positive": percentiles_dict(cand_pos_l2, "pos_l2"),
+                "negative": percentiles_dict(cand_neg_l2, "neg_l2"),
+                "gap_mean": float(np.mean(cand_neg_l2) - np.mean(cand_pos_l2)) if len(cand_pos_l2) else math.nan,
+            },
+            "cosine": {
+                "positive": percentiles_dict(cand_pos_cos, "pos_cos"),
+                "negative": percentiles_dict(cand_neg_cos, "neg_cos"),
+                "gap_mean": float(np.mean(cand_pos_cos) - np.mean(cand_neg_cos)) if len(cand_pos_cos) else math.nan,
+            },
+        },
+        "row_aggregated": {
+            "l2": {
+                "mean_positive": percentiles_dict(row_mean_pos_l2, "row_mean_pos_l2"),
+                "mean_negative": percentiles_dict(row_mean_neg_l2, "row_mean_neg_l2"),
+                "best_positive": percentiles_dict(row_best_pos_l2, "row_best_pos_l2"),
+                "hardest_negative": percentiles_dict(row_hardest_neg_l2, "row_hardest_neg_l2"),
+                "mean_gap": float(np.mean(row_mean_neg_l2) - np.mean(row_mean_pos_l2)) if len(row_mean_pos_l2) else math.nan,
+                "hard_gap": float(np.mean(row_hardest_neg_l2) - np.mean(row_mean_pos_l2)) if len(row_mean_pos_l2) else math.nan,
+            },
+            "cosine": {
+                "mean_positive": percentiles_dict(row_mean_pos_cos, "row_mean_pos_cos"),
+                "mean_negative": percentiles_dict(row_mean_neg_cos, "row_mean_neg_cos"),
+                "best_positive": percentiles_dict(row_best_pos_cos, "row_best_pos_cos"),
+                "hardest_negative": percentiles_dict(row_hardest_neg_cos, "row_hardest_neg_cos"),
+                "mean_gap": float(np.mean(row_mean_pos_cos) - np.mean(row_mean_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_cos) - np.mean(row_hardest_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+                "pair_acc_mean_vs_hardest": float(np.mean(row_mean_pos_cos > row_hardest_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+            },
+            "by_eval_tau": {},
+        },
+        "engine_conditioned": {},
+    }
+
+    for tau in eval_taus:
+        row_mean_pos_scaled = row_mean_pos_cos / tau
+        row_mean_neg_scaled = row_mean_neg_cos / tau
+        row_hard_neg_scaled = row_hardest_neg_cos / tau
+
+        row_mean_pos_exp = np.exp(np.clip(row_mean_pos_scaled, -60.0, 60.0))
+        row_mean_neg_exp = np.exp(np.clip(row_mean_neg_scaled, -60.0, 60.0))
+        row_hard_neg_exp = np.exp(np.clip(row_hard_neg_scaled, -60.0, 60.0))
+
+        logits = np.stack([row_mean_pos_scaled, row_hard_neg_scaled], axis=1)
+        logits = logits - logits.max(axis=1, keepdims=True)
+        probs = np.exp(logits)
+        probs = probs / np.clip(probs.sum(axis=1, keepdims=True), 1e-12, None)
+        loss = -np.log(np.clip(probs[:, 0], 1e-12, None))
+
+        out["row_aggregated"]["by_eval_tau"][str(tau)] = {
+            "dot_over_tau": {
+                "mean_positive": percentiles_dict(row_mean_pos_scaled, "row_mean_pos_dot_over_tau"),
+                "mean_negative": percentiles_dict(row_mean_neg_scaled, "row_mean_neg_dot_over_tau"),
+                "hardest_negative": percentiles_dict(row_hard_neg_scaled, "row_hard_neg_dot_over_tau"),
+                "mean_gap": float(np.mean(row_mean_pos_scaled) - np.mean(row_mean_neg_scaled)) if len(row_mean_pos_scaled) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_scaled) - np.mean(row_hard_neg_scaled)) if len(row_mean_pos_scaled) else math.nan,
+            },
+            "exp_dot_over_tau": {
+                "mean_positive": percentiles_dict(row_mean_pos_exp, "row_mean_pos_exp_dot_over_tau"),
+                "mean_negative": percentiles_dict(row_mean_neg_exp, "row_mean_neg_exp_dot_over_tau"),
+                "hardest_negative": percentiles_dict(row_hard_neg_exp, "row_hard_neg_exp_dot_over_tau"),
+                "mean_gap": float(np.mean(row_mean_pos_exp) - np.mean(row_mean_neg_exp)) if len(row_mean_pos_exp) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_exp) - np.mean(row_hard_neg_exp)) if len(row_mean_pos_exp) else math.nan,
+            },
+            "infonce_like_loss_mean_vs_hardest_neg": float(np.mean(loss)) if len(loss) else math.nan,
+        }
+
+    for bucket, vals in engine_buckets.items():
+        pos_cos_b = np.asarray(vals.get("row_mean_pos_cos", []), dtype=np.float32)
+        neg_cos_b = np.asarray(vals.get("row_mean_neg_cos", []), dtype=np.float32)
+        hard_neg_cos_b = np.asarray(vals.get("row_hardest_neg_cos", []), dtype=np.float32)
+
+        pos_l2_b = np.asarray(vals.get("row_mean_pos_l2", []), dtype=np.float32)
+        neg_l2_b = np.asarray(vals.get("row_mean_neg_l2", []), dtype=np.float32)
+        hard_neg_l2_b = np.asarray(vals.get("row_hardest_neg_l2", []), dtype=np.float32)
+
+        out["engine_conditioned"][bucket] = {
+            "n_anchor_rows": int(len(pos_cos_b)),
+            "l2_mean_gap": float(np.mean(neg_l2_b) - np.mean(pos_l2_b)) if len(pos_l2_b) else math.nan,
+            "l2_hard_gap": float(np.mean(hard_neg_l2_b) - np.mean(pos_l2_b)) if len(pos_l2_b) else math.nan,
+            "cos_mean_gap": float(np.mean(pos_cos_b) - np.mean(neg_cos_b)) if len(pos_cos_b) else math.nan,
+            "cos_hard_gap": float(np.mean(pos_cos_b) - np.mean(hard_neg_cos_b)) if len(pos_cos_b) else math.nan,
+        }
+        for tau in eval_taus:
+            out["engine_conditioned"][bucket][f"dot_over_tau_mean_gap@{tau}"] = (
+                float(np.mean(pos_cos_b / tau) - np.mean(neg_cos_b / tau)) if len(pos_cos_b) else math.nan
+            )
+            out["engine_conditioned"][bucket][f"dot_over_tau_hard_gap@{tau}"] = (
+                float(np.mean(pos_cos_b / tau) - np.mean(hard_neg_cos_b / tau)) if len(pos_cos_b) else math.nan
+            )
+
+    return out
+
+def encode_example_embeddings(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    max_batches: Optional[int] = None,
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    embeddings: List[np.ndarray] = []
+    meta_rows: List[Dict[str, Any]] = []
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+            feats = move_to_device(batch["features"], device)
+            z = model(feats).cpu().numpy().astype(np.float32)
+            embeddings.append(z)
+            meta_rows.extend(batch["meta"])
+
+    if not embeddings:
+        return np.zeros((0, 1), dtype=np.float32), []
+    emb = np.concatenate(embeddings, axis=0)
+    return normalize_rows(emb), meta_rows
+
+
+def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    player_ids = np.asarray([m.get("player_id") for m in meta_rows], dtype=object)
+    valid = np.asarray([pid is not None for pid in player_ids])
+    if not valid.any():
+        return {"skipped": True, "reason": "player_ids_not_available"}
+
+    emb = embeddings[valid]
+    pids = player_ids[valid]
+    sims = pairwise_cosine(emb, emb)
+    np.fill_diagonal(sims, -np.inf)
+
+    recall1 = 0.0
+    recall5 = 0.0
+    mrr = 0.0
+    n = len(pids)
+    for i in range(n):
+        order = np.argsort(-sims[i])
+        ranked_pids = pids[order]
+        matches = np.where(ranked_pids == pids[i])[0]
+        if len(matches) == 0:
+            continue
+        best_rank = int(matches[0]) + 1
+        recall1 += float(best_rank <= 1)
+        recall5 += float(best_rank <= 5)
+        mrr += 1.0 / best_rank
+
+    return {
+        "skipped": False,
+        "n_examples": int(n),
+        "recall_at_1": float(recall1 / n) if n else math.nan,
+        "recall_at_5": float(recall5 / n) if n else math.nan,
+        "mrr": float(mrr / n) if n else math.nan,
+    }
+
+
+def compute_binary_classification_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, Any]], sample_limit: int = 200_000) -> Dict[str, Any]:
+    player_ids = np.asarray([m.get("player_id") for m in meta_rows], dtype=object)
+    valid_idx = np.where(np.asarray([pid is not None for pid in player_ids]))[0]
+    if len(valid_idx) < 2:
+        return {"skipped": True, "reason": "player_ids_not_available"}
+
+    rng = np.random.default_rng(42)
+    emb = embeddings[valid_idx]
+    pids = player_ids[valid_idx]
+    n = len(pids)
+    pair_count = min(sample_limit, n * (n - 1) // 2)
+    if pair_count <= 0:
+        return {"skipped": True, "reason": "not_enough_examples"}
+
+    i_idx = rng.integers(0, n, size=pair_count)
+    j_idx = rng.integers(0, n, size=pair_count)
+    mask = i_idx != j_idx
+    i_idx = i_idx[mask]
+    j_idx = j_idx[mask]
+
+    y_true = (pids[i_idx] == pids[j_idx]).astype(np.int64)
+    scores = np.sum(emb[i_idx] * emb[j_idx], axis=1)
+
+    roc_auc = safe_auc_from_scores(y_true, scores)
+    ap = average_precision(y_true, scores)
+
+    thresholds = np.linspace(-1.0, 1.0, 401)
+    best_f1 = -1.0
+    best_threshold = 0.0
+    best_precision = 0.0
+    best_recall = 0.0
+    for thr in thresholds:
+        pred = (scores >= thr).astype(np.int64)
+        tp = int(((pred == 1) & (y_true == 1)).sum())
+        fp = int(((pred == 1) & (y_true == 0)).sum())
+        fn = int(((pred == 0) & (y_true == 1)).sum())
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = float(thr)
+            best_precision = float(precision)
+            best_recall = float(recall)
+
+    return {
+        "skipped": False,
+        "n_sampled_pairs": int(len(scores)),
+        "roc_auc": roc_auc,
+        "average_precision": ap,
+        "best_f1": float(best_f1),
+        "best_threshold": best_threshold,
+        "best_precision": best_precision,
+        "best_recall": best_recall,
+        "positive_pair_rate": float(np.mean(y_true)),
+    }
+
+
+def compute_spread_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    player_ids = [m.get("player_id") for m in meta_rows]
+    by_player: Dict[Any, List[np.ndarray]] = defaultdict(list)
+    for z, pid in zip(embeddings, player_ids):
+        if pid is not None:
+            by_player[pid].append(z)
+
+    if not by_player:
+        return {"skipped": True, "reason": "player_ids_not_available"}
+
+    centroids: Dict[Any, np.ndarray] = {}
+    intra_spreads: Dict[Any, float] = {}
+    for pid, rows in by_player.items():
+        mat = np.stack(rows, axis=0)
+        centroid = normalize_rows(mat.mean(axis=0, keepdims=True))[0]
+        centroids[pid] = centroid
+        dists = np.linalg.norm(mat - centroid[None, :], axis=1)
+        intra_spreads[pid] = float(np.mean(dists))
+
+    centroid_keys = list(centroids.keys())
+    centroid_mat = np.stack([centroids[k] for k in centroid_keys], axis=0)
+    centroid_sims = pairwise_cosine(centroid_mat, centroid_mat)
+    centroid_dists = 1.0 - centroid_sims
+    iu = np.triu_indices_from(centroid_dists, k=1)
+    inter = centroid_dists[iu]
+    intra = np.asarray(list(intra_spreads.values()), dtype=np.float32)
+
+    return {
+        "skipped": False,
+        "n_players": int(len(centroid_keys)),
+        "intra_player_spread": percentiles_dict(intra, "intra_player_spread"),
+        "inter_player_centroid_distance": percentiles_dict(inter.astype(np.float32), "inter_player_centroid_distance"),
+        "spread_ratio_mean": float(np.mean(inter) / max(np.mean(intra), 1e-12)) if len(inter) and len(intra) else math.nan,
+        "players": {
+            str(pid): {
+                "n_examples": len(by_player[pid]),
+                "intra_spread": intra_spreads[pid],
+            }
+            for pid in centroid_keys
+        },
+    }
+
+
+def write_json(path: Path, obj: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2, sort_keys=True)
+
+
+def run_eval_for_split(
+    split: str,
+    cached_split_dir: Path,
+    output_root: Path,
+    model: torch.nn.Module,
+    cfg: TrainConfig,
+    device: torch.device,
+    eval_taus: Sequence[float],
+    batch_size_override: Optional[int],
+    num_workers: int,
+    max_pair_batches: Optional[int],
+    max_embed_batches: Optional[int],
+    max_examples: Optional[int],
+    save_embeddings: bool,
+) -> Dict[str, Any]:
+    print(f"[eval] split={split} dir={cached_split_dir}")
+    split_out = output_root / split
+    split_out.mkdir(parents=True, exist_ok=True)
+    batch_size = batch_size_override or cfg.batch_size
+
+    pair_ds = PairEvalDataset(
+        input_dir=cached_split_dir,
+        model_variant_name=cfg.model.variant_name,
+    )
+
+    pair_loader = DataLoader(
+        pair_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_pair_eval,
+        persistent_workers=(num_workers > 0),
+        prefetch_factor=(2 if num_workers > 0 else None),
+        pin_memory=False,
+    )
+    pair_metrics = compute_pair_metrics(model, pair_loader, device, eval_taus, max_batches=max_pair_batches)
+    write_json(split_out / "pair_metrics.json", pair_metrics)
+
+    example_ds = ExampleEmbeddingDataset(
+        input_dir=cached_split_dir,
+        model_variant_name=cfg.model.variant_name,
+        max_examples=max_examples,
+    )
+    example_loader = DataLoader(
+        example_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_example_embeddings,
+        persistent_workers=(num_workers > 0),
+        prefetch_factor=(2 if num_workers > 0 else None),
+        pin_memory=False,
+    )
+    embeddings, meta_rows = encode_example_embeddings(model, example_loader, device, max_batches=max_embed_batches)
+
+    retrieval = compute_retrieval_metrics(embeddings, meta_rows)
+    classification = compute_binary_classification_metrics(embeddings, meta_rows)
+    spread = compute_spread_metrics(embeddings, meta_rows)
+
+    write_json(split_out / "retrieval_metrics.json", retrieval)
+    write_json(split_out / "classification_metrics.json", classification)
+    write_json(split_out / "spread_metrics.json", spread)
+
+    if save_embeddings:
+        np.savez_compressed(
+            split_out / "embeddings_and_meta.npz",
+            embeddings=embeddings,
+            player_id=np.asarray([m.get("player_id") for m in meta_rows], dtype=object),
+            phase_id=np.asarray([m.get("phase_id") for m in meta_rows], dtype=object),
+            engine_rank=np.asarray([m.get("engine_rank") for m in meta_rows], dtype=object),
+            engine_cp_gap=np.asarray([m.get("engine_cp_gap") for m in meta_rows], dtype=object),
+            example_id=np.asarray([m.get("example_id") for m in meta_rows], dtype=object),
+        )
+
+    summary = {
+        "split": split,
+        "cached_split_dir": str(cached_split_dir),
+        "pair_metrics_path": str(split_out / "pair_metrics.json"),
+        "retrieval_metrics_path": str(split_out / "retrieval_metrics.json"),
+        "classification_metrics_path": str(split_out / "classification_metrics.json"),
+        "spread_metrics_path": str(split_out / "spread_metrics.json"),
+        "n_embeddings": int(len(embeddings)),
+        "saved_embeddings": bool(save_embeddings),
+    }
+    write_json(split_out / "summary.json", summary)
+    return summary
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model-dir", required=True, help="Directory containing best.pt / epoch_*.pt")
+    ap.add_argument("--pairs-dir", required=True, help="Raw pairs parent dir containing eval/*.jsonl and test/*.jsonl")
+    ap.add_argument("--output-dir", required=True, help="Root output dir")
+    ap.add_argument("--checkpoint-name", default="best", help="best | last | exact file name like epoch_003.pt")
+    ap.add_argument("--splits", nargs="+", default=["eval", "test"])
+    ap.add_argument("--eval-taus", nargs="+", type=float, default=DEFAULT_EVAL_TAUS)
+    ap.add_argument("--rows-per-shard", type=int, default=100_000)
+    ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--max-eval-rows", type=int, default=None)
+    ap.add_argument("--max-test-rows", type=int, default=None)
+    ap.add_argument("--max-pair-batches", type=int, default=None)
+    ap.add_argument("--max-embed-batches", type=int, default=None)
+    ap.add_argument("--max-examples", type=int, default=None)
+    ap.add_argument("--save-embeddings", action="store_true")
+    ap.add_argument("--keep-cached", action="store_true", help="Keep generated cached eval dirs instead of deleting later")
+    args = ap.parse_args()
+
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    set_seed(args.seed)
+
+    model_dir = Path(args.model_dir)
+    pairs_dir = Path(args.pairs_dir)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    device = pick_device(args.device)
+    checkpoint_path = resolve_checkpoint(model_dir, args.checkpoint_name)
+    model, cfg, ckpt = build_model_from_checkpoint(checkpoint_path, device)
+    assert_model_dir_matches_variant(model_dir, cfg)
+
+    pair_variant = getattr(cfg, "pair_variant", None)
+    if pair_variant is not None and pair_variant not in str(pairs_dir):
+        print(f"[warn] checkpoint pair_variant={pair_variant} but pairs_dir does not contain that substring: {pairs_dir}")
+
+    cache_root = output_dir / "generated_eval_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "checkpoint_path": str(checkpoint_path),
+        "model_dir": str(model_dir),
+        "pairs_dir": str(pairs_dir),
+        "cache_root": str(cache_root),
+        "output_dir": str(output_dir),
+        "device": str(device),
+        "eval_taus": list(args.eval_taus),
+        "checkpoint_epoch": ckpt.get("epoch"),
+        "model_variant": cfg.model.variant_name,
+        "pair_variant": pair_variant,
+        "train_tau": getattr(cfg, "tau", None),
+        "rows_per_shard": args.rows_per_shard,
+        "splits": args.splits,
+    }
+    write_json(output_dir / "manifest.json", manifest)
+
+    split_summaries: List[Dict[str, Any]] = []
+    for split in args.splits:
+        raw_split_dir = pairs_dir / split
+        if not raw_split_dir.exists():
+            raise FileNotFoundError(f"Missing split dir: {raw_split_dir}")
+
+        max_rows = args.max_eval_rows if split == "eval" else args.max_test_rows if split == "test" else None
+        cached_split_dir = cache_root / split
+        print(f"[stage] building eval cache for split={split}")
+        cache_meta = build_eval_cache_from_pairs(
+            input_dir=raw_split_dir,
+            output_dir=cached_split_dir,
+            rows_per_shard=args.rows_per_shard,
+            max_rows=max_rows,
+            dataset_tag=split,
+        )
+        write_json(cached_split_dir / "_build_summary.json", cache_meta)
+
+        split_summary = run_eval_for_split(
+            split=split,
+            cached_split_dir=cached_split_dir,
+            output_root=output_dir,
+            model=model,
+            cfg=cfg,
+            device=device,
+            eval_taus=args.eval_taus,
+            batch_size_override=args.batch_size,
+            num_workers=args.num_workers,
+            max_pair_batches=args.max_pair_batches,
+            max_embed_batches=args.max_embed_batches,
+            max_examples=args.max_examples,
+            save_embeddings=args.save_embeddings,
+        )
+        split_summary["cache_build_summary_path"] = str(cached_split_dir / "_build_summary.json")
+        split_summaries.append(split_summary)
+
+    final_summary = {
+        "manifest_path": str(output_dir / "manifest.json"),
+        "splits": split_summaries,
+        "cache_root": str(cache_root),
+        "keep_cached": bool(args.keep_cached),
+    }
+    write_json(output_dir / "final_summary.json", final_summary)
+    print(json.dumps(final_summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+
+
