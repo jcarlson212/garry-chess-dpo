@@ -12,91 +12,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import orjson
 
-
-GAME_TYPE_TO_ID = {
-    "blitz": 1,
-    "rapid": 2,
-    "classical": 3,
-}
-
-PIECE_TO_ID = {
-    "P": 1, "N": 2, "B": 3, "R": 4, "Q": 5, "K": 6,
-    "p": 7, "n": 8, "b": 9, "r": 10, "q": 11, "k": 12,
-}
-
-
-def encode_square(s: str) -> int:
-    if len(s) != 2:
-        return 0
-    file_idx = ord(s[0]) - ord("a")
-    rank_idx = ord(s[1]) - ord("1")
-    if not (0 <= file_idx < 8 and 0 <= rank_idx < 8):
-        return 0
-    return 1 + rank_idx * 8 + file_idx
-
-
-def encode_move_uci(move: str) -> np.ndarray:
-    out = np.zeros(3, dtype=np.uint8)
-    if len(move) < 4:
-        return out
-
-    out[0] = encode_square(move[:2])
-    out[1] = encode_square(move[2:4])
-
-    if len(move) >= 5:
-        promo_map = {"q": 1, "r": 2, "b": 3, "n": 4}
-        out[2] = promo_map.get(move[4].lower(), 0)
-
-    return out
-
-
-def fen_to_piece_tokens_64(fen: str) -> np.ndarray:
-    """
-    Encodes the board portion of FEN into [64] uint8 piece ids.
-    0 = empty, 1..12 = piece type.
-    """
-    board = fen.split()[0]
-    out = np.zeros(64, dtype=np.uint8)
-
-    row = 0
-    col = 0
-    for ch in board:
-        if ch == "/":
-            row += 1
-            col = 0
-        elif ch.isdigit():
-            col += int(ch)
-        else:
-            idx = row * 8 + col
-            if not (0 <= idx < 64):
-                raise ValueError(f"Bad FEN board indexing for fen={fen}")
-            out[idx] = PIECE_TO_ID[ch]
-            col += 1
-
-    return out
-
-
-def example_to_compact_features(ex: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.uint8]:
-    """
-    Common base cache for phi0 / phi1 / phi3-base:
-      - 5 boards: t-4, t-3, t-2, t-1, t
-      - move
-      - game_type
-    """
-    boards = np.stack(
-        [
-            fen_to_piece_tokens_64(ex["board_t_minus_4"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_3"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_2"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_1"]),
-            fen_to_piece_tokens_64(ex["board_t"]),
-        ],
-        axis=0,
-    ).astype(np.uint8, copy=False)  # [5, 64]
-
-    move = encode_move_uci(ex["move_played"])  # [3]
-    game_type = np.uint8(GAME_TYPE_TO_ID.get(ex.get("game_type", ""), 0))
-    return boards, move, game_type
+from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
+    raw_example_to_cached_arrays,
+)
 
 
 def stable_example_hash64(ex: Dict[str, Any]) -> int:
@@ -171,7 +89,7 @@ class ShardBuilder:
         if maybe_idx is not None:
             return maybe_idx
 
-        boards, move, game_type = example_to_compact_features(ex)
+        boards, move, game_type = raw_example_to_cached_arrays(ex)
         idx = len(self.example_boards)
 
         self.example_hash_to_local_idx[h] = idx
