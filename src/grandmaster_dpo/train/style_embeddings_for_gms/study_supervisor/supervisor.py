@@ -17,6 +17,7 @@ from langgraph.graph import StateGraph, START, END
 from grandmaster_dpo.train.style_embeddings_for_gms.train_configs import STUDIES, make_config
 
 
+
 # =========================
 # Paths / config
 # =========================
@@ -42,7 +43,7 @@ PROPOSED_STUDIES_JSONL = SUPERVISOR_DIR / "proposed_studies.jsonl"
 PROPOSED_SNIPPETS_PY = SUPERVISOR_DIR / "proposed_train_configs_snippets.py"
 
 POLL_SECONDS = 60 # 1 minute
-STALL_SECONDS = 15 * 60
+STALL_SECONDS = 30 * 60
 SUMMARY_TAIL_LINES = 300
 MAX_LLM_QUEUE_ADDS = 2
 
@@ -136,14 +137,30 @@ class SupervisorState(TypedDict, total=False):
 # File System Helpers
 # =========================
 
-def recover_active_run() -> RunInfo | None:
-    # 1) try state snapshot
-    snapshot = load_json_file(STATE_SNAPSHOT_PATH, {})
-    active = snapshot.get("active_run")
-    if active and active.get("pid") and process_alive(active["pid"]):
-        return active
+def recover_active_run(state_snapshot: dict | None = None) -> RunInfo | None:
+    snapshot = state_snapshot or load_json_file(STATE_SNAPSHOT_PATH, {})
 
-    # 2) try registry fallback
+    active = snapshot.get("active_run")
+    if active:
+        pid = active.get("pid")
+        summary_path = active.get("summary_path")
+
+        summary_digest = (
+            summarize_events(Path(summary_path), min_time=active.get("started_at"))
+            if summary_path else {}
+        )
+
+        # 🔥 CRITICAL: if run_end exists, DO NOT recover as active
+        if summary_digest.get("run_end_event") is not None:
+            return None
+
+        if pid and process_alive(pid):
+            # optionally update last_observed_at
+            active["last_observed_at"] = time.time()
+            return active
+
+    # ---- fallback: registry ----
+
     events = load_registry_events()
     last_started = None
     terminal = {}
@@ -161,26 +178,34 @@ def recover_active_run() -> RunInfo | None:
     if last_started:
         study_name = last_started.get("study_name")
         pid = last_started.get("pid")
-        if (
-            study_name
-            and pid
-            and study_name not in terminal
-            and process_alive(pid)
-            and study_name in STUDIES
-        ):
-            cfg = STUDIES[study_name]
-            return RunInfo(
-                study_name=study_name,
-                pid=pid,
-                log_path=str(RUNS_DIR / study_name / "stdout.log"),
-                summary_path=str(cfg.summary_path()),
-                checkpoint_dir=str(cfg.checkpoint_dir()),
-                config=cfg.to_dict(),
-                started_at=last_started.get("time", time.time()),
-                last_observed_at=time.time(),
-                status="running",
-                queue_source=last_started.get("queue_source", "recovered"),
-            )
+
+        if study_name in terminal:
+            return None
+
+        if not (study_name and pid and process_alive(pid) and study_name in STUDIES):
+            return None
+
+        cfg = STUDIES[study_name]
+        summary_path = Path(cfg.summary_path())
+
+        summary_digest = summarize_events(summary_path)
+
+        # 🔥 again: don't recover if already finished
+        if summary_digest.get("run_end_event") is not None:
+            return None
+
+        return RunInfo(
+            study_name=study_name,
+            pid=pid,
+            log_path=str(RUNS_DIR / study_name / "stdout.log"),
+            summary_path=str(summary_path),
+            checkpoint_dir=str(cfg.checkpoint_dir()),
+            config=cfg.to_dict(),
+            started_at=last_started.get("time", time.time()),
+            last_observed_at=time.time(),
+            status="running",
+            queue_source=last_started.get("queue_source", "recovered"),
+        )
 
     return None
 
@@ -282,9 +307,37 @@ def save_json_file(path: Path, obj: Any) -> None:
 
 
 def load_queue() -> list[QueueItem]:
+    load_persisted_proposals_into_studies()
     data = load_json_file(QUEUE_PATH, [])
-    return sorted(data, key=lambda x: (-int(x.get("priority", 0)), float(x.get("created_at", 0.0))))
+    repaired = []
 
+    for item in data:
+        study_name = item.get("study_name")
+        proposal = item.get("proposal")
+
+        if study_name in STUDIES:
+            repaired.append(item)
+            continue
+
+        if proposal:
+            new_name = materialize_proposed_study(proposal)
+            if new_name and new_name in STUDIES:
+                item["study_name"] = new_name
+                repaired.append(item)
+                continue
+
+        append_registry_event({
+            "time": time.time(),
+            "event": "drop_invalid_queue_item",
+            "study_name": study_name,
+            "reason": "missing_from_STUDIES_on_load",
+            "source": item.get("source", "queue"),
+        })
+
+    return sorted(
+        repaired,
+        key=lambda x: (-int(x.get("priority", 0)), float(x.get("created_at", 0.0)))
+    )
 
 def save_queue(queue: list[QueueItem]) -> None:
     save_json_file(QUEUE_PATH, queue)
@@ -325,6 +378,34 @@ def load_registry_events() -> list[dict[str, Any]]:
 # =========================
 # Study / config helpers
 # =========================
+
+def load_persisted_proposals_into_studies() -> None:
+    if not PROPOSED_STUDIES_JSONL.exists():
+        return
+
+    seen = set()
+    with PROPOSED_STUDIES_JSONL.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+
+            proposal = row.get("proposal")
+            if not proposal:
+                continue
+
+            new_study_name = proposal.get("new_study_name")
+            if not new_study_name or new_study_name in seen or new_study_name in STUDIES:
+                continue
+
+            materialize_proposed_study(proposal)
+            seen.add(new_study_name)
+
+load_persisted_proposals_into_studies()
 
 def render_make_config_snippet(new_study_name: str, cfg: Any) -> str:
     return f'''    "{new_study_name}": make_config(
@@ -542,8 +623,18 @@ def read_jsonl_tail(path: str | Path, max_lines: int = SUMMARY_TAIL_LINES) -> li
     return rows
 
 
-def summarize_events(summary_path: str | Path) -> SummaryDigest:
+def summarize_events(
+    summary_path: str | Path,
+    min_time: float | None = None,
+) -> SummaryDigest:
     rows = read_jsonl_tail(summary_path, max_lines=SUMMARY_TAIL_LINES)
+
+    if min_time is not None:
+        rows = [
+            row for row in rows
+            if isinstance(row.get("time"), (int, float)) and row["time"] >= min_time
+        ]
+
     digest: SummaryDigest = {
         "summary_exists": Path(summary_path).exists(),
         "last_event_type": None,
@@ -615,6 +706,7 @@ def start_run(study_name: str, queue_source: str = "queue") -> RunInfo:
     log_path = run_dir / "stdout.log"
 
     f = open(log_path, "a", buffering=1)
+
     proc = subprocess.Popen(
         [
             "python",
@@ -626,6 +718,7 @@ def start_run(study_name: str, queue_source: str = "queue") -> RunInfo:
         stdout=f,
         stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=True,   # key line
     )
 
     cfg = STUDIES[study_name]
@@ -656,7 +749,7 @@ def start_run(study_name: str, queue_source: str = "queue") -> RunInfo:
 def stop_run(pid: int, force: bool = False) -> None:
     sig = signal.SIGKILL if force else signal.SIGTERM
     try:
-        os.kill(pid, sig)
+        os.killpg(pid, sig)
     except ProcessLookupError:
         pass
 
@@ -799,7 +892,10 @@ def observe_run(state: SupervisorState) -> dict[str, Any]:
     log_tail = tail_text(log_path)
     last_log_mtime = log_p.stat().st_mtime if log_exists else None
 
-    summary_digest = summarize_events(summary_path)
+    summary_digest = summarize_events(
+        summary_path,
+        min_time=active.get("started_at"),
+    )
     now = time.time()
 
     log_lower = log_tail.lower()
@@ -807,19 +903,31 @@ def observe_run(state: SupervisorState) -> dict[str, Any]:
     has_nan = "nan" in log_lower or " inf" in log_lower
 
     if alive:
-        latest_summary_time = summary_digest.get("last_event_time")
-        if latest_summary_time is not None and now - latest_summary_time > STALL_SECONDS:
-            status = "stalled"
-            reason = "summary_not_advancing"
-        elif log_exists and last_log_mtime is not None and now - last_log_mtime > STALL_SECONDS:
-            status = "stalled"
-            reason = "log_not_advancing"
-        elif has_traceback or has_nan:
-            status = "failed"
-            reason = "traceback_or_nan_in_log"
+        if summary_digest.get("run_end_event") is not None:
+            status = "finished_success"
+            reason = "run_end_seen_while_process_still_alive"
         else:
-            status = "running"
-            reason = "healthy"
+            latest_summary_time = summary_digest.get("last_event_time")
+
+            summary_stale = (
+                latest_summary_time is not None
+                and now - latest_summary_time > STALL_SECONDS
+            )
+            log_stale = (
+                log_exists
+                and last_log_mtime is not None
+                and now - last_log_mtime > STALL_SECONDS
+            )
+
+            if summary_stale:
+                status = "stalled"
+                reason = "summary_not_advancing"
+            elif has_traceback or has_nan:
+                status = "failed"
+                reason = "traceback_or_nan_in_log"
+            else:
+                status = "running"
+                reason = "healthy"
     else:
         if summary_digest.get("run_end_event") is not None:
             status = "finished_success"
@@ -920,7 +1028,10 @@ Constraints:
 - Prefer suggestions that are consistent with actual filesystem readiness. 
 
 IMPORTANT:
-If a study_name is not already in the config library, you MUST use "proposal" instead of "study_name".
+If a study_name is not already in the config library, you MUST use "proposal" instead of "study_name". 
+
+For important studies essential to the experiment plan, you should prefer "enqueue_configs" with a clear reason. Use "propose_configs" for more speculative suggestions or when the config library is missing necessary variants. 
+Some of the initial runs might have been killed or failed due to the supervisor being restarted. It's important to inspect their summary files and logs to understand what happened before deciding on the next steps. If you see evidence of a run being killed or failed, you should not simply restart it without understanding the reason, as it might have been killed due to an error or because it was a duplicate of another run. Use "inspect_summary_file" or "inspect_config" actions to gather more information about these runs before making a decision.
 
 Current train config library:
 {json.dumps(config_library_context, indent=2)}
@@ -1108,51 +1219,84 @@ def execute_action(state: SupervisorState) -> dict[str, Any]:
         return {"last_action": "inspect_summary_file:none"}
 
     if action == "start_next":
+        obs = state.get("latest_observation") or {}
+        active = state.get("active_run")
+        completed = list(state.get("completed", []))
+        failed = list(state.get("failed", []))
+
+        # Finalize a just-finished active run before starting the next one
         if active and obs.get("status") == "finished_success":
-            summary = obs.get("summary", {})
-            active["status"] = "finished"
-            completed.append(active)
+            summary = obs.get("summary", {}) or {}
+
+            finished_row = copy.deepcopy(active)
+            finished_row["status"] = "finished_success"
+            finished_row["reason"] = obs.get("reason", "run finished successfully")
+            finished_row["finished_at"] = time.time()
+            finished_row["best_eval_loss"] = summary.get("best_eval_loss")
+            finished_row["best_eval_margin_cos"] = summary.get("best_eval_margin_cos")
+
             append_registry_event({
                 "time": time.time(),
                 "event": "run_finished",
                 "study_name": active["study_name"],
                 "best_eval_loss": summary.get("best_eval_loss"),
                 "best_eval_margin_cos": summary.get("best_eval_margin_cos"),
-                "latest_samples_per_hour": summary.get("latest_samples_per_hour"),
+                "reason": obs.get("reason", "run finished successfully"),
             })
-            active = None
-        elif active and obs.get("status") == "finished_failed":
-            active["status"] = "failed"
-            active["reason"] = obs.get("reason", "finished_failed")
-            failed.append(active)
-            append_registry_event({
-                "time": time.time(),
-                "event": "run_failed",
-                "study_name": active["study_name"],
-                "reason": active["reason"],
-            })
+
+            completed.append(finished_row)
             active = None
 
-        if active is None and queue:
-            queue = sorted(queue, key=lambda x: (-int(x.get("priority", 0)), float(x.get("created_at", 0.0))))
-            next_cfg = queue.pop(0)
-            new_run = start_run(next_cfg["study_name"], queue_source=next_cfg.get("source", "queue"))
+        # If something is still genuinely active, do not start another run
+        if active is not None:
             save_queue(queue)
             return {
-                "active_run": new_run,
+                "active_run": active,
                 "queue": queue,
                 "completed": completed,
                 "failed": failed,
-                "last_action": f"start_next:{new_run['study_name']}",
+                "last_action": "start_next:active_run_still_present",
+            }
+
+        if queue:
+            queue = sorted(
+                queue,
+                key=lambda x: (-int(x.get("priority", 0)), float(x.get("created_at", 0.0)))
+            )
+
+            while queue:
+                next_cfg = queue.pop(0)
+                study_name = next_cfg.get("study_name")
+
+                if not study_name or study_name not in STUDIES:
+                    continue
+
+                new_run = start_run(study_name, queue_source=next_cfg.get("source", "queue"))
+                save_queue(queue)
+                return {
+                    "active_run": new_run,
+                    "queue": queue,
+                    "completed": completed,
+                    "failed": failed,
+                    "last_action": f"start_next:{new_run['study_name']}",
+                }
+
+            save_queue(queue)
+            return {
+                "active_run": None,
+                "queue": queue,
+                "completed": completed,
+                "failed": failed,
+                "last_action": "start_next:no_valid_queue_items",
             }
 
         save_queue(queue)
         return {
-            "active_run": active,
+            "active_run": None,
             "queue": queue,
             "completed": completed,
             "failed": failed,
-            "last_action": "start_next:none",
+            "last_action": "start_next:nothing_queued",
         }
 
     if action == "enqueue_configs":
@@ -1269,11 +1413,9 @@ def main() -> None:
     SUPERVISOR_DIR.mkdir(parents=True, exist_ok=True)
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-    recovered_active_run = recover_active_run()
+    snapshot = load_json_file(STATE_SNAPSHOT_PATH, {})
 
     state: SupervisorState = {
-        "active_run": recovered_active_run,
-        "queue": load_queue(),
         "completed": [],
         "failed": [],
         "latest_observation": None,
@@ -1282,38 +1424,66 @@ def main() -> None:
         "experiment_plan": load_experiment_plan(),
         "registry_summary": build_registry_summary(),
         "experiment_context": {},
-        "llm_calls": 0,
+        "active_run": recover_active_run(snapshot),
+        "queue": snapshot.get("queue", load_queue()),
+        "llm_calls": snapshot.get("llm_calls", 0),
     }
 
-    while True:
-        try:
-            state = graph.invoke(state)
-        except Exception as e:
-            state["last_action"] = f"graph_error:{type(e).__name__}"
-            print(f"[supervisor] graph error: {e}")
+    try:
+        while True:
+            try:
+                state = graph.invoke(state)
+            except Exception as e:
+                state["last_action"] = f"graph_error:{type(e).__name__}"
+                print(f"[supervisor] graph error: {e}")
 
-        snapshot = {
+            snapshot = {
+                "time": time.time(),
+                "last_action": state.get("last_action"),
+                "last_inspected_summary": (state.get("summary_library_context") or {}).get("last_inspected_summary"),
+                "last_inspected_config": (state.get("config_library_context") or {}).get("last_inspected_config"),
+                "active_run": state.get("active_run"),
+                "latest_status": (state.get("latest_observation") or {}).get("status"),
+                "latest_reason": (state.get("latest_observation") or {}).get("reason"),
+                "queue": state.get("queue", []),
+                "experiment_context": state.get("experiment_context", {}),
+                "llm_calls": state.get("llm_calls", 0),
+            }
+            save_json_file(STATE_SNAPSHOT_PATH, snapshot)
+
+            print(json.dumps({
+                "time": snapshot["time"],
+                "last_action": snapshot["last_action"],
+                "active_run": snapshot["active_run"],
+                "latest_status": snapshot["latest_status"],
+                "latest_reason": snapshot["latest_reason"],
+                "queue_size": len(snapshot["queue"]),
+            }, indent=2))
+
+            time.sleep(POLL_SECONDS)
+
+    except KeyboardInterrupt:
+        active = state.get("active_run")
+
+        # refresh from live pid if possible
+        if active and active.get("pid") and process_alive(active["pid"]):
+            active["last_observed_at"] = time.time()
+            active["status"] = "running"
+        else:
+            active = recover_active_run()
+
+        save_json_file(STATE_SNAPSHOT_PATH, {
             "time": time.time(),
-            "last_action": state.get("last_action"),
-            "active_run": state.get("active_run"),
-            "latest_status": (state.get("latest_observation") or {}).get("status"),
-            "latest_reason": (state.get("latest_observation") or {}).get("reason"),
+            "last_action": "keyboard_interrupt_exit",
+            "active_run": active,
             "queue": state.get("queue", []),
             "experiment_context": state.get("experiment_context", {}),
-        }
-        save_json_file(STATE_SNAPSHOT_PATH, snapshot)
+            "llm_calls": state.get("llm_calls", 0),
+            "stopped_by": "keyboard_interrupt",
+        })
 
-        print(json.dumps({
-            "time": snapshot["time"],
-            "last_action": snapshot["last_action"],
-            "active_run": snapshot["active_run"],
-            "latest_status": snapshot["latest_status"],
-            "latest_reason": snapshot["latest_reason"],
-            "queue_size": len(snapshot["queue"]),
-        }, indent=2))
-
-        time.sleep(POLL_SECONDS)
-
+        print("[supervisor] received Ctrl-C; leaving training process alive and exiting.")
+        return
 
 if __name__ == "__main__":
     main()

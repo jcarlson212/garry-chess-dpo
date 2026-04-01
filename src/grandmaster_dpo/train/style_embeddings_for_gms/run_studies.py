@@ -2,12 +2,37 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 from typing import List
 
+from .dataset_schema import TrainConfig
 from .train_configs import STUDIES
 from .train_style_encoder import train_one_run
+
+
+def merge_materialized_studies_into_library(path: Path | None) -> None:
+    """Overlay supervisor-materialized configs into STUDIES (same process only)."""
+    env_path = os.environ.get("GRANDMASTER_MATERIALIZED_STUDIES_JSON")
+    resolved = path
+    if resolved is None and env_path:
+        resolved = Path(env_path)
+    if resolved is None or not resolved.exists():
+        return
+    try:
+        raw = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    for name, cfg_dict in raw.items():
+        if not isinstance(name, str) or not isinstance(cfg_dict, dict):
+            continue
+        try:
+            STUDIES[name] = TrainConfig.from_dict(cfg_dict)
+        except Exception:
+            continue
 
 
 def rank_key(result: dict) -> float:
@@ -27,7 +52,17 @@ def main() -> None:
         "--stop-on-error",
         action="store_true",
     )
+    ap.add_argument(
+        "--materialized-studies-json",
+        type=str,
+        default=None,
+        help="Optional JSON dict of study_name -> TrainConfig.to_dict() merged into STUDIES before lookup.",
+    )
     args = ap.parse_args()
+
+    merge_materialized_studies_into_library(
+        Path(args.materialized_studies_json) if args.materialized_studies_json else None
+    )
 
     selected = []
     for name in args.studies:

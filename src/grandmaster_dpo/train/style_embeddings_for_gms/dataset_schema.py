@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -78,6 +78,12 @@ class ModelConfig:
     use_phase: bool = False
     use_opening: bool = False
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ModelConfig":
+        names = {f.name for f in fields(cls)}
+        kwargs = {k: v for k, v in d.items() if k in names}
+        return cls(**kwargs)
+
 
 @dataclass(frozen=True)
 class TrainConfig:
@@ -114,6 +120,10 @@ class TrainConfig:
 
     model: ModelConfig = field(default_factory=lambda: ModelConfig(name="default"))
 
+    init_from_checkpoint: Optional[str] = None
+    init_reset_optimizer: bool = True
+    init_strict_load: bool = True
+
     def run_name(self) -> str:
         run_name_str = (
             f"{self.study_name}"
@@ -139,3 +149,18 @@ class TrainConfig:
         d = asdict(self)
         d["run_name"] = self.run_name()
         return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "TrainConfig":
+        raw = dict(d)
+        raw.pop("run_name", None)
+        model_raw = raw.pop("model", {})
+        model = ModelConfig.from_dict(model_raw) if isinstance(model_raw, dict) else ModelConfig(name="default")
+        names = {f.name for f in fields(cls)}
+        kwargs: Dict[str, Any] = {}
+        for name in names:
+            if name == "model":
+                kwargs[name] = model
+            elif name in raw:
+                kwargs[name] = raw[name]
+        return cls(**kwargs)

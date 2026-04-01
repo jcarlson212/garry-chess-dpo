@@ -254,6 +254,53 @@ def append_jsonl(path: Path, row: Dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row).decode() + "\n")
 
+def maybe_initialize_from_checkpoint(
+    *,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    cfg: TrainConfig,
+    device: torch.device,
+    override_checkpoint: Optional[str] = None,
+) -> Dict[str, Any]:
+    ckpt_path_str = override_checkpoint or cfg.init_from_checkpoint
+    if not ckpt_path_str:
+        return {"used": False}
+
+    ckpt_path = Path(ckpt_path_str)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"init checkpoint not found: {ckpt_path}")
+
+    ckpt = torch.load(ckpt_path, map_location=device)
+    src_cfg = TrainConfig.from_dict(ckpt["config"])
+
+    if src_cfg.model.variant_name != cfg.model.variant_name:
+        raise ValueError(
+            f"variant mismatch: init checkpoint has {src_cfg.model.variant_name}, "
+            f"target run expects {cfg.model.variant_name}"
+        )
+    if src_cfg.model.embedding_dim != cfg.model.embedding_dim:
+        raise ValueError(
+            f"embedding_dim mismatch: init checkpoint has {src_cfg.model.embedding_dim}, "
+            f"target run expects {cfg.model.embedding_dim}"
+        )
+
+    model.load_state_dict(
+        ckpt["model_state_dict"],
+        strict=cfg.init_strict_load,
+    )
+
+    loaded_optimizer = False
+    if not cfg.init_reset_optimizer and "optimizer_state_dict" in ckpt:
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        loaded_optimizer = True
+
+    return {
+        "used": True,
+        "checkpoint": str(ckpt_path),
+        "source_study_name": ckpt.get("config", {}).get("study_name"),
+        "loaded_optimizer": loaded_optimizer,
+        "source_epoch": ckpt.get("epoch"),
+    }
 
 def save_checkpoint(
     checkpoint_dir: Path,
@@ -367,6 +414,14 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         weight_decay=cfg.weight_decay,
     )
 
+    init_info = maybe_initialize_from_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        cfg=cfg,
+        device=device,
+    )
+    print(f"[train] init_info={init_info}")
+
     summary_path = cfg.summary_path()
     checkpoint_dir = cfg.checkpoint_dir()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -382,6 +437,7 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
         "device": str(device),
         "num_train_rows": len(train_ds),
         "num_eval_rows": len(eval_ds),
+        "init_info": init_info,
     })
 
     total_samples_per_hour = 0.0
@@ -549,9 +605,18 @@ def train_one_run(cfg: TrainConfig) -> Dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--study", required=True, choices=sorted(STUDIES.keys()))
+    ap.add_argument("--init-from-checkpoint", default=None)
+    ap.add_argument("--no-reset-optimizer", action="store_true")
+    ap.add_argument("--non-strict-init-load", action="store_true")
     args = ap.parse_args()
 
     cfg = STUDIES[args.study]
+    if args.init_from_checkpoint is not None:
+        cfg.init_from_checkpoint = args.init_from_checkpoint
+    if args.no_reset_optimizer:
+        cfg.init_reset_optimizer = False
+    if args.non_strict_init_load:
+        cfg.init_strict_load = False
     out = train_one_run(cfg)
     print(json.dumps(out, option=json.OPT_INDENT_2).decode())
 
