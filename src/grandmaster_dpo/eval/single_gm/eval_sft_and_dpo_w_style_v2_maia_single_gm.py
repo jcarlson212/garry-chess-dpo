@@ -1129,7 +1129,7 @@ def main() -> None:
                         ply_idx=ply_idx,
                         phase=None,
                     )
-                    for fen, ch, rj, ch_cp, rj_cp, ply_idx, prev_fens, next_fens_chosen, next_fens_rejected
+                    for fen, ch, rj, ch_cp, rj_cp, ply_idx, prev_fens, next_fens_chosen, next_fens_rejected, meta_list
                     in batch_meta_data
                 ],
                 dtype=torch.float32,

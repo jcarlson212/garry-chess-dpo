@@ -1397,7 +1397,8 @@ def run_eval(jsonl_path: str,
                                         ply_idxs,
                                         prev_fens_batch,
                                         next_fens_chosen_batch,
-                                        next_fens_rejected_batch
+                                        next_fens_rejected_batch,
+                                        meta_list
                                     )
         )
 

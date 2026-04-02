@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import chess
 import os
 import random
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
+from torch import nn
 import torch.nn.functional as F
 
 from ..train.style_embeddings_for_gms.dataset_schema import TrainConfig
@@ -209,13 +211,15 @@ def raw_example_to_cached_arrays(ex: Dict[str, Any]) -> Tuple[np.ndarray, np.nda
       move:   [3] uint8
       game_type: scalar uint8
     """
+    default_fen = chess.Board().fen()
+
     boards = np.stack(
         [
-            fen_to_piece_tokens_64(ex["board_t_minus_4"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_3"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_2"]),
-            fen_to_piece_tokens_64(ex["board_t_minus_1"]),
-            fen_to_piece_tokens_64(ex["board_t"]),
+            fen_to_piece_tokens_64(ex.get("board_t_minus_4", default_fen) or default_fen),
+            fen_to_piece_tokens_64(ex.get("board_t_minus_3", default_fen) or default_fen),
+            fen_to_piece_tokens_64(ex.get("board_t_minus_2", default_fen) or default_fen),
+            fen_to_piece_tokens_64(ex.get("board_t_minus_1", default_fen) or default_fen),
+            fen_to_piece_tokens_64(ex.get("board_t", default_fen) or default_fen),
         ],
         axis=0,
     ).astype(np.uint8, copy=False)
@@ -327,5 +331,99 @@ def assert_model_dir_matches_variant(model_dir: Path, cfg: TrainConfig) -> None:
             f"Checkpoint config says variant={variant}, "
             f"but model_dir does not contain that substring: {model_dir}"
         )
+
+# Makes it so a single example can be passed to the model without needing to add a batch dimension manually.
+def add_batch_dim(feats: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    return {k: v.unsqueeze(0) for k, v in feats.items()}
+
+class BoardCNN(nn.Module):
+    def __init__(self, board_embed_dim: int, dropout: float) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(12, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Dropout(dropout),
+            nn.Linear(64, board_embed_dim),
+            nn.GELU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, 12, 8, 8]
+        return self.net(x)
+
+class StyleEncoder(nn.Module):
+    def __init__(self, cfg: TrainConfig) -> None:
+        super().__init__()
+        m = cfg.model
+
+        self.num_boards = 5
+        self.board_embed_dim = 128
+
+        self.move_embed = nn.Embedding(70, m.token_embed_dim)
+        self.game_type_embed = nn.Embedding(8, 16)
+
+        self.board_cnn = BoardCNN(
+            board_embed_dim=self.board_embed_dim,
+            dropout=m.dropout,
+        )
+
+        board_in_dim = self.num_boards * self.board_embed_dim
+        move_in_dim = 3 * m.token_embed_dim
+
+        aux_dim = 0
+        if m.variant_name in {"phi1", "phi3"}:
+            aux_dim += 16
+        if m.variant_name == "phi3":
+            aux_dim += 32
+
+        hidden_dim = m.hidden_dim
+
+        self.mlp = nn.Sequential(
+            nn.Linear(board_in_dim + move_in_dim + aux_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(m.dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(m.dropout),
+            nn.Linear(hidden_dim, m.embedding_dim),
+        )
+
+    def forward(self, feats: Dict[str, torch.Tensor]) -> torch.Tensor:
+        boards = feats["boards"]   # [B, 5, 12, 8, 8]
+        move = feats["move"]       # [B, 3]
+
+        bsz, num_boards, channels, h, w = boards.shape
+
+        # flatten batch and board-time dimension so each board goes through the same CNN
+        board_inputs = boards.reshape(bsz * num_boards, channels, h, w)   # [B*5, 12, 8, 8]
+
+        # encode each board independently
+        board_vecs = self.board_cnn(board_inputs)                         # [B*5, board_embed_dim]
+
+        # concatenate the 5 board embeddings
+        board_vecs = board_vecs.reshape(bsz, num_boards * self.board_embed_dim)
+
+        # encode move
+        m_emb = self.move_embed(move).reshape(bsz, -1)
+
+        parts = [board_vecs, m_emb]
+
+        if "game_type" in feats:
+            gt = self.game_type_embed(feats["game_type"])
+            parts.append(gt)
+
+        if "opponent_context" in feats:
+            parts.append(feats["opponent_context"])
+
+        x = torch.cat(parts, dim=-1)
+        z = self.mlp(x)
+        z = F.normalize(z, p=2, dim=-1)
+        return z
 
 

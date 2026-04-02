@@ -744,7 +744,7 @@ def main() -> None:
                         piece_bonus=args.style_piece_bonus,
                         positional_bonus=args.style_positional_bonus,
                     )
-                    for fen, ch, rj, ch_cp, rj_cp, _, _, _, _ in batch_meta_data
+                    for fen, ch, rj, ch_cp, rj_cp, _, _, _, _, _ in batch_meta_data
                 ],
                 dtype=torch.float32,
                 device=args.device,

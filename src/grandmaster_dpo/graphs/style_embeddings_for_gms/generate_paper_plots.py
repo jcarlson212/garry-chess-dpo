@@ -28,7 +28,100 @@ from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-DEFAULT_LABEL_PLAYERS = ["Kasparov, G.", "Anand, V.", "Karpov, Ana"]
+# ============================================================
+# IEEE CoG paper plotting defaults
+# ============================================================
+
+plt.rcParams.update(
+    {
+        "figure.dpi": 600,
+        "savefig.dpi": 600,
+        "font.size": 7,
+        "axes.titlesize": 8.5,
+        "axes.labelsize": 7.5,
+        "legend.fontsize": 6.5,
+        "xtick.labelsize": 6.5,
+        "ytick.labelsize": 6.5,
+        "lines.linewidth": 1.4,
+        "axes.grid": True,
+        "grid.alpha": 0.22,
+        "grid.linestyle": "--",
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "legend.frameon": False,
+    }
+)
+
+PAIR_VARIANT_COLORS = {
+    "v1": "#2F6BFF",
+    "v2": "#00A6A6",
+    "v3": "#E67E22",
+}
+
+MODEL_VARIANT_COLORS = {
+    "phi0": "#2F6BFF",
+    "phi1": "#7E57C2",
+    "phi2": "#00A6A6",
+    "phi3": "#7D6608",
+}
+
+TAU_COLORS = {
+    0.05: "#FAD7D7",
+    0.10: "#F5B7B1",
+    0.25: "#F1948A",
+    0.75: "#EC7063",
+    1.25: "#E74C3C",
+    1.75: "#CA6F1E",
+    2.25: "#7D6608",
+}
+
+DEFAULT_COLOR = "#999999"
+
+
+def style_axes(ax: plt.Axes) -> None:
+    ax.grid(True, alpha=0.22, linestyle="--")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def finish_figure(fig: plt.Figure, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def run_color(meta: Dict[str, Any]) -> str:
+    pair_variant = meta.get("pair_variant")
+    if pair_variant in PAIR_VARIANT_COLORS:
+        return PAIR_VARIANT_COLORS[pair_variant]
+
+    model_variant = meta.get("model_variant")
+    if model_variant in MODEL_VARIANT_COLORS:
+        return MODEL_VARIANT_COLORS[model_variant]
+
+    tau = meta.get("train_tau")
+    if tau is not None:
+        try:
+            tau = round(float(tau), 2)
+            if tau in TAU_COLORS:
+                return TAU_COLORS[tau]
+        except Exception:
+            pass
+
+    return DEFAULT_COLOR
+
+
+DEFAULT_LABEL_PLAYERS = ["Kasparov, G.", "Anand, V.", "Karpov, Ana", 
+    "Karpov, A.", "Kramnik, V.", "Kramnik, V", "Nepomniachtchi, I.",
+    "Nepomniachtchi, I", "Topalov, V.", "Topalov, V", "Carlsen, M.",
+    "Niemann, H.", "Niemann, H", "Caruana, F.", "Caruana, F.",
+    "Carlsen, M", "Caruana, F", "Ding, L.", "Ding, L", "Giri, A.", "Giri, A",
+    "Firouzja, A.", "Firouzja, A", "So, W.", "So, W",
+]
+
 DEFAULT_METRICS = [
     ("retrieval.recall_at_1", "Recall@1"),
     ("retrieval.recall_at_5", "Recall@5"),
@@ -460,7 +553,7 @@ def plot_spread_histograms(runs: List[EvalRun], output_path: Path, limit: int) -
     chosen = runs[:limit]
     if not chosen:
         return
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(3.5, 2.4))
     any_data = False
     for run in chosen:
         players = run.spread_metrics.get("players", {})
@@ -469,19 +562,24 @@ def plot_spread_histograms(runs: List[EvalRun], output_path: Path, limit: int) -
         if not vals:
             continue
         any_data = True
-        plt.hist(vals, bins=30, histtype="step", linewidth=1.5, label=run.meta.get("short_label", run.run_name))
+        ax.hist(
+            vals,
+            bins=24,
+            histtype="step",
+            linewidth=1.4,
+            label=run.meta.get("short_label", run.run_name),
+            color=run_color(run.meta),
+        )
     if not any_data:
-        plt.close()
+        plt.close(fig)
         return
-    plt.xlabel("Per-player intra spread")
-    plt.ylabel("Count")
-    plt.title("Spread histograms")
-    if len(chosen) <= 8:
-        plt.legend(fontsize=8)
-    plt.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    ax.set_xlabel("Per-player intra spread")
+    ax.set_ylabel("Count")
+    ax.set_title("Spread histograms")
+    style_axes(ax)
+    if len(chosen) <= 6:
+        ax.legend()
+    finish_figure(fig, output_path)
 
 
 def load_checkpoint(checkpoint_path: Path, device: torch.device) -> Tuple[Dict[str, Any], TrainConfig]:
@@ -711,18 +809,25 @@ def plot_player_pca(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     fig_path = output_dir / f"pca_player_plot_{split_name}.png"
-    plt.figure(figsize=(9, 7))
-    plt.scatter(points[:, 0], points[:, 1], s=20)
-    for pid in label_players:
-        if pid in players:
-            idx = players.index(pid)
-            plt.annotate(pid, (points[idx, 0], points[idx, 1]), fontsize=9)
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title(f"PCA of player centroids ({split_name})")
-    plt.tight_layout()
-    plt.savefig(fig_path, dpi=200, bbox_inches="tight")
-    plt.close()
+    fig, ax = plt.subplots(figsize=(3.5, 2.8))
+    marker_sizes = []
+    for pid in players:
+        player_vals = sampled[pid]
+        n = len(player_vals)
+        marker_sizes.append(16 + 0.6 * n)
+    ax.scatter(points[:, 0], points[:, 1], s=np.asarray(marker_sizes), color="#B0B0B0", alpha=0.8)
+
+    highlighted = set(label_players)
+    for i, pid in enumerate(players):
+        if pid in highlighted:
+            ax.scatter(points[i, 0], points[i, 1], s=marker_sizes[i] * 1.2, color="#C0392B", alpha=0.95)
+            ax.annotate(pid, (points[i, 0], points[i, 1]), fontsize=6.5, xytext=(3, 3), textcoords="offset points")
+
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_title(f"PCA of player centroids ({split_name})")
+    style_axes(ax)
+    finish_figure(fig, fig_path)
 
     stats = {
         "figure_path": str(fig_path),

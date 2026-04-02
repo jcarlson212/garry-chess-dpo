@@ -140,11 +140,166 @@ python -m src.grandmaster_dpo.train.style_embeddings_for_gms.run_studies \
 
 ### Eval
 
+#### Embeddings
 ```bash
 python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
---model-dir ./final_experiments_for_paper/experiment2_style_model/trained_models/screen_v1_phi0_tau0_75__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.75__seed-42 \
---pairs-dir ./final_experiments_for_paper/experiment2_style_model/pairs_v1 \
---output-dir ./final_experiments_for_paper/experiment2_style_model/eval_outputs/screen_v1_phi0_tau0_75 \
---checkpoint-name best \
---save-embeddings
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_10_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v2 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v2_phi1_tau0_10_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
 ```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v2 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi0_tau0_25_if_winner__pair-v2__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v2 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v2_phi0_tau0_25_if_winner__pair-v2__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi0_tau0_05__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.05__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi0_tau0_05__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.05__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi1_tau0_05__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.05__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi1_tau0_05__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.05__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi1_tau0_10__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi1_tau0_10__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi1_tau0_25__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi1_tau0_25__pair-v1__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+--- Once ready...
+
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi0_tau0_10__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi0_tau0_10__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.1__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/final_v1_phi0_tau0_25__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/final_v1_phi0_tau0_25__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+```bash
+python ./src/grandmaster_dpo/eval/style_embeddings_for_gms/eval_style_embedding_model.py \
+--model-dir final_experiments_for_paper/experiment2_style_model/trained_models/super_v3_phi1_tau0_25__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v2 \
+--output-dir final_experiments_for_paper/experiment2_style_model/eval_outputs/super_v3_phi1_tau0_25__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42 \
+--splits eval test \
+--sampled-embedding-max-players 500 \
+--sampled-embedding-max-examples-per-player 16 \
+--sampled-embedding-min-examples-per-player 2
+```
+
+#### Single GM
+
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/eval/single_gm/eval_sft_and_dpo_w_style_v3_maia_single_gm.py --gm_name $gm --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/eval_results_single_gm_twic --model_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic; done
+```
+
+#### Training Per GM Style Models
+
+Train NLL + DPO re-weighted for style v3 models:
+
+
+run the below for style_tau = 0.25, 0.75, 1.25, dpo_loss_weight = 0.1, 0.2, 0.4
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_w_style_v3_maia2.py --gm_name "$gm" --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic --dpo_loss_weight 0.4 --style_tau 1.25 --beta 0.6 --style_embedding_model_checkpoint ./final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt; done
+```
+
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_w_style_v3_maia2.py --gm_name "$gm" --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic --dpo_loss_weight 0.4 --style_tau 0.25 --beta 0.6 --style_embedding_model_checkpoint ./final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt; done
+```
+
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_w_style_v3_maia2.py --gm_name "$gm" --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic --dpo_loss_weight 0.2 --style_tau 0.25 --beta 0.6 --style_embedding_model_checkpoint ./final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt; done
+```
+
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_w_style_v3_maia2.py --gm_name "$gm" --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic --dpo_loss_weight 0.1 --style_tau 0.25 --beta 0.6 --style_embedding_model_checkpoint ./final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt; done
+```
+
+```bash
+for gm in caruana nakamura firouzja carlsen wei vincent giri gukesh praggnanandhaa; do python ./src/grandmaster_dpo/train/single_gm/train_sft_and_dpo_w_style_v3_maia2.py --gm_name "$gm" --train_val_folder ./final_experiments_for_paper/experiment1/train_val_pgns_twic --out_dir ./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic --dpo_loss_weight 0.6 --style_tau 0.25 --beta 0.6 --style_embedding_model_checkpoint ./final_experiments_for_paper/experiment2_style_model/trained_models/final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt; done
+```
+
+### Graphs
+
+```bash
+python src/grandmaster_dpo/graphs/style_embeddings_for_gms/generate_paper_plots.py \
+--eval-runs-root final_experiments_for_paper/experiment2_style_model/eval_outputs \
+--training-summary-dir final_experiments_for_paper/experiment2_style_model/training_summary \
+--output-dir final_experiments_for_paper/experiment2_style_model/paper_plots \
+--split test \
+--pairs-dir final_experiments_for_paper/experiment2_style_model/pairs_v1 \
+--pca-model-dir final_experiments_for_paper/experiment2_style_model/trained_models/screen_v1_phi0_tau0_75__pair-v1__phi-phi0__edim-256__bs-4096__lr-0.0003__tau-0.75__seed-42 \
+--checkpoint-name best \
+--pca-split test \
+--pca-num-players 100 \
+--pca-samples-per-player 100 \
+--label-players "Kasparov, G." "Anand, V." "Karpov, Ana"
+```
+
