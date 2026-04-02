@@ -6,29 +6,29 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import PercentFormatter
 
 
 # ============================================================
-# Paper plotting defaults
+# IEEE CoG / paper-ready defaults
 # ============================================================
 
 plt.rcParams.update(
     {
         "figure.dpi": 600,
         "savefig.dpi": 600,
-        "font.size": 7,
-        "axes.titlesize": 8.5,
-        "axes.labelsize": 7.5,
-        "legend.fontsize": 6.5,
-        "xtick.labelsize": 6.5,
-        "ytick.labelsize": 6.5,
-        "lines.linewidth": 1.4,
+        "font.size": 7.0,
+        "axes.titlesize": 8.0,
+        "axes.labelsize": 7.0,
+        "legend.fontsize": 6.3,
+        "xtick.labelsize": 6.4,
+        "ytick.labelsize": 6.4,
+        "lines.linewidth": 1.3,
+        "lines.markersize": 3.2,
         "axes.grid": True,
         "grid.alpha": 0.22,
         "grid.linestyle": "--",
@@ -37,495 +37,194 @@ plt.rcParams.update(
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
         "legend.frameon": False,
+        "axes.axisbelow": True,
     }
 )
 
-GM_ORDER = [
-    "carlsen",
-    "caruana",
-    "wei",
-    "vincent",
-    "nakamura",
-    "gukesh",
-    "giri",
-    "firouzja",
-    "praggnanandhaa",
-]
+# ------------------------------------------------------------
+# Semantic colors:
+#   family hue = v1 / v2 / v3
+#   shade      = phi0 / phi1 / phi3
+# ------------------------------------------------------------
 
-OPENING_MOVE_ORDER = ["e2e4", "d2d4", "c2c4", "g1f3", "g2g3", "b2b3", "f2f4", "b2b4", "a2a4"]
-PIECE_ORDER = ["pawn", "knight", "bishop", "rook", "queen", "king"]
-
-METHOD_PATTERNS = {
-    "summary_ext_json": re.compile(
-        r"^eval_results_(?:extended_(?P<method1>.+?)|(?P<method2>.+?)_extended)_val\.json$"
-    ),
-    "summary_json": re.compile(r"^eval_results_(?P<method>.+?)_val\.json$"),
-    "opening_probe_json": re.compile(r"^opening_probe_policy_(?P<method>.+?)\.json$"),
-    # handles eval_per_Row_metrics_<method>_val.json
-    "per_row_json": re.compile(r"^eval_per_[Rr]ow_metrics_(?P<method>.+?)_val\.jsonl?$"),
+FAMILY_COLORS = {
+    "v1": {"phi0": "#4C78A8", "phi1": "#2A5A88", "phi3": "#173A5A"},
+    "v2": {"phi0": "#F58518", "phi1": "#C86A00", "phi3": "#8F4B00"},
+    "v3": {"phi0": "#54A24B", "phi1": "#2F7E2A", "phi3": "#165016"},
+    "other": {"phi0": "#777777", "phi1": "#666666", "phi3": "#555555"},
 }
 
-METHOD_COLORS = {
-    "maia2": "#2F6BFF",
-    "sft": "#00A6A6",  # NLL
-    "sft_pairwise": "#7E57C2",
-    "dpo_beta=0.02": "#FAD7D7",
-    "dpo_beta=0.05": "#F5B7B1",
-    "dpo_beta=0.10": "#F1948A",
-    "dpo_beta=0.20": "#EC7063",
-    "dpo_beta=0.40": "#E74C3C",
-    "dpo_beta=0.60": "#B03A2E",
-    "dpo": "#C0392B",
-    "sft_and_dpo": "#F39C12",
-    "unknown": "#999999",
+RUN_STAGE_ORDER = {
+    "screen": 0,
+    "ablation": 1,
+    "final": 2,
+    "super": 3,
+    "stress_test": 4,
+    "other": 5,
 }
 
-STYLE_V1_COLOR = "#7D6608"
-STYLE_V2_COLOR = "#6E2C00"
-STYLE_V3_COLOR = "#5A006E"
-
+PAIR_ORDER = {"v1": 0, "v2": 1, "v3": 2}
+PHI_ORDER = {"phi0": 0, "phi1": 1, "phi3": 2}
 
 # ============================================================
-# Naming helpers
+# Metric definitions
 # ============================================================
 
-def paper_method_label(method_key: str) -> str:
-    if method_key == "maia2":
-        return "Maia-2"
-    if method_key == "sft":
-        return "NLL"
-    if method_key == "sft_pairwise":
-        return "Pairwise"
-    if method_key == "dpo":
-        return "DPO"
-
-    m = re.match(r"dpo_beta=(?P<beta>[0-9.]+)", method_key)
-    if m:
-        beta = float(m.group("beta"))
-        return f"DPO (β={beta:g})"
-
-    m = re.match(
-        r"sft_and_dpo_beta=(?P<beta>[0-9.]+)_dpo_loss_weight=(?P<weight>[0-9.]+)",
-        method_key,
-    )
-    if m:
-        beta = float(m.group("beta"))
-        weight = float(m.group("weight"))
-        return f"NLL + DPO (λ={weight:g})"
-
-    if method_key == "sft_and_dpo":
-        return "NLL + DPO"
-
-    return method_key
-
-
-def opening_panel_title(gm_name: str) -> str:
-    mapping = {
-        "carlsen": "Carlsen",
-        "caruana": "Caruana",
-        "wei": "Wei",
-        "vincent": "Vincent",
-        "nakamura": "Nakamura",
-        "gukesh": "Gukesh",
-        "giri": "Giri",
-        "firouzja": "Firouzja",
-        "praggnanandhaa": "Praggnanandhaa",
-    }
-    return mapping.get(gm_name, gm_name.capitalize())
-
-
-def method_color(method_key: str) -> str:
-    # exact matches first
-    if method_key in METHOD_COLORS:
-        return METHOD_COLORS[method_key]
-
-    # DPO beta sweep
-    if method_key.startswith("dpo_beta="):
-        return METHOD_COLORS.get(method_key, "#E74C3C")
-
-    # NLL + DPO mixes (Experiment 2)
-    m = re.match(
-        r"sft_and_dpo_beta=(?P<beta>[0-9.]+)_dpo_loss_weight=(?P<w>[0-9.]+)",
-        method_key,
-    )
-    if m:
-        w = float(m.group("w"))
-
-        # progressively darker orange as weight increases
-        if w <= 0.10:
-            return "#F8C471"
-        if w <= 0.20:
-            return "#F5B041"
-        if w <= 0.40:
-            return "#EB984E"
-        return "#CA6F1E"
-
-    if "style_sim_utility_weight" in method_key:
-        return STYLE_V1_COLOR
-
-    if "style_v2" in method_key:
-        return STYLE_V2_COLOR
-
-    return METHOD_COLORS["unknown"]
-
-
-# ============================================================
-# Bundle models
-# ============================================================
-
-@dataclass
-class MethodBundle:
-    gm_name: str
-    method_key: str
-    gm_dir: Path
-    summary_ext_json: Optional[Path] = None
-    summary_json: Optional[Path] = None
-    opening_probe_json: Optional[Path] = None
-    per_row_json: Optional[Path] = None
-
-    summary_ext: Optional[Dict[str, Any]] = None
-    summary_json_obj: Optional[Dict[str, Any]] = None
-    opening_probe: Optional[Dict[str, Any]] = None
-    per_row_df: Optional[pd.DataFrame] = None
-
-    def load(self) -> None:
-        if self.summary_ext is None and self.summary_ext_json and self.summary_ext_json.exists():
-            with self.summary_ext_json.open("r", encoding="utf-8") as f:
-                self.summary_ext = json.load(f)
-
-        if self.summary_json_obj is None and self.summary_json and self.summary_json.exists():
-            with self.summary_json.open("r", encoding="utf-8") as f:
-                self.summary_json_obj = json.load(f)
-
-        if self.opening_probe is None and self.opening_probe_json and self.opening_probe_json.exists():
-            with self.opening_probe_json.open("r", encoding="utf-8") as f:
-                self.opening_probe = json.load(f)
-
-        if self.per_row_df is None and self.per_row_json and self.per_row_json.exists():
-            self.per_row_df = load_jsonl_records(self.per_row_json)
-
-    @property
-    def label(self) -> str:
-        return paper_method_label(self.method_key)
-
-    @property
-    def color(self) -> str:
-        return method_color(self.method_key)
-
-
-# ============================================================
-# Discovery
-# ============================================================
-
-def discover_method_bundles(gm_dir: Path) -> Dict[str, MethodBundle]:
-    methods: Dict[str, MethodBundle] = {}
-    if not gm_dir.exists():
-        return methods
-
-    for path in gm_dir.iterdir():
-        if not path.is_file():
-            continue
-        for attr_name, pattern in METHOD_PATTERNS.items():
-            m = pattern.match(path.name)
-            if not m:
-                continue
-            if attr_name == "summary_ext_json":
-                method = m.group("method1") or m.group("method2")
-            else:
-                method = m.group("method")
-            bundle = methods.setdefault(
-                method,
-                MethodBundle(gm_name=gm_dir.name, method_key=method, gm_dir=gm_dir),
-            )
-            setattr(bundle, attr_name, path)
-            break
-    return methods
-
-
-# ============================================================
-# IO helpers
-# ============================================================
-
-def load_jsonl_records(path: Path) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as f:
-        first_nonempty = None
-        all_lines = []
-        for line in f:
-            s = line.strip()
-            if not s:
-                continue
-            if first_nonempty is None:
-                first_nonempty = s
-            all_lines.append(s)
-
-    if first_nonempty is None:
-        return pd.DataFrame()
-
-    # line-delimited JSON objects
-    if first_nonempty.startswith("{"):
-        for s in all_lines:
-            rows.append(json.loads(s))
-        return pd.DataFrame(rows)
-
-    # fallback for array JSON
-    with path.open("r", encoding="utf-8") as f:
-        obj = json.load(f)
-    if isinstance(obj, list):
-        return pd.DataFrame(obj)
-    return pd.DataFrame([obj])
-
-
-# ============================================================
-# Metric helpers
-# ============================================================
-
-# ============================================================
-# Metric registry
-# ============================================================
-
-METRIC_SPECS: Dict[str, Dict[str, Sequence[str]]] = {
-    # -------------------------
-    # existing global metrics
-    # -------------------------
-    "top1_acc": {
-        "value_keys": [
-            "top1_accuracy_on_chosen_policy",
-            "accuracy_top1",
-            "top1_accuracy",
-        ],
-        "bootstrap_keys": ["accuracy_top1"],
-    },
-    "top3_recall": {
-        "value_keys": ["hit_top3", "top3_recall", "recall_top3"],
-        "bootstrap_keys": ["hit_top3"],
-    },
-    "top5_recall": {
-        "value_keys": ["hit_top5", "top5_recall", "recall_top5"],
-        "bootstrap_keys": ["hit_top5"],
-    },
-    "top10_recall": {
-        "value_keys": ["hit_top10", "top10_recall", "recall_top10"],
-        "bootstrap_keys": ["hit_top10"],
-    },
+# Main-paper metrics. These are what you should actually tell the story with.
+PRIMARY_METRICS = {
     "mrr": {
-        "value_keys": ["mrr"],
-        "bootstrap_keys": ["mrr"],
+        "title": "MRR",
+        "keys": ["mrr"],
+        "is_percent": False,
+        "bigger_is_better": True,
     },
-    "mean_p_chosen": {
-        "value_keys": ["mean_p_chosen_policy", "mean_p_chosen_pi", "p_chosen_pi"],
-        "bootstrap_keys": ["mean_p_chosen_pi", "p_chosen_pi"],
+    "recall_at_1": {
+        "title": "Recall@1",
+        "keys": ["recall_at_1", "recall@1", "top1_acc", "top1_accuracy", "accuracy_top1"],
+        "is_percent": False,
+        "bigger_is_better": True,
+    },
+    "recall_at_5": {
+        "title": "Recall@5",
+        "keys": ["recall_at_5", "recall@5", "top5_recall", "hit_top5"],
+        "is_percent": False,
+        "bigger_is_better": True,
     },
     "mean_logp_gap": {
-        "value_keys": ["mean_logp_gap_policy_chosen_rejected", "mean_logp_gap_pi"],
-        "bootstrap_keys": ["mean_logp_gap_pi"],
+        "title": "Mean log-prob gap",
+        "keys": [
+            "mean_logp_gap",
+            "mean_logp_gap_pi",
+            "mean_logp_gap_policy_chosen_rejected",
+        ],
+        "is_percent": False,
+        "bigger_is_better": True,
     },
-    "mean_gap_improvement": {
-        "value_keys": ["mean_gap_improvement", "gap_improve"],
-        "bootstrap_keys": [],  # no upstream bootstrap key shown for this currently
+    "pair_acc_hardest": {
+        "title": "Pair acc vs hardest neg",
+        "keys": [
+            "pair_acc_mean_vs_hardest",
+            "pair_acc_mean_pos_gt_hardest_neg",
+            "pair_acc_mean_pos_hardest_neg",
+        ],
+        "is_percent": False,
+        "bigger_is_better": True,
+    },
+    "row_cos_hard_gap": {
+        "title": "Row cosine hard gap",
+        "keys": ["row_cos_hard_gap", "row_cosine_hard_gap"],
+        "is_percent": False,
+        "bigger_is_better": True,
+    },
+    "row_cos_mean_gap": {
+        "title": "Row cosine mean gap",
+        "keys": ["row_cos_mean_gap", "row_cosine_mean_gap"],
+        "is_percent": False,
+        "bigger_is_better": True,
+    },
+    "spread_ratio": {
+        "title": "Spread ratio",
+        "keys": ["spread_ratio", "spread_ratio_mean", "spread.spread_ratio_mean"],
+        "is_percent": False,
+        "bigger_is_better": True,
     },
     "mean_kl": {
-        "value_keys": ["mean_kl", "kl_pi_ref"],
-        "bootstrap_keys": ["kl_pi_ref"],
+        "title": "KL vs reference",
+        "keys": ["mean_kl", "kl_pi_ref"],
+        "is_percent": False,
+        "bigger_is_better": False,
     },
     "mean_ent_pi": {
-        "value_keys": ["mean_ent_pi", "entropy_pi"],
-        "bootstrap_keys": ["entropy_pi"],
-    },
-    "mean_ent_ref": {
-        "value_keys": ["mean_ent_ref", "entropy_ref"],
-        "bootstrap_keys": ["entropy_ref"],
-    },
-
-    # -------------------------
-    # chosen NOT in Stockfish top-10
-    # -------------------------
-    "top1_acc_cond_not_top10": {
-        "value_keys": [
-            "top1_accuracy_on_chosen_policy_cond_on_not_in_top_ten",
-            "accuracy_top1_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["accuracy_top1_cond_on_not_in_top_ten"],
-    },
-    "top3_recall_cond_not_top10": {
-        "value_keys": [
-            "top3_recall_cond_on_not_in_top_ten",
-            "hit_top3_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top3_cond_on_not_in_top_ten"],
-    },
-    "top5_recall_cond_not_top10": {
-        "value_keys": [
-            "top5_recall_cond_on_not_in_top_ten",
-            "hit_top5_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top5_cond_on_not_in_top_ten"],
-    },
-    "top10_recall_cond_not_top10": {
-        "value_keys": [
-            "top10_recall_cond_on_not_in_top_ten",
-            "hit_top10_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top10_cond_on_not_in_top_ten"],
-    },
-    "mean_logp_gap_cond_not_top10": {
-        "value_keys": [
-            "mean_logp_gap_policy_chosen_rejected_cond_on_not_in_top_ten",
-            "mean_logp_gap_pi_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["mean_logp_gap_pi_cond_on_not_in_top_ten"],
-    },
-    "mean_gap_improvement_cond_not_top10": {
-        "value_keys": ["mean_gap_improvement_cond_on_not_in_top_ten"],
-        "bootstrap_keys": [],
-    },
-    "mean_p_chosen_cond_not_top10": {
-        "value_keys": [
-            "mean_p_chosen_policy_cond_on_not_in_top_ten",
-            "mean_p_chosen_pi_cond_on_not_in_top_ten",
-            "p_chosen_pi_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": [
-            "mean_p_chosen_pi_cond_on_not_in_top_ten",
-            "p_chosen_pi_cond_on_not_in_top_ten",
-        ],
-    },
-    "mean_kl_cond_not_top10": {
-        "value_keys": [
-            "mean_kl_cond_on_not_in_top_ten",
-            "kl_pi_ref_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["kl_pi_ref_cond_on_not_in_top_ten"],
-    },
-    "mean_ent_pi_cond_not_top10": {
-        "value_keys": [
-            "mean_ent_pi_cond_on_not_in_top_ten",
-            "entropy_pi_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["entropy_pi_cond_on_not_in_top_ten"],
-    },
-    "mean_ent_ref_cond_not_top10": {
-        "value_keys": [
-            "mean_ent_ref_cond_on_not_in_top_ten",
-            "entropy_ref_cond_on_not_in_top_ten",
-        ],
-        "bootstrap_keys": ["entropy_ref_cond_on_not_in_top_ten"],
-    },
-
-    # -------------------------
-    # chosen IN Stockfish top-10
-    # -------------------------
-    "top1_acc_cond_in_top10": {
-        "value_keys": [
-            "top1_accuracy_on_chosen_policy_cond_on_in_top_ten",
-            "accuracy_top1_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["accuracy_top1_cond_on_in_top_ten"],
-    },
-    "top3_recall_cond_in_top10": {
-        "value_keys": [
-            "top3_recall_cond_on_in_top_ten",
-            "hit_top3_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top3_cond_on_in_top_ten"],
-    },
-    "top5_recall_cond_in_top10": {
-        "value_keys": [
-            "top5_recall_cond_on_in_top_ten",
-            "hit_top5_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top5_cond_on_in_top_ten"],
-    },
-    "top10_recall_cond_in_top10": {
-        "value_keys": [
-            "top10_recall_cond_on_in_top_ten",
-            "hit_top10_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["hit_top10_cond_on_in_top_ten"],
-    },
-    "mean_logp_gap_cond_in_top10": {
-        "value_keys": [
-            "mean_logp_gap_policy_chosen_rejected_cond_on_in_top_ten",
-            "mean_logp_gap_pi_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["mean_logp_gap_pi_cond_on_in_top_ten"],
-    },
-    "mean_gap_improvement_cond_in_top10": {
-        "value_keys": ["mean_gap_improvement_cond_on_in_top_ten"],
-        "bootstrap_keys": [],
-    },
-    "mean_p_chosen_cond_in_top10": {
-        "value_keys": [
-            "mean_p_chosen_policy_cond_on_in_top_ten",
-            "mean_p_chosen_pi_cond_on_in_top_ten",
-            "p_chosen_pi_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": [
-            "mean_p_chosen_pi_cond_on_in_top_ten",
-            "p_chosen_pi_cond_on_in_top_ten",
-        ],
-    },
-    "mean_kl_cond_in_top10": {
-        "value_keys": [
-            "mean_kl_cond_on_in_top_ten",
-            "kl_pi_ref_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["kl_pi_ref_cond_on_in_top_ten"],
-    },
-    "mean_ent_pi_cond_in_top10": {
-        "value_keys": [
-            "mean_ent_pi_cond_on_in_top_ten",
-            "entropy_pi_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["entropy_pi_cond_on_in_top_ten"],
-    },
-    "mean_ent_ref_cond_in_top10": {
-        "value_keys": [
-            "mean_ent_ref_cond_on_in_top_ten",
-            "entropy_ref_cond_on_in_top_ten",
-        ],
-        "bootstrap_keys": ["entropy_ref_cond_on_in_top_ten"],
+        "title": "Entropy",
+        "keys": ["mean_ent_pi", "entropy_pi"],
+        "is_percent": False,
+        "bigger_is_better": False,
     },
 }
 
-ALL_TABLE_METRICS = [
-    # global
-    "top1_acc",
-    "top3_recall",
-    "top5_recall",
-    "top10_recall",
-    "mrr",
-    "mean_p_chosen",
-    "mean_logp_gap",
-    "mean_gap_improvement",
-    "mean_kl",
-    "mean_ent_pi",
-    "mean_ent_ref",
+# Conditional metrics that are especially useful for appendix / style-sensitive story.
+CONDITIONAL_METRICS = {
+    "mean_logp_gap_cond_not_top10": {
+        "title": "Gap | chosen not in SF top-10",
+        "keys": [
+            "mean_logp_gap_cond_not_top10",
+            "mean_logp_gap_cond_on_not_in_top_ten",
+            "mean_logp_gap_pi_cond_on_not_in_top_ten",
+            "mean_logp_gap_policy_chosen_rejected_cond_on_not_in_top_ten",
+        ],
+        "is_percent": False,
+    },
+    "mrr_cond_not_top10": {
+        "title": "MRR | chosen not in SF top-10",
+        "keys": ["mrr_cond_not_top10", "mrr_cond_on_not_in_top_ten"],
+        "is_percent": False,
+    },
+    "recall_at_1_cond_not_top10": {
+        "title": "Recall@1 | chosen not in SF top-10",
+        "keys": [
+            "recall_at_1_cond_not_top10",
+            "top1_acc_cond_not_top10",
+            "top1_accuracy_cond_on_not_in_top_ten",
+            "accuracy_top1_cond_on_not_in_top_ten",
+        ],
+        "is_percent": False,
+    },
+    "mean_logp_gap_cond_in_top10": {
+        "title": "Gap | chosen in SF top-10",
+        "keys": [
+            "mean_logp_gap_cond_in_top10",
+            "mean_logp_gap_cond_on_in_top_ten",
+            "mean_logp_gap_pi_cond_on_in_top_ten",
+            "mean_logp_gap_policy_chosen_rejected_cond_on_in_top_ten",
+        ],
+        "is_percent": False,
+    },
+    "mrr_cond_in_top10": {
+        "title": "MRR | chosen in SF top-10",
+        "keys": ["mrr_cond_in_top10", "mrr_cond_on_in_top_ten"],
+        "is_percent": False,
+    },
+    "recall_at_1_cond_in_top10": {
+        "title": "Recall@1 | chosen in SF top-10",
+        "keys": [
+            "recall_at_1_cond_in_top10",
+            "top1_acc_cond_in_top10",
+            "top1_accuracy_cond_on_in_top_ten",
+            "accuracy_top1_cond_on_in_top_ten",
+        ],
+        "is_percent": False,
+    },
+}
 
-    # not in top-10
-    "top1_acc_cond_not_top10",
-    "top3_recall_cond_not_top10",
-    "top5_recall_cond_not_top10",
-    "top10_recall_cond_not_top10",
-    "mean_logp_gap_cond_not_top10",
-    "mean_gap_improvement_cond_not_top10",
-    "mean_p_chosen_cond_not_top10",
-    "mean_kl_cond_not_top10",
-    "mean_ent_pi_cond_not_top10",
-    "mean_ent_ref_cond_not_top10",
 
-    # in top-10
-    "top1_acc_cond_in_top10",
-    "top3_recall_cond_in_top10",
-    "top5_recall_cond_in_top10",
-    "top10_recall_cond_in_top10",
-    "mean_logp_gap_cond_in_top10",
-    "mean_gap_improvement_cond_in_top10",
-    "mean_p_chosen_cond_in_top10",
-    "mean_kl_cond_in_top10",
-    "mean_ent_pi_cond_in_top10",
-    "mean_ent_ref_cond_in_top10",
-]
+# ============================================================
+# Utilities
+# ============================================================
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def savefig(fig: plt.Figure, out_dir: Path, stem: str) -> None:
+    fig.savefig(out_dir / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(out_dir / f"{stem}.png", bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_jsonl(path: Path) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
 
 def try_float(x: Any) -> float:
     try:
@@ -534,28 +233,31 @@ def try_float(x: Any) -> float:
         return float("nan")
 
 
-def get_summary_metric(bundle: MethodBundle, keys: Sequence[str]) -> float:
-    for src in [bundle.summary_ext, bundle.summary_json_obj]:
-        if src is None:
-            continue
-
-        for k in keys:
-            if k in src and src[k] is not None:
-                v = try_float(src[k])
-                if not math.isnan(v):
-                    return v
-
-            bootstrap = src.get("bootstrap_ci_row", {})
-            if k in bootstrap and bootstrap[k].get("mean") is not None:
-                v = try_float(bootstrap[k]["mean"])
-                if not math.isnan(v):
-                    return v
-
-    return float("nan")
+def canonicalize_tau_str(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    raw = raw.replace("_", ".")
+    try:
+        val = float(raw)
+    except Exception:
+        return raw
+    # Canonical short numeric string without unnecessary zeros
+    return f"{val:g}"
 
 
-def mean_ci_from_values(values: Sequence[float]) -> Tuple[float, float, float, int]:
-    arr = np.asarray([float(v) for v in values if not math.isnan(float(v))], dtype=float)
+def parse_tau_value(raw: Optional[str]) -> float:
+    c = canonicalize_tau_str(raw)
+    if c is None:
+        return float("nan")
+    try:
+        return float(c)
+    except Exception:
+        return float("nan")
+
+
+def ci95(vals: Sequence[float]) -> Tuple[float, float, float, int]:
+    arr = np.asarray([try_float(v) for v in vals], dtype=float)
+    arr = arr[np.isfinite(arr)]
     n = len(arr)
     if n == 0:
         return float("nan"), float("nan"), float("nan"), 0
@@ -567,2032 +269,926 @@ def mean_ci_from_values(values: Sequence[float]) -> Tuple[float, float, float, i
     return mean, mean - half, mean + half, n
 
 
-def get_opening_distribution(bundle: MethodBundle) -> Optional[Dict[str, float]]:
-    if not bundle.opening_probe:
+def recursive_find_first_number(obj: Any, candidate_keys: Sequence[str]) -> float:
+    """
+    Flexible metric extraction from nested dict/json structures.
+    """
+    candidate_keys_lower = {k.lower() for k in candidate_keys}
+
+    def _walk(x: Any) -> Optional[float]:
+        if isinstance(x, dict):
+            # direct hit
+            for k, v in x.items():
+                if str(k).lower() in candidate_keys_lower:
+                    if isinstance(v, dict):
+                        for subk in ["mean", "value", "avg"]:
+                            if subk in v and np.isfinite(try_float(v[subk])):
+                                return float(v[subk])
+                    val = try_float(v)
+                    if np.isfinite(val):
+                        return val
+            # bootstrap row style
+            for k, v in x.items():
+                if str(k).lower() == "bootstrap_ci_row" and isinstance(v, dict):
+                    for inner_k, inner_v in v.items():
+                        if str(inner_k).lower() in candidate_keys_lower and isinstance(inner_v, dict):
+                            for subk in ["mean", "value", "avg"]:
+                                if subk in inner_v and np.isfinite(try_float(inner_v[subk])):
+                                    return float(inner_v[subk])
+            # recurse
+            for _, v in x.items():
+                found = _walk(v)
+                if found is not None:
+                    return found
+        elif isinstance(x, list):
+            for v in x:
+                found = _walk(v)
+                if found is not None:
+                    return found
         return None
-    white = bundle.opening_probe.get("white_first_move_probs", {}) or {}
-    return {m: float(white.get(m, 0.0)) for m in OPENING_MOVE_ORDER}
+
+    found = _walk(obj)
+    return float("nan") if found is None else found
 
 
-def get_empirical_player_opening_distribution(bundle: MethodBundle) -> Optional[Dict[str, float]]:
-    src = bundle.summary_ext or {}
-    player_probe = src.get("player_opening_probe_empirical", {}) or {}
-    if not player_probe:
-        return None
-    white_emp = player_probe.get("white_first_move_probs", {}) or {}
-    return {m: float(white_emp.get(m, 0.0)) for m in OPENING_MOVE_ORDER}
+def pretty_method_label(pair_version: str, phi: str, tau: Optional[str]) -> str:
+    tau_part = f"τ={canonicalize_tau_str(tau)}" if tau is not None else "τ=?"
+    return f"{pair_version}-{phi}-{tau_part}"
 
 
-def get_metric_value(bundle: MethodBundle, metric_name: str) -> float:
-    spec = METRIC_SPECS[metric_name]
-    return get_summary_metric(bundle, spec["value_keys"])
+def run_sort_key(run: "RunRecord") -> Tuple[int, int, int, float, str]:
+    return (
+        RUN_STAGE_ORDER.get(run.stage, 99),
+        PAIR_ORDER.get(run.pair_version, 99),
+        PHI_ORDER.get(run.phi, 99),
+        run.tau_value if np.isfinite(run.tau_value) else 999.0,
+        run.name,
+    )
 
 
-def get_metric_bootstrap_ci(bundle: MethodBundle, metric_name: str) -> Tuple[float, float, float]:
-    spec = METRIC_SPECS[metric_name]
-    for src in [bundle.summary_ext, bundle.summary_json_obj]:
-        if src is None:
-            continue
-        bootstrap = src.get("bootstrap_ci_row", {}) or {}
-        for k in spec["bootstrap_keys"]:
-            obj = bootstrap.get(k)
-            if not isinstance(obj, dict):
-                continue
-            mean = try_float(obj.get("mean"))
-            lo = try_float(obj.get("lo"))
-            hi = try_float(obj.get("hi"))
-            if not (math.isnan(mean) and math.isnan(lo) and math.isnan(hi)):
-                return mean, lo, hi
-    return float("nan"), float("nan"), float("nan")
-
-
-def derive_metrics(bundle: MethodBundle, metric_names: Sequence[str]) -> Dict[str, float]:
-    out: Dict[str, float] = {}
-    for metric_name in metric_names:
-        out[metric_name] = get_metric_value(bundle, metric_name)
-        boot_mean, boot_lo, boot_hi = get_metric_bootstrap_ci(bundle, metric_name)
-        out[f"{metric_name}__boot_mean"] = boot_mean
-        out[f"{metric_name}__boot_lo"] = boot_lo
-        out[f"{metric_name}__boot_hi"] = boot_hi
+def bar_colors(runs: Sequence["RunRecord"]) -> List[str]:
+    out = []
+    for r in runs:
+        fam = FAMILY_COLORS.get(r.pair_version, FAMILY_COLORS["other"])
+        out.append(fam.get(r.phi, "#777777"))
     return out
 
 
-def safe_series_numeric(df: pd.DataFrame, col: str) -> pd.Series:
-    if col not in df.columns:
-        return pd.Series(dtype=float)
-    return pd.to_numeric(df[col], errors="coerce")
-
-
-def subset_mean(df: pd.DataFrame, mask: pd.Series, col: str) -> float:
-    if col not in df.columns:
-        return float("nan")
-    sub = df.loc[mask, col]
-    if sub.empty:
-        return float("nan")
-    return float(pd.to_numeric(sub, errors="coerce").dropna().mean())
-
-
-def bool_equality_mean(df: pd.DataFrame, col_a: str, col_b: str, condition: Optional[pd.Series] = None) -> float:
-    if col_a not in df.columns or col_b not in df.columns:
-        return float("nan")
-    sub = df
-    if condition is not None:
-        sub = df.loc[condition]
-    if sub.empty:
-        return float("nan")
-    a = pd.to_numeric(sub[col_a], errors="coerce")
-    b = pd.to_numeric(sub[col_b], errors="coerce")
-    valid = ~(a.isna() | b.isna())
-    if valid.sum() == 0:
-        return float("nan")
-    return float((a[valid] == b[valid]).mean())
-
-
 # ============================================================
-# Requirement checks
+# Run metadata
 # ============================================================
 
-def check_required_methods(
-    eval_roots: Sequence[Path],
-    gm_names: Sequence[str],
-    required_methods: Sequence[str],
-    require_opening_probe_for_methods: Optional[Sequence[str]] = None,
-    require_row_metrics_for_methods: Optional[Sequence[str]] = None,
-) -> Tuple[bool, List[str], Dict[str, Dict[str, MethodBundle]]]:
-    require_opening_probe_for_methods = set(require_opening_probe_for_methods or [])
-    require_row_metrics_for_methods = set(require_row_metrics_for_methods or [])
-    missing: List[str] = []
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]] = {}
-
-    for gm in gm_names:
-        gm_dir = eval_roots[0] / gm
-        if not gm_dir.exists():
-            missing.append(f"{gm}: missing GM directory {gm_dir}")
-            continue
-
-        bundles = discover_method_bundles(gm_dir)
-        bundles_by_gm[gm] = bundles
-
-        for i in range(1, len(eval_roots)):
-            other_gm_dir = eval_roots[i] / gm
-            if not other_gm_dir.exists():
-                missing.append(f"{gm}: missing GM directory {other_gm_dir}")
-                continue
-            other_bundles = discover_method_bundles(other_gm_dir)
-            bundles_by_gm[gm].update(other_bundles)
-
-        for method in required_methods:
-            if method not in bundles:
-                missing.append(f"{gm}: missing method bundle '{method}'")
-                continue
-
-            bundle = bundles[method]
-
-            if bundle.summary_ext_json is None and bundle.summary_json is None:
-                missing.append(
-                    f"{gm}: method '{method}' missing summary file "
-                    f"(expected extended or standard eval_results json)"
-                )
-
-            if method in require_opening_probe_for_methods and bundle.opening_probe_json is None:
-                missing.append(f"{gm}: method '{method}' missing opening probe json")
-
-            if method in require_row_metrics_for_methods and bundle.per_row_json is None:
-                missing.append(f"{gm}: method '{method}' missing per-row metrics json")
-
-    return len(missing) == 0, missing, bundles_by_gm
+RUN_NAME_RE = re.compile(
+    r"""
+    ^
+    (?P<stage>screen|final|super|stress_test|ablation)?
+    _?
+    (?P<pair>v[123])
+    _
+    (?P<phi>phi[013])
+    (?:
+        _warm(?:_from_[^_]+)?
+    )?
+    (?:
+        _tau(?P<tau>[0-9_]+)
+    )?
+    .*?
+    __pair-(?P<pair_confirm>v[123])
+    __phi-(?P<phi_confirm>phi[013])
+    .*?
+    __tau-(?P<tau_confirm>[0-9.]+)
+    __seed-(?P<seed>\d+)
+    $
+    """,
+    re.VERBOSE,
+)
 
 
-# ============================================================
-# Aggregate table builders
-# ============================================================
+@dataclass
+class RunRecord:
+    name: str
+    path: Path
+    source_kind: str  # "eval" or "train"
+    stage: str
+    pair_version: str
+    phi: str
+    tau: Optional[str]
+    tau_value: float
+    seed: Optional[int]
+    training_summary_path: Optional[Path] = None
+    eval_summary_path: Optional[Path] = None
+    per_row_metrics_path: Optional[Path] = None
+    raw_eval_json: Optional[Dict[str, Any]] = None
+    training_df: Optional[pd.DataFrame] = None
 
-def annotate_top2_bars(
-    ax: plt.Axes,
-    means: Sequence[float],
-    extra_offset_frac: float = 0.0,
-    fmt: str = "{:.2f}",
-) -> None:
-    vals = np.asarray(means, dtype=float)
-    valid = np.isfinite(vals)
-    if valid.sum() == 0:
-        return
+    @property
+    def method_label(self) -> str:
+        return pretty_method_label(self.pair_version, self.phi, self.tau)
 
-    valid_idx = np.where(valid)[0]
-    order = valid_idx[np.argsort(vals[valid_idx])[::-1]]
-    topk = order[:2]
+    @property
+    def family_key(self) -> str:
+        return f"{self.pair_version}|{self.phi}"
 
-    y0, y1 = ax.get_ylim()
-    y_span = abs(y1 - y0)
-    if y_span <= 0:
-        y_span = 1.0
+    @property
+    def finalist_key(self) -> str:
+        return f"{self.pair_version}|{self.phi}|tau={canonicalize_tau_str(self.tau)}"
 
-    base_offset = 0.02 * y_span + extra_offset_frac * y_span
+    def metric(self, metric_key: str) -> float:
+        if self.raw_eval_json is None:
+            return float("nan")
+        spec = PRIMARY_METRICS.get(metric_key) or CONDITIONAL_METRICS.get(metric_key)
+        if spec is None:
+            return float("nan")
+        return recursive_find_first_number(self.raw_eval_json, spec["keys"])
 
-    placed = []
-    for rank, idx in enumerate(topk):
-        y = vals[idx] + base_offset
 
-        # if another annotation is too close in x and y, bump it upward
-        for prev_x, prev_y in placed:
-            if abs(idx - prev_x) <= 1 and abs(y - prev_y) < 0.035 * y_span:
-                y += 0.04 * y_span
-
-        ax.text(
-            idx,
-            y,
-            fmt.format(vals[idx]),
-            ha="center",
-            va="bottom",
-            fontsize=7,
-            fontweight="bold" if rank == 0 else "normal",
+def parse_run_name(name: str) -> Tuple[str, str, str, Optional[str], float, Optional[int]]:
+    m = RUN_NAME_RE.match(name)
+    if not m:
+        # fallback parse
+        stage = "other"
+        pair = re.search(r"__(?:pair-)?(v[123])__", f"__{name}__")
+        phi = re.search(r"__(?:phi-)?(phi[013])__", f"__{name}__")
+        tau = re.search(r"__(?:tau-)?([0-9.]+)__", f"__{name}__")
+        return (
+            stage,
+            pair.group(1) if pair else "other",
+            phi.group(1) if phi else "phi0",
+            canonicalize_tau_str(tau.group(1)) if tau else None,
+            parse_tau_value(tau.group(1)) if tau else float("nan"),
+            None,
         )
-        placed.append((idx, y))
 
-def build_player_level_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    metric_names: Sequence[str] = ALL_TABLE_METRICS,
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    for gm in GM_ORDER:
-        if gm not in bundles_by_gm:
+    stage = m.group("stage") or "other"
+    pair = m.group("pair_confirm") or m.group("pair") or "other"
+    phi = m.group("phi_confirm") or m.group("phi") or "phi0"
+    tau_raw = m.group("tau_confirm") or m.group("tau")
+    tau = canonicalize_tau_str(tau_raw)
+    tau_val = parse_tau_value(tau_raw)
+    seed = int(m.group("seed")) if m.group("seed") else None
+    return stage, pair, phi, tau, tau_val, seed
+
+
+# ============================================================
+# Discovery
+# ============================================================
+
+def find_best_matching_file(run_dir: Path, split: str, patterns: Sequence[str]) -> Optional[Path]:
+    """
+    Robust file discovery:
+      - prefer explicit split match (test/eval/val)
+      - otherwise accept generic file
+    """
+    files = [p for p in run_dir.iterdir() if p.is_file()]
+    split = split.lower()
+
+    split_hits: List[Path] = []
+    generic_hits: List[Path] = []
+
+    for p in files:
+        name = p.name.lower()
+        if any(re.search(pattern, name) for pattern in patterns):
+            if split in name:
+                split_hits.append(p)
+            else:
+                generic_hits.append(p)
+
+    if split_hits:
+        split_hits.sort()
+        return split_hits[0]
+    if generic_hits:
+        generic_hits.sort()
+        return generic_hits[0]
+    return None
+
+
+def discover_eval_runs(eval_runs_root: Path, split: str) -> List[RunRecord]:
+    runs: List[RunRecord] = []
+    if not eval_runs_root.exists():
+        return runs
+
+    for run_dir in sorted([p for p in eval_runs_root.iterdir() if p.is_dir()]):
+        stage, pair, phi, tau, tau_val, seed = parse_run_name(run_dir.name)
+
+        eval_summary = find_best_matching_file(
+            run_dir,
+            split=split,
+            patterns=[
+                r"eval_results",
+                r"summary",
+                r"metrics",
+            ],
+        )
+        per_row = find_best_matching_file(
+            run_dir,
+            split=split,
+            patterns=[
+                r"per[_\-]?row",
+                r"row[_\-]?metrics",
+            ],
+        )
+
+        rec = RunRecord(
+            name=run_dir.name,
+            path=run_dir,
+            source_kind="eval",
+            stage=stage,
+            pair_version=pair,
+            phi=phi,
+            tau=tau,
+            tau_value=tau_val,
+            seed=seed,
+            eval_summary_path=eval_summary,
+            per_row_metrics_path=per_row,
+        )
+
+        if eval_summary and eval_summary.suffix.lower() == ".json":
+            try:
+                rec.raw_eval_json = load_json(eval_summary)
+            except Exception:
+                rec.raw_eval_json = None
+        elif eval_summary and eval_summary.suffix.lower() == ".jsonl":
+            try:
+                rec.raw_eval_json = {"rows": load_jsonl(eval_summary)}
+            except Exception:
+                rec.raw_eval_json = None
+
+        runs.append(rec)
+
+    return sorted(runs, key=run_sort_key)
+
+
+def discover_training_runs(training_summary_dir: Path) -> List[RunRecord]:
+    runs: List[RunRecord] = []
+    if not training_summary_dir.exists():
+        return runs
+
+    for p in sorted(training_summary_dir.glob("*.jsonl")):
+        stem = p.stem
+        stage, pair, phi, tau, tau_val, seed = parse_run_name(stem)
+        rec = RunRecord(
+            name=stem,
+            path=p,
+            source_kind="train",
+            stage=stage,
+            pair_version=pair,
+            phi=phi,
+            tau=tau,
+            tau_value=tau_val,
+            seed=seed,
+            training_summary_path=p,
+        )
+        try:
+            rows = load_jsonl(p)
+            rec.training_df = pd.DataFrame(rows)
+        except Exception:
+            rec.training_df = pd.DataFrame()
+
+        runs.append(rec)
+
+    return sorted(runs, key=run_sort_key)
+
+
+def attach_training_to_eval(eval_runs: List[RunRecord], train_runs: List[RunRecord]) -> None:
+    by_name = {r.name: r for r in train_runs}
+    for ev in eval_runs:
+        tr = by_name.get(ev.name)
+        if tr is not None:
+            ev.training_summary_path = tr.training_summary_path
+            ev.training_df = tr.training_df
+
+
+# ============================================================
+# Filtering / selecting
+# ============================================================
+
+def drop_duplicate_canonical_runs(runs: List[RunRecord]) -> List[RunRecord]:
+    """
+    Collapse duplicates like tau0_10 vs tau0_1 by canonical metadata.
+    Prefer runs with eval summary, then per-row, then lexicographically first name.
+    """
+    grouped: Dict[Tuple[str, str, str, Optional[str], Optional[int]], List[RunRecord]] = {}
+    for r in runs:
+        key = (r.stage, r.pair_version, r.phi, canonicalize_tau_str(r.tau), r.seed)
+        grouped.setdefault(key, []).append(r)
+
+    out: List[RunRecord] = []
+    for _, items in grouped.items():
+        items = sorted(
+            items,
+            key=lambda r: (
+                0 if r.eval_summary_path else 1,
+                0 if r.per_row_metrics_path else 1,
+                r.name,
+            ),
+        )
+        out.append(items[0])
+    return sorted(out, key=run_sort_key)
+
+
+def choose_best_finalists(eval_runs: List[RunRecord]) -> List[RunRecord]:
+    """
+    Keep one best run per pair/phi among final/super/stress_test if available,
+    otherwise fall back to screen.
+    Primary ranking:
+      1) stage priority: super > final > stress_test > screen
+      2) MRR
+      3) hard-gap
+      4) Recall@1
+    """
+    stage_priority = {"super": 0, "final": 1, "stress_test": 2, "screen": 3, "ablation": 4, "other": 5}
+    grouped: Dict[Tuple[str, str], List[RunRecord]] = {}
+    for r in eval_runs:
+        grouped.setdefault((r.pair_version, r.phi), []).append(r)
+
+    selected: List[RunRecord] = []
+    for _, items in grouped.items():
+        items = sorted(
+            items,
+            key=lambda r: (
+                stage_priority.get(r.stage, 99),
+                -(r.metric("mrr") if np.isfinite(r.metric("mrr")) else -1e9),
+                -(r.metric("row_cos_hard_gap") if np.isfinite(r.metric("row_cos_hard_gap")) else -1e9),
+                -(r.metric("recall_at_1") if np.isfinite(r.metric("recall_at_1")) else -1e9),
+                r.tau_value if np.isfinite(r.tau_value) else 999.0,
+                r.name,
+            ),
+        )
+        selected.append(items[0])
+
+    return sorted(selected, key=lambda r: (PAIR_ORDER.get(r.pair_version, 99), PHI_ORDER.get(r.phi, 99)))
+
+
+def runs_for_tau_sweep(eval_runs: List[RunRecord], pair_version: str, phi: str) -> List[RunRecord]:
+    candidates = [r for r in eval_runs if r.pair_version == pair_version and r.phi == phi]
+    # Prefer screen/final/super in that order to show the actual sweep history.
+    candidates = sorted(
+        candidates,
+        key=lambda r: (
+            0 if r.stage == "screen" else (1 if r.stage == "final" else (2 if r.stage == "super" else 3)),
+            r.tau_value if np.isfinite(r.tau_value) else 999.0,
+            r.name,
+        ),
+    )
+    # Deduplicate by canonical tau, keeping the best stage candidate
+    best_by_tau: Dict[str, RunRecord] = {}
+    for r in candidates:
+        tau = canonicalize_tau_str(r.tau)
+        if tau is None:
             continue
-        gm_bundles = bundles_by_gm[gm]
-        for method in methods:
-            if method not in gm_bundles:
-                continue
-            bundle = gm_bundles[method]
-            bundle.load()
-            d = derive_metrics(bundle, metric_names)
-            rows.append(
-                {
-                    "gm": gm,
-                    "method_key": method,
-                    "method_label": bundle.label,
-                    **d,
-                }
-            )
-    return pd.DataFrame(rows)
+        if tau not in best_by_tau:
+            best_by_tau[tau] = r
+    return sorted(best_by_tau.values(), key=lambda r: r.tau_value)
 
-def build_aggregate_table(
-    player_df: pd.DataFrame,
-    metric_names: Sequence[str] = ALL_TABLE_METRICS,
-) -> pd.DataFrame:
+
+def training_runs_for_ablation(train_runs: List[RunRecord], pattern: str) -> List[RunRecord]:
+    return sorted([r for r in train_runs if pattern in r.name], key=run_sort_key)
+
+
+# ============================================================
+# Data export
+# ============================================================
+
+def export_run_table(runs: Sequence[RunRecord], out_path: Path) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
-
-    for method_key, sub in player_df.groupby("method_key", sort=False):
-        row: Dict[str, Any] = {
-            "method_key": method_key,
-            "method_label": str(sub["method_label"].iloc[0]),
-            "n_gms": int(sub["gm"].nunique()),
+    for r in runs:
+        row = {
+            "name": r.name,
+            "stage": r.stage,
+            "pair_version": r.pair_version,
+            "phi": r.phi,
+            "tau": canonicalize_tau_str(r.tau),
+            "seed": r.seed,
+            "method_label": r.method_label,
         }
-
-        for metric in metric_names:
-            mean, lo, hi, n = mean_ci_from_values(sub[metric].tolist())
-            row[f"{metric}_mean"] = mean
-            row[f"{metric}_ci_lo"] = lo
-            row[f"{metric}_ci_hi"] = hi
-            row[f"{metric}_n"] = n
-
-            # also export average upstream row-bootstrap summaries across GMs
-            # useful for diagnostics / table generation, though not the same thing
-            # as across-GM uncertainty
-            row[f"{metric}_boot_mean_avg"] = float(
-                pd.to_numeric(sub.get(f"{metric}__boot_mean"), errors="coerce").dropna().mean()
-            ) if f"{metric}__boot_mean" in sub.columns else float("nan")
-            row[f"{metric}_boot_lo_avg"] = float(
-                pd.to_numeric(sub.get(f"{metric}__boot_lo"), errors="coerce").dropna().mean()
-            ) if f"{metric}__boot_lo" in sub.columns else float("nan")
-            row[f"{metric}_boot_hi_avg"] = float(
-                pd.to_numeric(sub.get(f"{metric}__boot_hi"), errors="coerce").dropna().mean()
-            ) if f"{metric}__boot_hi" in sub.columns else float("nan")
-
+        for metric_key in PRIMARY_METRICS:
+            row[metric_key] = r.metric(metric_key)
+        for metric_key in CONDITIONAL_METRICS:
+            row[metric_key] = r.metric(metric_key)
         rows.append(row)
 
-    order_map = {m: i for i, m in enumerate(player_df["method_key"].drop_duplicates().tolist())}
-    out = pd.DataFrame(rows)
-    if not out.empty:
-        out["__order"] = out["method_key"].map(order_map)
-        out = out.sort_values("__order").drop(columns="__order")
-    return out
-
-# ============================================================
-# Figure helpers
-# ============================================================
-
-def write_df_exports(df: pd.DataFrame, out_dir: Path, stem: str) -> None:
-    df.to_csv(out_dir / f"{stem}.csv", index=False)
-    df.to_json(out_dir / f"{stem}.json", orient="records", indent=2)
-
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def finish_figure(fig: plt.Figure, out_dir: Path, stem: str) -> None:
-    fig.savefig(out_dir / f"{stem}.png", bbox_inches="tight", pad_inches=0.03)
-    fig.savefig(out_dir / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.03)
-    plt.close(fig)
-
-
-def _plot_ci_line(
-    ax: plt.Axes,
-    x: Sequence[float],
-    means: Sequence[float],
-    los: Sequence[float],
-    his: Sequence[float],
-    label: str,
-    color: str,
-) -> None:
-    x_arr = np.asarray(x, dtype=float)
-    mean_arr = np.asarray(means, dtype=float)
-    lo_arr = np.asarray(los, dtype=float)
-    hi_arr = np.asarray(his, dtype=float)
-
-    ax.plot(x_arr, mean_arr, marker="o", color=color, label=label)
-    valid = ~(np.isnan(mean_arr) | np.isnan(lo_arr) | np.isnan(hi_arr))
-    if valid.any():
-        ax.fill_between(x_arr[valid], lo_arr[valid], hi_arr[valid], color=color, alpha=0.18)
-
-
-def _plot_bar_with_ci(
-    ax: plt.Axes,
-    labels: Sequence[str],
-    means: Sequence[float],
-    los: Sequence[float],
-    his: Sequence[float],
-    colors: Sequence[str],
-    title: str,
-    percent: bool = False,
-) -> None:
-    xs = np.arange(len(labels))
-    means_arr = np.asarray(means, dtype=float)
-    yerr_lo = np.maximum(0.0, means_arr - np.asarray(los, dtype=float))
-    yerr_hi = np.maximum(0.0, np.asarray(his, dtype=float) - means_arr)
-
-    ax.bar(xs, means_arr, color=colors, width=0.72)
-    ax.errorbar(
-        xs,
-        means_arr,
-        yerr=np.vstack([yerr_lo, yerr_hi]),
-        fmt="none",
-        capsize=2,
-        linewidth=1.0,
-    )
-    ax.set_title(title, pad=4)
-    ax.set_xticks(xs)
-    ax.set_xticklabels(labels, rotation=15, ha="right")
-    if percent:
-        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-
-
-def _plot_grouped_bars(
-    ax: plt.Axes,
-    category_labels: Sequence[str],
-    series_labels: Sequence[str],
-    series_means: Sequence[Sequence[float]],
-    series_los: Sequence[Sequence[float]],
-    series_his: Sequence[Sequence[float]],
-    series_colors: Sequence[str],
-    percent: bool,
-    title: str,
-    annotate_top2: bool = False,
-) -> None:
-    n_cat = len(category_labels)
-    n_series = len(series_labels)
-    xs = np.arange(n_cat)
-    width = 0.82 / max(n_series, 1)
-
-    all_xpos: List[np.ndarray] = []
-    all_means: List[np.ndarray] = []
-
-    for i, (label, means, los, his, color) in enumerate(
-        zip(series_labels, series_means, series_los, series_his, series_colors)
-    ):
-        means_arr = np.asarray(means, dtype=float)
-        los_arr = np.asarray(los, dtype=float)
-        his_arr = np.asarray(his, dtype=float)
-        xpos = xs - 0.41 + width / 2 + i * width
-
-        ax.bar(xpos, means_arr, width=width, color=color, label=label)
-        yerr_lo = np.maximum(0.0, means_arr - los_arr)
-        yerr_hi = np.maximum(0.0, his_arr - means_arr)
-        ax.errorbar(
-            xpos,
-            means_arr,
-            yerr=np.vstack([yerr_lo, yerr_hi]),
-            fmt="none",
-            capsize=2,
-            linewidth=0.9,
-        )
-
-        all_xpos.append(xpos)
-        all_means.append(means_arr)
-
-    ax.set_xticks(xs)
-    ax.set_xticklabels(category_labels)
-    ax.set_title(title, pad=4)
-    if percent:
-        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-
-    if annotate_top2:
-        # For each category (piece type), label the top 2 method means
-        for j in range(n_cat):
-            vals = np.array([all_means[i][j] for i in range(n_series)], dtype=float)
-            valid = np.isfinite(vals)
-            if valid.sum() == 0:
-                continue
-
-            valid_idx = np.where(valid)[0]
-            order = valid_idx[np.argsort(vals[valid_idx])[::-1]]
-            topk = order[:2]
-
-            for rank, i in enumerate(topk):
-                x = all_xpos[i][j]
-                y = vals[i]
-                ax.text(
-                    x,
-                    y + (0.012 if percent else 0.02),
-                    f"{y:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=6.5,
-                    fontweight="bold" if rank == 0 else "normal",
-                    rotation=90,
-                )
-
-
-# ============================================================
-# Row-level figure aggregation for Experiment 3
-# ============================================================
-
-def compute_prob_over_entropy_vs_engine_likeness_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            work = df.copy()
-
-            # ---------- y-axis pieces ----------
-            # avg probability the policy assigns to the chosen move
-            work["p_chosen_pi_num"] = pd.to_numeric(work.get("p_chosen_pi"), errors="coerce")
-
-            # avg entropy of the policy
-            entropy_candidates = [
-                "entropy_pi",
-                "ent_pi",
-                "pi_entropy",
-                "policy_entropy",
-            ]
-            entropy_col = None
-            for c in entropy_candidates:
-                if c in work.columns:
-                    entropy_col = c
-                    break
-
-            if entropy_col is None:
-                continue
-
-            work["entropy_pi_num"] = pd.to_numeric(work[entropy_col], errors="coerce")
-
-            # ---------- x-axis piece ----------
-            # "engine likeness" = average CP gap from best engine move
-            # Use per-row predicted gap if present; otherwise fall back to:
-            #   best_cp_all - min(stockfish top-10 cp)
-            work["pred_cp_gap_num"] = pd.to_numeric(
-                work.get("pred_cp_gap_to_engine_best"),
-                errors="coerce",
-            )
-
-            def fallback_pred_gap_from_stockfish(stockfish_obj: Any) -> float:
-                if not isinstance(stockfish_obj, dict):
-                    return float("nan")
-
-                best_cp = stockfish_obj.get("best_cp_all")
-                moves = stockfish_obj.get("sf_moves_returned")
-
-                try:
-                    best_cp = float(best_cp)
-                except Exception:
-                    return float("nan")
-
-                if not isinstance(moves, list) or len(moves) == 0:
-                    return float("nan")
-
-                cps: List[float] = []
-                for item in moves:
-                    if not isinstance(item, (list, tuple)) or len(item) < 2:
-                        continue
-                    try:
-                        cps.append(float(item[1]))
-                    except Exception:
-                        continue
-
-                if not cps:
-                    return float("nan")
-
-                # min CP among returned MultiPV=10 candidates
-                min_cp = min(cps)
-                return best_cp - min_cp
-
-            if "stockfish" in work.columns:
-                fallback_gap = work["stockfish"].apply(fallback_pred_gap_from_stockfish)
-                work["pred_cp_gap_num"] = work["pred_cp_gap_num"].fillna(fallback_gap)
-
-            valid = ~(
-                work["p_chosen_pi_num"].isna()
-                | work["entropy_pi_num"].isna()
-                | work["pred_cp_gap_num"].isna()
-            )
-
-            valid &= work["entropy_pi_num"] > 0.0
-
-            if valid.sum() == 0:
-                continue
-
-            mean_p = float(work.loc[valid, "p_chosen_pi_num"].mean())
-            mean_entropy = float(work.loc[valid, "entropy_pi_num"].mean())
-
-            if not np.isfinite(mean_entropy) or mean_entropy <= 0.0:
-                continue
-
-            rows.append(
-                {
-                    "gm": gm,
-                    "method_key": method,
-                    "mean_p_chosen_pi": mean_p,
-                    "mean_entropy_pi": mean_entropy,
-                    "prob_over_entropy": mean_p / mean_entropy,
-                    "mean_pred_cp_gap_to_engine_best": float(
-                        work.loc[valid, "pred_cp_gap_num"].mean()
-                    ),
-                    "n_rows": int(valid.sum()),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-def _compute_engine_likeness_from_per_row_df(df: pd.DataFrame) -> pd.Series:
-    pred_gap = pd.to_numeric(df.get("pred_cp_gap_to_engine_best"), errors="coerce")
-
-    def fallback_pred_gap_from_stockfish(stockfish_obj: Any) -> float:
-        if not isinstance(stockfish_obj, dict):
-            return float("nan")
-
-        best_cp = stockfish_obj.get("best_cp_all")
-        moves = stockfish_obj.get("sf_moves_returned")
-
-        try:
-            best_cp = float(best_cp)
-        except Exception:
-            return float("nan")
-
-        if not isinstance(moves, list) or len(moves) == 0:
-            return float("nan")
-
-        cps: List[float] = []
-        for item in moves:
-            if not isinstance(item, (list, tuple)) or len(item) < 2:
-                continue
-            try:
-                cps.append(float(item[1]))
-            except Exception:
-                continue
-
-        if not cps:
-            return float("nan")
-
-        # Use min cp among returned MultiPV=10 candidates
-        min_cp = min(cps)
-        return best_cp - min_cp
-
-    if "stockfish" in df.columns:
-        fallback_gap = df["stockfish"].apply(fallback_pred_gap_from_stockfish)
-        pred_gap = pred_gap.fillna(fallback_gap)
-
-    return pred_gap
-
-def compute_entropy_ratio_vs_engine_likeness_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-
-    entropy_pi_candidates = ["entropy_pi", "ent_pi", "pi_entropy", "policy_entropy"]
-    entropy_ref_candidates = ["entropy_ref", "ent_ref", "ref_entropy", "reference_entropy"]
-
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            work = df.copy()
-
-            pi_col = next((c for c in entropy_pi_candidates if c in work.columns), None)
-            ref_col = next((c for c in entropy_ref_candidates if c in work.columns), None)
-
-            if pi_col is None or ref_col is None:
-                continue
-
-            work["entropy_pi_num"] = pd.to_numeric(work[pi_col], errors="coerce")
-            work["entropy_ref_num"] = pd.to_numeric(work[ref_col], errors="coerce")
-            work["pred_cp_gap_num"] = _compute_engine_likeness_from_per_row_df(work)
-
-            valid = ~(
-                work["entropy_pi_num"].isna()
-                | work["entropy_ref_num"].isna()
-                | work["pred_cp_gap_num"].isna()
-            )
-            valid &= work["entropy_ref_num"] > 0.0
-
-            if valid.sum() == 0:
-                continue
-
-            mean_entropy_pi = float(work.loc[valid, "entropy_pi_num"].mean())
-            mean_entropy_ref = float(work.loc[valid, "entropy_ref_num"].mean())
-
-            if not np.isfinite(mean_entropy_ref) or mean_entropy_ref <= 0.0:
-                continue
-
-            rows.append(
-                {
-                    "gm": gm,
-                    "method_key": method,
-                    "mean_entropy_pi": mean_entropy_pi,
-                    "mean_entropy_ref": mean_entropy_ref,
-                    "entropy_ratio_pi_over_ref": mean_entropy_pi / mean_entropy_ref,
-                    "mean_pred_cp_gap_to_engine_best": float(
-                        work.loc[valid, "pred_cp_gap_num"].mean()
-                    ),
-                    "n_rows": int(valid.sum()),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-def compute_prob_ratio_vs_engine_likeness_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-
-    p_ref_candidates = [
-        "p_chosen_ref",
-        "mean_p_chosen_ref",
-        "p_chosen_maia2",
-        "p_chosen_base",
-    ]
-
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            work = df.copy()
-
-            if "p_chosen_pi" not in work.columns:
-                continue
-
-            ref_col = next((c for c in p_ref_candidates if c in work.columns), None)
-            if ref_col is None:
-                continue
-
-            work["p_chosen_pi_num"] = pd.to_numeric(work["p_chosen_pi"], errors="coerce")
-            work["p_chosen_ref_num"] = pd.to_numeric(work[ref_col], errors="coerce")
-            work["pred_cp_gap_num"] = _compute_engine_likeness_from_per_row_df(work)
-
-            valid = ~(
-                work["p_chosen_pi_num"].isna()
-                | work["p_chosen_ref_num"].isna()
-                | work["pred_cp_gap_num"].isna()
-            )
-            valid &= work["p_chosen_ref_num"] > 0.0
-
-            if valid.sum() == 0:
-                continue
-
-            mean_p_pi = float(work.loc[valid, "p_chosen_pi_num"].mean())
-            mean_p_ref = float(work.loc[valid, "p_chosen_ref_num"].mean())
-
-            if not np.isfinite(mean_p_ref) or mean_p_ref <= 0.0:
-                continue
-
-            rows.append(
-                {
-                    "gm": gm,
-                    "method_key": method,
-                    "mean_p_chosen_pi": mean_p_pi,
-                    "mean_p_chosen_ref": mean_p_ref,
-                    "p_chosen_ratio_pi_over_ref": mean_p_pi / mean_p_ref,
-                    "mean_pred_cp_gap_to_engine_best": float(
-                        work.loc[valid, "pred_cp_gap_num"].mean()
-                    ),
-                    "n_rows": int(valid.sum()),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-def compute_prob_vs_cp_gap_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            if "p_chosen_pi" not in df.columns:
-                continue
-
-            work = df.copy()
-            work["p_chosen_pi_num"] = pd.to_numeric(work["p_chosen_pi"], errors="coerce")
-            work["pred_cp_gap_num"] = pd.to_numeric(work.get("pred_cp_gap_to_engine_best"), errors="coerce")
-
-            def fallback_pred_gap_from_stockfish(stockfish_obj: Any) -> float:
-                if not isinstance(stockfish_obj, dict):
-                    return float("nan")
-
-                best_cp = stockfish_obj.get("best_cp_all")
-                moves = stockfish_obj.get("sf_moves_returned")
-
-                try:
-                    best_cp = float(best_cp)
-                except Exception:
-                    return float("nan")
-
-                if not isinstance(moves, list) or len(moves) == 0:
-                    return float("nan")
-
-                cps: List[float] = []
-                for item in moves:
-                    if not isinstance(item, (list, tuple)) or len(item) < 2:
-                        continue
-                    try:
-                        cps.append(float(item[1]))
-                    except Exception:
-                        continue
-
-                if not cps:
-                    return float("nan")
-
-                worst_cp = min(cps)   # lowest cp = worst move among returned stockfish set
-                return best_cp - worst_cp
-
-            if "stockfish" in work.columns:
-                fallback_gap = work["stockfish"].apply(fallback_pred_gap_from_stockfish)
-                work["pred_cp_gap_num"] = work["pred_cp_gap_num"].fillna(fallback_gap)
-
-            valid = ~(work["p_chosen_pi_num"].isna() | work["pred_cp_gap_num"].isna())
-            if valid.sum() == 0:
-                continue
-
-            rows.append(
-                {
-                    "gm": gm,
-                    "method_key": method,
-                    "mean_p_chosen_pi": float(work.loc[valid, "p_chosen_pi_num"].mean()),
-                    "mean_pred_cp_gap_to_engine_best": float(work.loc[valid, "pred_cp_gap_num"].mean()),
-                    "n_rows": int(valid.sum()),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-def aggregate_ratio_vs_engine_likeness_player_table(
-    player_df: pd.DataFrame,
-    y_col: str,
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    if player_df.empty:
-        return pd.DataFrame()
-
-    for method_key, sub in player_df.groupby("method_key", sort=False):
-        x_mean, x_lo, x_hi, x_n = mean_ci_from_values(
-            sub["mean_pred_cp_gap_to_engine_best"].tolist()
-        )
-        y_mean, y_lo, y_hi, y_n = mean_ci_from_values(
-            sub[y_col].tolist()
-        )
-
-        rows.append(
-            {
-                "method_key": method_key,
-                "x_mean": x_mean,
-                "x_ci_lo": x_lo,
-                "x_ci_hi": x_hi,
-                "x_n_gms": x_n,
-                "y_mean": y_mean,
-                "y_ci_lo": y_lo,
-                "y_ci_hi": y_hi,
-                "y_n_gms": y_n,
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-def aggregate_prob_over_entropy_vs_engine_likeness_player_table(
-    player_df: pd.DataFrame,
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    if player_df.empty:
-        return pd.DataFrame()
-
-    for method_key, sub in player_df.groupby("method_key", sort=False):
-        x_mean, x_lo, x_hi, x_n = mean_ci_from_values(
-            sub["mean_pred_cp_gap_to_engine_best"].tolist()
-        )
-        y_mean, y_lo, y_hi, y_n = mean_ci_from_values(
-            sub["prob_over_entropy"].tolist()
-        )
-
-        rows.append(
-            {
-                "method_key": method_key,
-                "x_mean": x_mean,
-                "x_ci_lo": x_lo,
-                "x_ci_hi": x_hi,
-                "x_n_gms": x_n,
-                "y_mean": y_mean,
-                "y_ci_lo": y_lo,
-                "y_ci_hi": y_hi,
-                "y_n_gms": y_n,
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-def aggregate_prob_vs_cp_gap_player_table(player_df: pd.DataFrame) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    if player_df.empty:
-        return pd.DataFrame()
-
-    for method_key, sub in player_df.groupby("method_key", sort=False):
-        x_mean, x_lo, x_hi, x_n = mean_ci_from_values(sub["mean_pred_cp_gap_to_engine_best"].tolist())
-        y_mean, y_lo, y_hi, y_n = mean_ci_from_values(sub["mean_p_chosen_pi"].tolist())
-
-        rows.append(
-            {
-                "method_key": method_key,
-                "x_mean": x_mean,
-                "x_ci_lo": x_lo,
-                "x_ci_hi": x_hi,
-                "x_n_gms": x_n,
-                "y_mean": y_mean,
-                "y_ci_lo": y_lo,
-                "y_ci_hi": y_hi,
-                "y_n_gms": y_n,
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-def compute_piece_type_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty or "chosen_piece_type" not in df.columns:
-                continue
-
-            for piece in PIECE_ORDER:
-                mask = df["chosen_piece_type"].astype(str) == piece
-                col = f"pi_top1_matches_player_piece_type_{piece}"
-                val = subset_mean(df, mask, col)
-                rows.append(
-                    {
-                        "gm": gm,
-                        "method_key": method,
-                        "piece_type": piece,
-                        "value": val,
-                    }
-                )
-    return pd.DataFrame(rows)
-
-
-def compute_surface_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    metrics = [
-        ("Quiet", "chosen_is_quiet", "pred_pi_is_quiet"),
-        ("Capture", "chosen_is_capture", "pred_pi_is_capture"),
-        ("Check", "chosen_is_check", "pred_pi_is_check"),
-    ]
-
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            for display_name, chosen_col, pred_col in metrics:
-                # condition on player selecting that action type
-                if chosen_col not in df.columns or pred_col not in df.columns:
-                    val = float("nan")
-                else:
-                    mask = pd.to_numeric(df[chosen_col], errors="coerce") == 1.0
-                    val = subset_mean(df, mask, pred_col)
-
-                rows.append(
-                    {
-                        "gm": gm,
-                        "method_key": method,
-                        "metric": display_name,
-                        "value": val,
-                    }
-                )
-    return pd.DataFrame(rows)
-
-def compute_deep_player_table(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in methods:
-            bundle = gm_bundles.get(method)
-            if bundle is None:
-                continue
-            bundle.load()
-            df = bundle.per_row_df
-            if df is None or df.empty:
-                continue
-
-            # Agreement metrics
-            tactical_agree = subset_mean(
-                df,
-                pd.Series([True] * len(df), index=df.index),
-                "player_vs_pi_style_agree_tactical",
-            )
-            positional_agree = subset_mean(
-                df,
-                pd.Series([True] * len(df), index=df.index),
-                "player_vs_pi_style_agree_positional",
-            )
-
-            # Conditional MRR metrics
-            if "chosen_is_tactical" in df.columns and "mrr" in df.columns:
-                tactical_mask = pd.to_numeric(df["chosen_is_tactical"], errors="coerce") == 1.0
-                tactical_mrr = subset_mean(df, tactical_mask, "mrr")
-            else:
-                tactical_mrr = float("nan")
-
-            if "chosen_is_positional" in df.columns and "mrr" in df.columns:
-                positional_mask = pd.to_numeric(df["chosen_is_positional"], errors="coerce") == 1.0
-                positional_mrr = subset_mean(df, positional_mask, "mrr")
-            else:
-                positional_mrr = float("nan")
-
-            rows.extend(
-                [
-                    {"gm": gm, "method_key": method, "metric": "Tactical Agreement", "value": tactical_agree},
-                    {"gm": gm, "method_key": method, "metric": "Positional Agreement", "value": positional_agree},
-                    {"gm": gm, "method_key": method, "metric": "Tactical MRR", "value": tactical_mrr},
-                    {"gm": gm, "method_key": method, "metric": "Positional MRR", "value": positional_mrr},
-                ]
-            )
-    return pd.DataFrame(rows)
-
-def aggregate_player_metric_table(player_metric_df: pd.DataFrame, category_col: str) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    if player_metric_df.empty:
-        return pd.DataFrame()
-
-    for (method_key, category), sub in player_metric_df.groupby(["method_key", category_col], sort=False):
-        mean, lo, hi, n = mean_ci_from_values(sub["value"].tolist())
-        rows.append(
-            {
-                "method_key": method_key,
-                category_col: category,
-                "mean": mean,
-                "ci_lo": lo,
-                "ci_hi": hi,
-                "n_gms": n,
-            }
-        )
-    return pd.DataFrame(rows)
-
-def _plot_ratio_vs_engine_likeness_scatter(
-    exp_dir: Path,
-    player_df: pd.DataFrame,
-    y_col: str,
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    stem: str,
-    title: str,
-    y_label: str,
-) -> None:
-    agg_df = aggregate_ratio_vs_engine_likeness_player_table(player_df, y_col=y_col)
-
-    player_df.to_csv(exp_dir / f"{stem}_player_level.csv", index=False)
-    agg_df.to_csv(exp_dir / f"{stem}_aggregate.csv", index=False)
-
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    fig, ax = plt.subplots(figsize=(4.7, 3.35), constrained_layout=True)
-
-    xs_all: List[float] = []
-    ys_all: List[float] = []
-
-    for method, label, color in zip(methods, labels, colors):
-        row = agg_lookup.get(method)
-        if row is None:
-            continue
-
-        x = try_float(row["x_mean"])
-        x_lo = try_float(row["x_ci_lo"])
-        x_hi = try_float(row["x_ci_hi"])
-
-        y = try_float(row["y_mean"])
-        y_lo = try_float(row["y_ci_lo"])
-        y_hi = try_float(row["y_ci_hi"])
-
-        if math.isnan(x) or math.isnan(y):
-            continue
-
-        xs_all.append(x)
-        ys_all.append(y)
-
-        xerr = np.array([[max(0.0, x - x_lo)], [max(0.0, x_hi - x)]], dtype=float)
-        yerr = np.array([[max(0.0, y - y_lo)], [max(0.0, y_hi - y)]], dtype=float)
-
-        ax.errorbar(
-            x,
-            y,
-            yerr=yerr,
-            fmt="o",
-            color=color,
-            markersize=5.5,
-            capsize=2.5,
-            linewidth=1.0,
-            alpha=0.95,
-        )
-
-        ax.annotate(
-            label,
-            (x, y),
-            xytext=(4, 4),
-            textcoords="offset points",
-            fontsize=6.4,
-        )
-
-    ax.set_title(title, pad=4)
-    ax.set_xlabel("Engine distance (mean CP gap from engine best)")
-    ax.set_ylabel(y_label)
-
-    if xs_all:
-        x_min, x_max = min(xs_all), max(xs_all)
-        x_span = x_max - x_min
-        x_pad = max(3.0, 0.10 * x_span if x_span > 0 else 5.0)
-        ax.set_xlim(max(0.0, x_min - x_pad), x_max + x_pad)
-
-    if ys_all:
-        y_min, y_max = min(ys_all), max(ys_all)
-        y_span = y_max - y_min
-        y_pad = max(0.02, 0.10 * y_span if y_span > 0 else 0.05)
-        ax.set_ylim(max(0.0, y_min - y_pad), y_max + y_pad)
-
-    # helpful visual baseline for "same as ref"
-    ax.axhline(1.0, linestyle=":", linewidth=1.0, color="gray", alpha=0.9)
-
-    finish_figure(fig, exp_dir, stem)
-
-def plot_entropy_ratio_vs_engine_likeness_scatter_from_per_row(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    stem: str,
-    title: str,
-) -> None:
-    player_df = compute_entropy_ratio_vs_engine_likeness_player_table(
-        bundles_by_gm,
-        methods,
-    )
-
-    _plot_ratio_vs_engine_likeness_scatter(
-        exp_dir=exp_dir,
-        player_df=player_df,
-        y_col="entropy_ratio_pi_over_ref",
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem=stem,
-        title=title,
-        y_label=r"Mean entropy ratio $\bar{H}_{\pi} / \bar{H}_{\mathrm{ref}}$",
-    )
-
-def plot_prob_ratio_vs_engine_likeness_scatter_from_per_row(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    stem: str,
-    title: str,
-) -> None:
-    player_df = compute_prob_ratio_vs_engine_likeness_player_table(
-        bundles_by_gm,
-        methods,
-    )
-
-    _plot_ratio_vs_engine_likeness_scatter(
-        exp_dir=exp_dir,
-        player_df=player_df,
-        y_col="p_chosen_ratio_pi_over_ref",
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem=stem,
-        title=title,
-        y_label=r"Chosen-probability ratio $\bar{p}_{\mathrm{chosen},\pi} / \bar{p}_{\mathrm{chosen},\mathrm{ref}}$",
-    )
-
-def plot_prob_over_entropy_vs_engine_likeness_scatter_from_per_row(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    stem: str,
-    title: str,
-) -> None:
-    player_df = compute_prob_over_entropy_vs_engine_likeness_player_table(
-        bundles_by_gm,
-        methods,
-    )
-    agg_df = aggregate_prob_over_entropy_vs_engine_likeness_player_table(player_df)
-
-    player_df.to_csv(exp_dir / f"{stem}_player_level.csv", index=False)
-    agg_df.to_csv(exp_dir / f"{stem}_aggregate.csv", index=False)
-
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    fig, ax = plt.subplots(figsize=(4.7, 3.35), constrained_layout=True)
-
-    xs_all: List[float] = []
-    ys_all: List[float] = []
-
-    for method, label, color in zip(methods, labels, colors):
-        row = agg_lookup.get(method)
-        if row is None:
-            continue
-
-        x = try_float(row["x_mean"])
-        x_lo = try_float(row["x_ci_lo"])
-        x_hi = try_float(row["x_ci_hi"])
-
-        y = try_float(row["y_mean"])
-        y_lo = try_float(row["y_ci_lo"])
-        y_hi = try_float(row["y_ci_hi"])
-
-        if math.isnan(x) or math.isnan(y):
-            continue
-
-        xs_all.append(x)
-        ys_all.append(y)
-
-        xerr = np.array([[max(0.0, x - x_lo)], [max(0.0, x_hi - x)]], dtype=float)
-        yerr = np.array([[max(0.0, y - y_lo)], [max(0.0, y_hi - y)]], dtype=float)
-
-        ax.errorbar(
-            x,
-            y,
-            yerr=yerr,
-            fmt="o",
-            color=color,
-            markersize=5.5,
-            capsize=2.5,
-            linewidth=1.0,
-            alpha=0.95,
-        )
-
-        ax.annotate(
-            label,
-            (x, y),
-            xytext=(4, 4),
-            textcoords="offset points",
-            fontsize=6.4,
-        )
-
-    ax.set_title(title, pad=4)
-    ax.set_xlabel("Engine likeness (mean CP gap from engine best)")
-    ax.set_ylabel("Mean π(chosen) / mean entropy")
-
-    if xs_all:
-        x_min, x_max = min(xs_all), max(xs_all)
-        x_span = x_max - x_min
-        x_pad = max(3.0, 0.10 * x_span if x_span > 0 else 5.0)
-        ax.set_xlim(max(0.0, x_min - x_pad), x_max + x_pad)
-
-    if ys_all:
-        y_min, y_max = min(ys_all), max(ys_all)
-        y_span = y_max - y_min
-        y_pad = max(0.01, 0.10 * y_span if y_span > 0 else 0.03)
-        ax.set_ylim(max(0.0, y_min - y_pad), y_max + y_pad)
-
-    finish_figure(fig, exp_dir, stem)
-
-def plot_prob_vs_cp_gap_scatter_from_per_row(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    stem: str,
-    title: str,
-) -> None:
-    player_df = compute_prob_vs_cp_gap_player_table(bundles_by_gm, methods)
-    agg_df = aggregate_prob_vs_cp_gap_player_table(player_df)
-
-    player_df.to_csv(exp_dir / f"{stem}_player_level.csv", index=False)
-    agg_df.to_csv(exp_dir / f"{stem}_aggregate.csv", index=False)
-
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    fig, ax = plt.subplots(figsize=(4.7, 3.35), constrained_layout=True)
-
-    xs_all: List[float] = []
-    ys_all: List[float] = []
-
-    for method, label, color in zip(methods, labels, colors):
-        row = agg_lookup.get(method)
-        if row is None:
-            continue
-
-        x = try_float(row["x_mean"])
-        x_lo = try_float(row["x_ci_lo"])
-        x_hi = try_float(row["x_ci_hi"])
-
-        y = try_float(row["y_mean"])
-        y_lo = try_float(row["y_ci_lo"])
-        y_hi = try_float(row["y_ci_hi"])
-
-        if math.isnan(x) or math.isnan(y):
-            continue
-
-        xs_all.append(x)
-        ys_all.append(y)
-
-        xerr = np.array([[max(0.0, x - x_lo)], [max(0.0, x_hi - x)]], dtype=float)
-        yerr = np.array([[max(0.0, y - y_lo)], [max(0.0, y_hi - y)]], dtype=float)
-
-        ax.errorbar(
-            x,
-            y,
-            yerr=yerr,
-            fmt="o",
-            color=color,
-            markersize=5.5,
-            capsize=2.5,
-            linewidth=1.0,
-            alpha=0.95,
-        )
-
-        ax.annotate(
-            label,
-            (x, y),
-            xytext=(4, 4),
-            textcoords="offset points",
-            fontsize=6.4,
-        )
-
-    ax.set_title(title, pad=4)
-    ax.set_xlabel("Mean CP gap to engine best")
-    ax.set_ylabel("Mean π(chosen)")
-    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-
-    if xs_all:
-        x_min, x_max = min(xs_all), max(xs_all)
-        x_span = x_max - x_min
-        x_pad = max(3.0, 0.10 * x_span if x_span > 0 else 5.0)
-        ax.set_xlim(max(0.0, x_min - x_pad), x_max + x_pad)
-
-    if ys_all:
-        y_min, y_max = min(ys_all), max(ys_all)
-        y_span = y_max - y_min
-        y_pad = max(0.01, 0.10 * y_span if y_span > 0 else 0.03)
-        ax.set_ylim(max(0.0, y_min - y_pad), min(1.0, y_max + y_pad))
-
-    finish_figure(fig, exp_dir, stem)
-
-def plot_conditional_metrics_figure(
-    exp_dir: Path,
-    agg_df: pd.DataFrame,
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    cond_suffix: str,
-    stem: str,
-    suptitle: str,
-) -> None:
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    metrics = [
-        (f"mean_p_chosen_{cond_suffix}", "Mean π(chosen)", True),
-        (f"mean_logp_gap_{cond_suffix}", "Log π gap", False),
-        (f"mean_gap_improvement_{cond_suffix}", "Gap improvement", False),
-        (f"top1_acc_{cond_suffix}", "Top-1 recall", True),
-        (f"mean_kl_{cond_suffix}", "KL vs Maia-2", False),
-    ]
-
-    fig, axes = plt.subplots(1, len(metrics), figsize=(13.0, 2.75), constrained_layout=True)
-
-    for ax, (metric, title, percent) in zip(axes, metrics):
-        means = [agg_lookup[m].get(f"{metric}_mean", float("nan")) for m in methods]
-        los = [agg_lookup[m].get(f"{metric}_ci_lo", float("nan")) for m in methods]
-        his = [agg_lookup[m].get(f"{metric}_ci_hi", float("nan")) for m in methods]
-
-        _plot_bar_with_ci(
-            ax=ax,
-            labels=labels,
-            means=means,
-            los=los,
-            his=his,
-            colors=colors,
-            title=title,
-            percent=percent,
-        )
-        annotate_top2_bars(ax, means)
-
-    fig.suptitle(suptitle, y=1.03, fontsize=8.5)
-    finish_figure(fig, exp_dir, stem)
-
-def plot_conditional_recall_figure(
-    exp_dir: Path,
-    agg_df: pd.DataFrame,
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-    cond_suffix: str,
-    stem: str,
-    suptitle: str,
-) -> None:
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    metrics = [
-        (f"top1_acc_{cond_suffix}", "Top-1 recall"),
-        (f"top3_recall_{cond_suffix}", "Top-3 recall"),
-        (f"top5_recall_{cond_suffix}", "Top-5 recall"),
-        (f"top10_recall_{cond_suffix}", "Top-10 recall"),
-    ]
-
-    fig, axes = plt.subplots(1, 4, figsize=(11.2, 2.75), constrained_layout=True)
-
-    for ax, (metric, title) in zip(axes, metrics):
-        means = [agg_lookup[m].get(f"{metric}_mean", float("nan")) for m in methods]
-        los = [agg_lookup[m].get(f"{metric}_ci_lo", float("nan")) for m in methods]
-        his = [agg_lookup[m].get(f"{metric}_ci_hi", float("nan")) for m in methods]
-
-        _plot_bar_with_ci(
-            ax=ax,
-            labels=labels,
-            means=means,
-            los=los,
-            his=his,
-            colors=colors,
-            title=title,
-            percent=True,
-        )
-        ax.set_ylim(0.0, 1.0)
-        annotate_top2_bars(ax, means)
-
-    fig.suptitle(suptitle, y=1.03, fontsize=8.5)
-    finish_figure(fig, exp_dir, stem)
-
-def plot_piece_type_fidelity(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-) -> None:
-    player_df = compute_piece_type_player_table(bundles_by_gm, methods)
-    agg_df = aggregate_player_metric_table(player_df, "piece_type")
-
-    write_df_exports(player_df, exp_dir, "piece_type_player_level")
-    write_df_exports(agg_df, exp_dir, "piece_type_aggregate")
-
-    fig, ax = plt.subplots(figsize=(7.0, 2.6), constrained_layout=True)
-
-    series_means, series_los, series_his = [], [], []
-    for method in methods:
-        sub = agg_df[agg_df["method_key"] == method].set_index("piece_type")
-        series_means.append([try_float(sub["mean"].get(piece, float("nan"))) for piece in PIECE_ORDER])
-        series_los.append([try_float(sub["ci_lo"].get(piece, float("nan"))) for piece in PIECE_ORDER])
-        series_his.append([try_float(sub["ci_hi"].get(piece, float("nan"))) for piece in PIECE_ORDER])
-
-    display_pieces = ["Pawn", "Knight", "Bishop", "Rook", "Queen", "King"]
-    _plot_grouped_bars(
-        ax=ax,
-        category_labels=display_pieces,
-        series_labels=labels,
-        series_means=series_means,
-        series_los=series_los,
-        series_his=series_his,
-        series_colors=colors,
-        percent=True,
-        title="Piece-type selection fidelity",
-        annotate_top2=True,
-    )
-    ax.set_ylabel("Match rate")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.28), ncol=len(labels), frameon=False)
-
-    finish_figure(fig, exp_dir, "piece_type_fidelity_all_gms")
-
-
-def plot_surface_style_agreement(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-) -> None:
-    player_df = compute_surface_player_table(bundles_by_gm, methods)
-    agg_df = aggregate_player_metric_table(player_df, "metric")
-
-    write_df_exports(player_df, exp_dir, "surface_style_player_level")
-    write_df_exports(agg_df, exp_dir, "surface_style_aggregate")
-
-    fig, ax = plt.subplots(figsize=(5.8, 2.5), constrained_layout=True)
-
-    metric_order = ["Quiet", "Capture", "Check"]
-    series_means, series_los, series_his = [], [], []
-    for method in methods:
-        sub = agg_df[agg_df["method_key"] == method].set_index("metric")
-        series_means.append([try_float(sub["mean"].get(m, float("nan"))) for m in metric_order])
-        series_los.append([try_float(sub["ci_lo"].get(m, float("nan"))) for m in metric_order])
-        series_his.append([try_float(sub["ci_hi"].get(m, float("nan"))) for m in metric_order])
-
-    _plot_grouped_bars(
-        ax=ax,
-        category_labels=metric_order,
-        series_labels=labels,
-        series_means=series_means,
-        series_los=series_los,
-        series_his=series_his,
-        series_colors=colors,
-        percent=True,
-        title="Surface-level style agreement",
-    )
-    ax.set_ylabel("Conditional agreement")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.28), ncol=len(labels), frameon=False)
-
-    finish_figure(fig, exp_dir, "surface_style_agreement_all_gms")
-
-def plot_experiment3_recall_figure(
-    exp_dir: Path,
-    agg_df: pd.DataFrame,
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-) -> None:
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
-
-    recall_metrics = [
-        ("top1_acc", "Top-1 recall"),
-        ("top3_recall", "Top-3 recall"),
-        ("top5_recall", "Top-5 recall"),
-        ("top10_recall", "Top-10 recall"),
-    ]
-
-    fig, axes = plt.subplots(1, 4, figsize=(8.8, 2.5), constrained_layout=True)
-
-    for ax, (metric, title) in zip(axes, recall_metrics):
-        means = [agg_lookup[m][f"{metric}_mean"] for m in methods]
-        los = [agg_lookup[m][f"{metric}_ci_lo"] for m in methods]
-        his = [agg_lookup[m][f"{metric}_ci_hi"] for m in methods]
-
-        _plot_bar_with_ci(
-            ax=ax,
-            labels=labels,
-            means=means,
-            los=los,
-            his=his,
-            colors=colors,
-            title=title,
-            percent=True,
-        )
-        ax.set_ylim(0.0, 1.0)
-
-        # label top 2 means
-        vals = np.array(means, dtype=float)
-        valid = np.isfinite(vals)
-        if valid.sum() > 0:
-            valid_idx = np.where(valid)[0]
-            order = valid_idx[np.argsort(vals[valid_idx])[::-1]]
-            topk = order[:2]
-
-            for rank, idx in enumerate(topk):
-                ax.text(
-                    idx,
-                    vals[idx] + 0.02,
-                    f"{vals[idx]:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    fontweight="bold" if rank == 0 else "normal",
-                )
-
-    finish_figure(fig, exp_dir, "exp3_recall_all_gms")
-
-def plot_deep_style_agreement(
-    exp_dir: Path,
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    methods: Sequence[str],
-    labels: Sequence[str],
-    colors: Sequence[str],
-) -> None:
-    player_df = compute_deep_player_table(bundles_by_gm, methods)
-    agg_df = aggregate_player_metric_table(player_df, "metric")
-
-    write_df_exports(player_df, exp_dir, "deep_style_player_level")
-    write_df_exports(agg_df, exp_dir, "deep_style_aggregate")
-
-    metric_panels = [
-        ("Tactical Agreement", True),
-        ("Positional Agreement", True),
-        ("Tactical MRR", True),
-        ("Positional MRR", True),
-    ]
-
-    fig, axes = plt.subplots(1, 4, figsize=(9.2, 2.5), constrained_layout=True)
-
-    for ax, (metric_name, percent) in zip(axes, metric_panels):
-        sub_metric = agg_df[agg_df["metric"] == metric_name].set_index("method_key")
-        means = [try_float(sub_metric["mean"].get(m, float("nan"))) for m in methods]
-        los = [try_float(sub_metric["ci_lo"].get(m, float("nan"))) for m in methods]
-        his = [try_float(sub_metric["ci_hi"].get(m, float("nan"))) for m in methods]
-        _plot_bar_with_ci(ax, labels, means, los, his, colors, title=metric_name, percent=percent)
-        
-        
-        # annotate top-2 means
-        vals = np.array(means, dtype=float)
-        valid = np.isfinite(vals)
-
-        if valid.sum() > 0:
-            order = np.argsort(vals[valid])[::-1]
-            valid_idx = np.where(valid)[0]
-
-            topk = valid_idx[order[:2]]
-
-            for rank, idx in enumerate(topk):
-                weight = "bold" if rank == 0 else "normal"
-
-                ax.text(
-                    idx,
-                    vals[idx] + 0.03,
-                    f"{vals[idx]:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=8,
-                    fontweight=weight,
-                )
-        ax.set_ylim(0.0, 1.0)
-
-    finish_figure(fig, exp_dir, "deep_style_agreement_all_gms")
-
-
-# ============================================================
-# Experiment 3: style-reweighted variants across 9 GMs
-# ============================================================
-
-def choose_best_style_method_keys(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    variant: str,
-) -> List[str]:
-    gm_candidates: Dict[str, List[str]] = {}
-
-    for gm, gm_bundles in bundles_by_gm.items():
-        keys = list(gm_bundles.keys())
-        if variant == "v1":
-            cand = [k for k in keys if "style_sim_utility_weight" in k]
-        elif variant == "v2":
-            cand = [k for k in keys if "style_v2" in k]
-        elif variant == "v3":
-            cand = [k for k in keys if "style_v3" in k]
-        else:
-            cand = []
-        gm_candidates[gm] = sorted(cand)
-
-    common = None
-    for gm in GM_ORDER:
-        s = set(gm_candidates.get(gm, []))
-        common = s if common is None else common.intersection(s)
-
-    if not common:
-        return []
-
-    return sorted(common)
-
-
-def best_method_by_metric(
-    bundles_by_gm: Dict[str, Dict[str, MethodBundle]],
-    candidate_methods: Sequence[str],
-    metric: str = "mean_logp_gap",
-) -> Optional[str]:
-    rows = []
-    for gm in GM_ORDER:
-        gm_bundles = bundles_by_gm.get(gm, {})
-        for method in candidate_methods:
-            if method not in gm_bundles:
-                continue
-            bundle = gm_bundles[method]
-            bundle.load()
-            d = derive_metrics(bundle, [metric])
-            rows.append({"gm": gm, "method": method, metric: d.get(metric, float("nan"))})
-    if not rows:
-        return None
     df = pd.DataFrame(rows)
-    means = df.groupby("method")[metric].mean()
-    if means.empty:
-        return None
-    return str(means.idxmax())
+    df.to_csv(out_path.with_suffix(".csv"), index=False)
+    df.to_json(out_path.with_suffix(".json"), orient="records", indent=2)
+    return df
 
 
-def run_single_gm_experiment_w_style_embeddings(eval_root: Path, v3_eval_root: Path, out_dir: Path) -> Optional[Tuple[str, str, str]]:
-    exp_dir = out_dir / "single_gm_w_style_embeddings"
-    ensure_dir(exp_dir)
+# ============================================================
+# Plot helpers
+# ============================================================
 
-    all_bundles_by_gm: Dict[str, Dict[str, MethodBundle]] = {}
-    for gm in GM_ORDER:
-        all_bundles_by_gm[gm] = {
-            **discover_method_bundles(eval_root / gm),
-            **discover_method_bundles(v3_eval_root / gm),
-        }
+def annotate_top(ax: plt.Axes, xs: Sequence[float], ys: Sequence[float], fmt: str = "{:.3f}", k: int = 1) -> None:
+    arr = np.asarray(ys, dtype=float)
+    valid = np.where(np.isfinite(arr))[0]
+    if len(valid) == 0:
+        return
+    order = valid[np.argsort(arr[valid])[::-1]]
+    for idx in order[:k]:
+        ax.text(xs[idx], arr[idx], fmt.format(arr[idx]), fontsize=6.2, ha="center", va="bottom")
 
-    print(f"All bundles by gm: {all_bundles_by_gm}")
 
-    v1_candidates = choose_best_style_method_keys(all_bundles_by_gm, "v1")
-    v2_candidates = choose_best_style_method_keys(all_bundles_by_gm, "v2")
-    v3_candidates = choose_best_style_method_keys(all_bundles_by_gm, "v3")
+def grouped_bar(
+    ax: plt.Axes,
+    runs: Sequence[RunRecord],
+    metric_key: str,
+    title: str,
+) -> None:
+    xs = np.arange(len(runs))
+    ys = [r.metric(metric_key) for r in runs]
+    colors = bar_colors(runs)
+    ax.bar(xs, ys, color=colors, width=0.72)
+    ax.set_xticks(xs)
+    ax.set_xticklabels([r.method_label for r in runs], rotation=25, ha="right")
+    ax.set_title(title, pad=4)
+    annotate_top(ax, xs, ys, fmt="{:.4f}", k=2)
 
-    if not v1_candidates or not v2_candidates:
-        print("\n[SKIP] Experiment 3 skipped. Could not find common style-v1 / style-v2 method keys across all 9 GMs.")
-        if not v1_candidates:
-            print(" - no common v1 keys containing 'style_sim_utility_weight'")
-        if not v2_candidates:
-            print(" - no common v2 keys containing 'style_v2'")
-        if not v3_candidates:
-            print(" - no common v3 keys containing 'style_v3'")
-        return None
 
-    best_v1 = best_method_by_metric(all_bundles_by_gm, v1_candidates, metric="mean_logp_gap")
-    best_v2 = best_method_by_metric(all_bundles_by_gm, v2_candidates, metric="mean_logp_gap")
-    best_v3 = best_method_by_metric(all_bundles_by_gm, v3_candidates, metric="mean_logp_gap")
-    print(f"Best v1 candidate: {best_v1}")
-    print(f"Best v2 candidate: {best_v2}")
-    print(f"Best v3 candidate: {best_v3}")
+def line_tau(
+    ax: plt.Axes,
+    runs: Sequence[RunRecord],
+    metric_key: str,
+    title: str,
+    ylabel: Optional[str] = None,
+) -> None:
+    xs = np.asarray([r.tau_value for r in runs], dtype=float)
+    ys = np.asarray([r.metric(metric_key) for r in runs], dtype=float)
+    order = np.argsort(xs)
+    xs, ys = xs[order], ys[order]
 
-    if best_v1 is None or best_v2 is None or best_v3 is None:
-        print("\n[SKIP] Experiment 3 skipped. Failed to select best v1 / v2 / v3 methods.")
-        return None
+    if len(xs) == 0:
+        ax.set_visible(False)
+        return
 
-    methods = [
-        "maia2",
-        "sft",
-        "dpo_beta=0.60",
-        best_v1,
-        best_v2,
-        best_v3,
-    ]
+    color = FAMILY_COLORS.get(runs[0].pair_version, FAMILY_COLORS["other"]).get(runs[0].phi, "#666666")
+    ax.plot(xs, ys, marker="o", color=color)
+    ax.set_title(title, pad=4)
+    ax.set_xlabel("Training τ")
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    annotate_top(ax, xs, ys, fmt="{:.4f}", k=1)
 
-    ok, missing, bundles_by_gm = check_required_methods(
-        [eval_root, v3_eval_root],
-        GM_ORDER,
-        methods,
-        require_opening_probe_for_methods=[best_v1, best_v2, best_v3, "maia2", "sft", "dpo_beta=0.60"],
-        require_row_metrics_for_methods=methods,
+
+def plot_training_curve(ax: plt.Axes, run: RunRecord, title: str, smooth_window: int = 5) -> None:
+    if run.training_df is None or run.training_df.empty:
+        ax.set_visible(False)
+        return
+
+    df = run.training_df.copy()
+    step_col = None
+    loss_col = None
+
+    for c in df.columns:
+        cl = c.lower()
+        if step_col is None and cl in {"step", "steps", "global_step"}:
+            step_col = c
+        if loss_col is None and cl in {"train_loss", "loss", "train/loss"}:
+            loss_col = c
+
+    if step_col is None or loss_col is None:
+        ax.set_visible(False)
+        return
+
+    x = pd.to_numeric(df[step_col], errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(df[loss_col], errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x, y = x[valid], y[valid]
+    if len(x) == 0:
+        ax.set_visible(False)
+        return
+
+    order = np.argsort(x)
+    x, y = x[order], y[order]
+    color = FAMILY_COLORS.get(run.pair_version, FAMILY_COLORS["other"]).get(run.phi, "#666666")
+
+    ax.plot(x, y, alpha=0.30, color=color)
+    if len(y) >= smooth_window:
+        sm = pd.Series(y).rolling(smooth_window, min_periods=1).mean().to_numpy()
+        ax.plot(x, sm, color=color, linewidth=1.6)
+
+    ax.set_title(title, pad=4)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Train loss")
+
+
+def ranked_dotplot(ax: plt.Axes, runs: Sequence[RunRecord], metric_key: str, title: str) -> None:
+    runs = sorted(
+        runs,
+        key=lambda r: r.metric(metric_key) if np.isfinite(r.metric(metric_key)) else -1e9,
+        reverse=True,
     )
-    if not ok:
-        print("\n[SKIP] Experiment 3 skipped. Missing files / bundles:")
-        for line in missing:
-            print(" -", line)
-        return None
+    xs = np.arange(len(runs))
+    ys = [r.metric(metric_key) for r in runs]
+    colors = bar_colors(runs)
+    ax.scatter(xs, ys, c=colors, s=24)
+    for i, r in enumerate(runs):
+        ax.text(i, ys[i], r.method_label, fontsize=5.8, rotation=55, ha="left", va="bottom")
+    ax.set_xticks([])
+    ax.set_title(title, pad=4)
 
-    player_df = build_player_level_table(bundles_by_gm, methods, metric_names=ALL_TABLE_METRICS)
-    agg_df = build_aggregate_table(player_df, metric_names=ALL_TABLE_METRICS)
 
-    write_df_exports(player_df, exp_dir, "experiment3_player_level")
-    write_df_exports(agg_df, exp_dir, "experiment3_aggregate")
+# ============================================================
+# Figure families
+# ============================================================
 
-    labels = [
-        "Maia-2",
-        "NLL",
-        "DPO (β=0.6)",
-        "NLL + reweighted v1",
-        "NLL + reweighted v2",
-        "NLL + reweighted v3",
+def plot_finalist_main_results(out_dir: Path, finalists: Sequence[RunRecord]) -> None:
+    metrics = [
+        ("mrr", PRIMARY_METRICS["mrr"]["title"]),
+        ("recall_at_1", PRIMARY_METRICS["recall_at_1"]["title"]),
+        ("mean_logp_gap", PRIMARY_METRICS["mean_logp_gap"]["title"]),
+        ("mean_kl", PRIMARY_METRICS["mean_kl"]["title"]),
     ]
-    colors = [
-        method_color("maia2"),
-        method_color("sft"),
-        method_color("dpo_beta=0.60"),
-        STYLE_V1_COLOR,
-        STYLE_V2_COLOR,
-        STYLE_V3_COLOR,
+
+    fig, axes = plt.subplots(1, len(metrics), figsize=(10.6, 2.7), constrained_layout=True)
+    for ax, (metric_key, title) in zip(axes, metrics):
+        grouped_bar(ax, finalists, metric_key, title)
+    savefig(fig, out_dir, "fig_finalist_main_results")
+
+
+def plot_hard_negative_results(out_dir: Path, finalists: Sequence[RunRecord]) -> None:
+    metrics = [
+        ("pair_acc_hardest", PRIMARY_METRICS["pair_acc_hardest"]["title"]),
+        ("row_cos_hard_gap", PRIMARY_METRICS["row_cos_hard_gap"]["title"]),
+        ("row_cos_mean_gap", PRIMARY_METRICS["row_cos_mean_gap"]["title"]),
+        ("spread_ratio", PRIMARY_METRICS["spread_ratio"]["title"]),
     ]
-    agg_lookup = {row["method_key"]: row for _, row in agg_df.iterrows()}
+
+    fig, axes = plt.subplots(1, len(metrics), figsize=(10.8, 2.8), constrained_layout=True)
+    for ax, (metric_key, title) in zip(axes, metrics):
+        grouped_bar(ax, finalists, metric_key, title)
+    savefig(fig, out_dir, "fig_hard_negative_results")
+
+
+def plot_phi_comparisons(out_dir: Path, finalists: Sequence[RunRecord]) -> None:
+    """
+    Compare phi0 vs phi1 within v1 and v2.
+    """
+    comparisons = []
+    for pair in ["v1", "v2"]:
+        sub = [r for r in finalists if r.pair_version == pair and r.phi in {"phi0", "phi1"}]
+        if len(sub) >= 2:
+            comparisons.extend(sorted(sub, key=lambda r: PHI_ORDER.get(r.phi, 99)))
+
+    if not comparisons:
+        return
 
     metrics = [
-        ("mean_p_chosen", "P(chosen)", True),
-        ("mrr", "MRR", True),
-        ("mean_logp_gap", "Log-probability gap", False),
-        #("mean_gap_improvement", "Gap improvement", False),
-        ("top1_acc", "Top-1 recall", True),
-        ("mean_kl", "KL vs Maia-2", False),
+        ("mrr", "MRR"),
+        ("recall_at_1", "Recall@1"),
+        ("mean_logp_gap", "Mean log-prob gap"),
+        ("row_cos_hard_gap", "Hard gap"),
     ]
 
-    fig, axes = plt.subplots(1, len(metrics), figsize=(11.0, 2.55), constrained_layout=True)
-    for ax, (metric, title, percent) in zip(axes, metrics):
-        means = [agg_lookup[m][f"{metric}_mean"] for m in methods]
-        los = [agg_lookup[m][f"{metric}_ci_lo"] for m in methods]
-        his = [agg_lookup[m][f"{metric}_ci_hi"] for m in methods]
-        _plot_bar_with_ci(ax, labels, means, los, his, colors, title=title, percent=percent)
-
-    finish_figure(fig, exp_dir, "exp3_style_reweighted_all_gms")
-
-    # NEW: extra Exp3 figures from per-row metrics
-    plot_experiment3_recall_figure(
-        exp_dir=exp_dir,
-        agg_df=agg_df,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-    )
-    plot_piece_type_fidelity(exp_dir, bundles_by_gm, methods, labels, colors)
-    plot_surface_style_agreement(exp_dir, bundles_by_gm, methods, labels, colors)
-    plot_deep_style_agreement(exp_dir, bundles_by_gm, methods, labels, colors)
-
-    plot_conditional_metrics_figure(
-        exp_dir=exp_dir,
-        agg_df=agg_df,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        cond_suffix="cond_not_top10",
-        stem="exp3_cond_not_in_top10_metrics_all_gms",
-        suptitle="Chosen move not in Stockfish top-10",
-    )
-    plot_conditional_metrics_figure(
-        exp_dir=exp_dir,
-        agg_df=agg_df,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        cond_suffix="cond_in_top10",
-        stem="exp3_cond_in_top10_metrics_all_gms",
-        suptitle="Chosen move in Stockfish top-10",
-    )
-    plot_conditional_recall_figure(
-        exp_dir=exp_dir,
-        agg_df=agg_df,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        cond_suffix="cond_not_top10",
-        stem="exp3_cond_not_in_top10_recall_all_gms",
-        suptitle="Recall when chosen move is not in Stockfish top-10",
-    )
-    plot_conditional_recall_figure(
-        exp_dir=exp_dir,
-        agg_df=agg_df,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        cond_suffix="cond_in_top10",
-        stem="exp3_cond_in_top10_recall_all_gms",
-        suptitle="Recall when chosen move is in Stockfish top-10",
-    )
-    plot_prob_vs_cp_gap_scatter_from_per_row(
-        exp_dir=exp_dir,
-        bundles_by_gm=bundles_by_gm,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem="exp3_prob_chosen_vs_pred_cp_gap_scatter_all_gms",
-        title="Mean π(chosen) vs predicted CP gap",
-    )
-    plot_prob_over_entropy_vs_engine_likeness_scatter_from_per_row(
-        exp_dir=exp_dir,
-        bundles_by_gm=bundles_by_gm,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem="exp3_prob_over_entropy_vs_engine_likeness_scatter_all_gms",
-        title="Mean π(chosen) / entropy vs Distance from engine-best move (CP)",
-    )
-    plot_entropy_ratio_vs_engine_likeness_scatter_from_per_row(
-        exp_dir=exp_dir,
-        bundles_by_gm=bundles_by_gm,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem="exp3_entropy_ratio_vs_engine_likeness_scatter_all_gms",
-        title="Entropy retention vs Distance from engine-best move (CP)",
-    )
-
-    plot_prob_ratio_vs_engine_likeness_scatter_from_per_row(
-        exp_dir=exp_dir,
-        bundles_by_gm=bundles_by_gm,
-        methods=methods,
-        labels=labels,
-        colors=colors,
-        stem="exp3_prob_ratio_vs_engine_likeness_scatter_all_gms",
-        title="Chosen-move probability gain vs Distance from engine-best move (CP)",
-    )
-    print("[OK] Experiment 3 complete:", exp_dir)
-    print(f"      selected best_v1 = {best_v1}")
-    print(f"      selected best_v2 = {best_v2}")
-    print(f"      selected best_v3 = {best_v3}")
-    return best_v1, best_v2, best_v3
+    fig, axes = plt.subplots(1, len(metrics), figsize=(10.5, 2.7), constrained_layout=True)
+    for ax, (metric_key, title) in zip(axes, metrics):
+        grouped_bar(ax, comparisons, metric_key, title)
+    savefig(fig, out_dir, "fig_phi_comparisons")
 
 
-# ============================================================
-# Opening 3x3 grid
-# ============================================================
+def plot_tau_sweeps(out_dir: Path, eval_runs: Sequence[RunRecord]) -> None:
+    panels = [
+        ("v1", "phi0"),
+        ("v1", "phi1"),
+        ("v2", "phi0"),
+        ("v2", "phi1"),
+        ("v3", "phi0"),
+        ("v3", "phi1"),
+    ]
 
-def run_opening_grid(
-    eval_root: Path,
-    v3_eval_root: Path,
-    out_dir: Path,
-    best_v1: Optional[str],
-    best_v2: Optional[str],
-    best_v3: Optional[str],
-) -> None:
-    grid_dir = out_dir / "opening_grid"
-    ensure_dir(grid_dir)
+    metric_pairs = [
+        ("mrr", "MRR"),
+        ("mean_kl", "KL vs ref"),
+    ]
 
-    if best_v1 is None or best_v2 is None or best_v3 is None:
-        print("\n[SKIP] Opening grid skipped because Experiment 3 did not produce best_v1 / best_v2 / best_v3.")
+    fig, axes = plt.subplots(len(panels), len(metric_pairs), figsize=(6.6, 9.2), constrained_layout=True)
+    for i, (pair, phi) in enumerate(panels):
+        sweep = runs_for_tau_sweep(list(eval_runs), pair, phi)
+        for j, (metric_key, ylabel) in enumerate(metric_pairs):
+            ax = axes[i, j]
+            title = f"{pair}-{phi}"
+            line_tau(ax, sweep, metric_key, title=title, ylabel=ylabel if j == 0 else None)
+            if j == 1:
+                ax.set_ylabel("")
+
+    savefig(fig, out_dir, "fig_tau_sweeps")
+
+
+def plot_training_diagnostics(out_dir: Path, finalists: Sequence[RunRecord]) -> None:
+    if not finalists:
         return
 
-    methods = ["maia2", "sft", "dpo_beta=0.60", best_v1, best_v2, best_v3]
-    ok, missing, bundles_by_gm = check_required_methods(
-        [eval_root, v3_eval_root],
-        GM_ORDER,
-        methods,
-        require_opening_probe_for_methods=methods,
-    )
-    if not ok:
-        print("\n[SKIP] Opening grid skipped. Missing files / bundles:")
-        for line in missing:
-            print(" -", line)
+    finalists = sorted(finalists, key=lambda r: (PAIR_ORDER.get(r.pair_version, 99), PHI_ORDER.get(r.phi, 99)))
+    n = min(4, len(finalists))
+    chosen = finalists[:n]
+
+    fig, axes = plt.subplots(1, n, figsize=(2.8 * n, 2.5), constrained_layout=True)
+    if n == 1:
+        axes = [axes]
+    for ax, run in zip(axes, chosen):
+        plot_training_curve(ax, run, run.method_label)
+    savefig(fig, out_dir, "fig_training_diagnostics_finalists")
+
+
+def plot_ablation_batchsize(out_dir: Path, train_runs: Sequence[RunRecord], eval_runs: Sequence[RunRecord]) -> None:
+    """
+    Focus on the around-best-recipe batch-size ablation for v1 phi0.
+    """
+    batch_runs = [r for r in train_runs if "ablation_v1_phi0" in r.name and "_bs" in r.name]
+    if not batch_runs:
         return
 
-    fig, axes = plt.subplots(3, 3, figsize=(7.1, 5.8), constrained_layout=True)
-    axes = axes.flatten()
-
-    legend_handles = None
-    legend_labels = None
-
-    for idx, gm in enumerate(GM_ORDER):
-        ax = axes[idx]
-        gm_bundles = bundles_by_gm[gm]
-        for m in methods:
-            gm_bundles[m].load()
-
-        empirical = get_empirical_player_opening_distribution(gm_bundles["maia2"])
-        if empirical is None:
-            ax.set_visible(False)
+    rows: List[Dict[str, Any]] = []
+    eval_lookup = {r.name: r for r in eval_runs}
+    for r in batch_runs:
+        m = re.search(r"__bs-(\d+)__", f"__{r.name}__")
+        bs = int(m.group(1)) if m else None
+        if bs is None:
             continue
+        train_final_loss = float("nan")
+        if r.training_df is not None and not r.training_df.empty:
+            loss_col = None
+            for c in r.training_df.columns:
+                if c.lower() in {"train_loss", "loss", "train/loss"}:
+                    loss_col = c
+                    break
+            if loss_col is not None:
+                series = pd.to_numeric(r.training_df[loss_col], errors="coerce").dropna()
+                if not series.empty:
+                    train_final_loss = float(series.iloc[-1])
 
-        x = np.arange(len(OPENING_MOVE_ORDER))
-
-        ax.plot(
-            x,
-            [empirical.get(k, 0.0) for k in OPENING_MOVE_ORDER],
-            linestyle="--",
-            marker="o",
-            linewidth=1.1,
-            markersize=2.5,
-            color="black",
-            label="Player",
+        ev = eval_lookup.get(r.name)
+        rows.append(
+            {
+                "name": r.name,
+                "batch_size": bs,
+                "train_final_loss": train_final_loss,
+                "mrr": ev.metric("mrr") if ev else float("nan"),
+                "row_cos_hard_gap": ev.metric("row_cos_hard_gap") if ev else float("nan"),
+            }
         )
 
-        plotted_labels = {
-            "maia2": "Maia-2",
-            "sft": "NLL",
-            "dpo_beta=0.60": "DPO",
-            best_v1: "RW-v1",
-            best_v2: "RW-v2",
-            best_v3: "RW-v3",
-        }
+    if not rows:
+        return
 
-        for m in methods:
-            dist = get_opening_distribution(gm_bundles[m])
-            if dist is None:
-                continue
-            ax.plot(
-                x,
-                [dist.get(k, 0.0) for k in OPENING_MOVE_ORDER],
-                linewidth=1.0,
-                markersize=0,
-                color=gm_bundles[m].color if m not in {best_v1, best_v2, best_v3} else (STYLE_V1_COLOR if m == best_v1 else (STYLE_V2_COLOR if m == best_v2 else STYLE_V3_COLOR)),
-                label=plotted_labels[m],
-            )
+    df = pd.DataFrame(rows).sort_values("batch_size")
+    df.to_csv(out_dir / "ablation_batchsize.csv", index=False)
 
-        ax.set_title(opening_panel_title(gm), pad=2)
-        ax.set_xticks(x)
-        ax.set_xticklabels(["e4", "d4", "c4", "Nf3", "g3", "b3", "f4", "b4", "a4"], rotation=45, ha="right")
-        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
-        ax.tick_params(axis="both", which="major", pad=1)
+    fig, axes = plt.subplots(1, 3, figsize=(8.1, 2.5), constrained_layout=True)
+    for ax, col, title in zip(
+        axes,
+        ["train_final_loss", "mrr", "row_cos_hard_gap"],
+        ["Final train loss", "MRR", "Hard gap"],
+    ):
+        ax.plot(df["batch_size"], df[col], marker="o")
+        ax.set_title(title, pad=4)
+        ax.set_xlabel("Batch size")
+    savefig(fig, out_dir, "fig_ablation_batchsize")
 
-        if idx % 3 == 0:
-            ax.set_ylabel("Prob.")
-        if idx >= 6:
-            ax.set_xlabel("White first move")
 
-        if legend_handles is None:
-            legend_handles, legend_labels = ax.get_legend_handles_labels()
+def plot_ablation_lr(out_dir: Path, train_runs: Sequence[RunRecord], eval_runs: Sequence[RunRecord]) -> None:
+    lr_runs = [r for r in train_runs if "ablation_v1_phi0" in r.name and "_lr" in r.name]
+    if not lr_runs:
+        return
 
-    if legend_handles and legend_labels:
-        seen = set()
-        uniq_h, uniq_l = [], []
-        for h, l in zip(legend_handles, legend_labels):
-            if l in seen:
-                continue
-            seen.add(l)
-            uniq_h.append(h)
-            uniq_l.append(l)
-        fig.legend(
-            uniq_h,
-            uniq_l,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 1.03),
-            ncol=6,
-            frameon=False,
-            columnspacing=0.9,
-            handletextpad=0.4,
+    rows: List[Dict[str, Any]] = []
+    eval_lookup = {r.name: r for r in eval_runs}
+    for r in lr_runs:
+        m = re.search(r"__lr-([0-9.]+)__", f"__{r.name}__")
+        lr = float(m.group(1)) if m else None
+        if lr is None:
+            continue
+        train_final_loss = float("nan")
+        if r.training_df is not None and not r.training_df.empty:
+            loss_col = None
+            for c in r.training_df.columns:
+                if c.lower() in {"train_loss", "loss", "train/loss"}:
+                    loss_col = c
+                    break
+            if loss_col is not None:
+                series = pd.to_numeric(r.training_df[loss_col], errors="coerce").dropna()
+                if not series.empty:
+                    train_final_loss = float(series.iloc[-1])
+
+        ev = eval_lookup.get(r.name)
+        rows.append(
+            {
+                "name": r.name,
+                "lr": lr,
+                "train_final_loss": train_final_loss,
+                "mrr": ev.metric("mrr") if ev else float("nan"),
+                "row_cos_hard_gap": ev.metric("row_cos_hard_gap") if ev else float("nan"),
+            }
         )
 
-    finish_figure(fig, grid_dir, "opening_first_move_grid_all_gms")
-    print("[OK] Opening grid complete:", grid_dir)
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows).sort_values("lr")
+    df.to_csv(out_dir / "ablation_lr.csv", index=False)
+
+    fig, axes = plt.subplots(1, 3, figsize=(8.1, 2.5), constrained_layout=True)
+    for ax, col, title in zip(
+        axes,
+        ["train_final_loss", "mrr", "row_cos_hard_gap"],
+        ["Final train loss", "MRR", "Hard gap"],
+    ):
+        ax.plot(df["lr"], df[col], marker="o")
+        ax.set_xscale("log")
+        ax.set_title(title, pad=4)
+        ax.set_xlabel("Learning rate")
+    savefig(fig, out_dir, "fig_ablation_lr")
 
 
-# ============================================================
-# Manifest
-# ============================================================
+def plot_promotion_scatter(out_dir: Path, eval_runs: Sequence[RunRecord]) -> None:
+    """
+    screen -> final/super sanity plot
+    """
+    rows: List[Dict[str, Any]] = []
+    by_key: Dict[Tuple[str, str, str], Dict[str, RunRecord]] = {}
 
-def write_manifest(out_dir: Path, best_v1: Optional[str], best_v2: Optional[str], best_v3: Optional[str]) -> None:
-    manifest = {
-        "gm_order": GM_ORDER,
-        "best_style_v1_method": best_v1,
-        "best_style_v2_method": best_v2,
-        "best_style_v3_method": best_v3,
-    }
-    with (out_dir / "paper_figure_manifest.json").open("w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
+    for r in eval_runs:
+        tau = canonicalize_tau_str(r.tau)
+        if tau is None:
+            continue
+        key = (r.pair_version, r.phi, tau)
+        by_key.setdefault(key, {})
+        by_key[key][r.stage] = r
+
+    for key, stages in by_key.items():
+        scr = stages.get("screen")
+        fin = stages.get("final") or stages.get("super")
+        if scr is None or fin is None:
+            continue
+        rows.append(
+            {
+                "pair_version": key[0],
+                "phi": key[1],
+                "tau": key[2],
+                "screen_mrr": scr.metric("mrr"),
+                "final_mrr": fin.metric("mrr"),
+            }
+        )
+
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    df.to_csv(out_dir / "promotion_scatter.csv", index=False)
+
+    fig, ax = plt.subplots(figsize=(3.4, 3.0), constrained_layout=True)
+    for _, row in df.iterrows():
+        color = FAMILY_COLORS.get(row["pair_version"], FAMILY_COLORS["other"]).get(row["phi"], "#666666")
+        ax.scatter(row["screen_mrr"], row["final_mrr"], color=color, s=28)
+        ax.text(row["screen_mrr"], row["final_mrr"], f'{row["pair_version"]}-{row["phi"]}-τ={row["tau"]}', fontsize=5.6)
+    ax.set_xlabel("Screen MRR")
+    ax.set_ylabel("Final/Super MRR")
+    ax.set_title("Promotion sanity check", pad=4)
+    savefig(fig, out_dir, "fig_promotion_scatter")
+
+
+def plot_appendix_conditionals(out_dir: Path, finalists: Sequence[RunRecord]) -> None:
+    metrics = [
+        ("mean_logp_gap_cond_not_top10", CONDITIONAL_METRICS["mean_logp_gap_cond_not_top10"]["title"]),
+        ("mrr_cond_not_top10", CONDITIONAL_METRICS["mrr_cond_not_top10"]["title"]),
+        ("mean_logp_gap_cond_in_top10", CONDITIONAL_METRICS["mean_logp_gap_cond_in_top10"]["title"]),
+        ("mrr_cond_in_top10", CONDITIONAL_METRICS["mrr_cond_in_top10"]["title"]),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.0), constrained_layout=True)
+    for ax, (metric_key, title) in zip(axes.flatten(), metrics):
+        grouped_bar(ax, finalists, metric_key, title)
+    savefig(fig, out_dir, "appendix_conditionals")
+
+
+def plot_appendix_ranked_metrics(out_dir: Path, eval_runs: Sequence[RunRecord]) -> None:
+    metrics = [
+        ("mrr", "All runs ranked by MRR"),
+        ("row_cos_hard_gap", "All runs ranked by hard gap"),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(10.0, 3.0), constrained_layout=True)
+    for ax, (metric_key, title) in zip(axes, metrics):
+        ranked_dotplot(ax, eval_runs, metric_key, title)
+    savefig(fig, out_dir, "appendix_ranked_metrics")
 
 
 # ============================================================
 # Main
 # ============================================================
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description=(
-            "Generate paper-ready aggregate figures across 9 GMs. "
-            "Experiments are run in order: Exp1, Exp2, Exp3, then opening grid."
-        )
-    )
-    p.add_argument(
-        "--eval_root",
-        required=True,
-        help="Root eval directory containing GM subfolders.",
-    )
-    p.add_argument(
-        "--v3_eval_root",
-        required=True,
-        help="Root eval directory for style-v3 method variants",
-    )
-    p.add_argument(
-        "--out_dir",
-        required=True,
-        help="Output directory for paper figures and CSV tables.",
-    )
-    return p.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
-    eval_root = Path(args.eval_root)
-    v3_eval_root = Path(args.v3_eval_root)
-    out_dir = Path(args.out_dir)
-    ensure_dir(out_dir)
+    parser = argparse.ArgumentParser(description="Generate coherent IEEE CoG paper plots for Experiment 2 style embeddings.")
+    parser.add_argument("--eval-runs-root", type=Path, required=True)
+    parser.add_argument("--training-summary-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--split", type=str, default="test")
+    parser.add_argument(
+        "--include-appendix",
+        action="store_true",
+        help="Also emit appendix-style conditional and ranked diagnostic plots.",
+    )
+    args = parser.parse_args()
 
-    print("Running paper figure generation across 9 GMs:")
-    print("  " + ", ".join(GM_ORDER))
-    print()
+    ensure_dir(args.output_dir)
+    main_dir = args.output_dir / "main_paper"
+    appendix_dir = args.output_dir / "appendix"
+    tables_dir = args.output_dir / "tables"
+    ensure_dir(main_dir)
+    ensure_dir(appendix_dir)
+    ensure_dir(tables_dir)
 
-    style_keys = run_single_gm_experiment_w_style_embeddings(eval_root, v3_eval_root, out_dir)
+    eval_runs = discover_eval_runs(args.eval_runs_root, split=args.split)
+    eval_runs = drop_duplicate_canonical_runs(eval_runs)
 
-    best_v1 = None
-    best_v2 = None
-    best_v3 = None
-    if style_keys is not None:
-        best_v1, best_v2, best_v3 = style_keys
+    train_runs = discover_training_runs(args.training_summary_dir)
+    train_runs = drop_duplicate_canonical_runs(train_runs)
 
-    run_opening_grid(eval_root, v3_eval_root, out_dir, best_v1, best_v2, best_v3)
-    write_manifest(out_dir, best_v1, best_v2, best_v3)
+    attach_training_to_eval(eval_runs, train_runs)
 
-    print("\nDone. Outputs written to:", out_dir)
+    # Export raw discovered tables
+    export_run_table(eval_runs, tables_dir / "eval_runs")
+    export_run_table(train_runs, tables_dir / "training_runs")
+
+    finalists = choose_best_finalists(eval_runs)
+    export_run_table(finalists, tables_dir / "finalists")
+
+    # -----------------------
+    # Main paper figure set
+    # -----------------------
+    plot_tau_sweeps(main_dir, eval_runs)
+    plot_phi_comparisons(main_dir, finalists)
+    plot_finalist_main_results(main_dir, finalists)
+    plot_hard_negative_results(main_dir, finalists)
+    plot_training_diagnostics(main_dir, finalists)
+    plot_promotion_scatter(main_dir, eval_runs)
+
+    # -----------------------
+    # Ablations
+    # -----------------------
+    plot_ablation_batchsize(main_dir, train_runs, eval_runs)
+    plot_ablation_lr(main_dir, train_runs, eval_runs)
+
+    # -----------------------
+    # Appendix
+    # -----------------------
+    if args.include_appendix:
+        plot_appendix_conditionals(appendix_dir, finalists)
+        plot_appendix_ranked_metrics(appendix_dir, eval_runs)
+
+    # -----------------------
+    # Human-readable notes
+    # -----------------------
+    notes_path = args.output_dir / "README_plot_story.txt"
+    with notes_path.open("w", encoding="utf-8") as f:
+        f.write(
+            "\n".join(
+                [
+                    "Experiment 2 paper plot story",
+                    "=============================",
+                    "",
+                    "Main-paper figure families:",
+                    "1. fig_tau_sweeps.pdf/png",
+                    "   - Screening story: choose tau per family.",
+                    "   - Read as: moderate tau should improve retrieval/hard-gap vs weak tau; too-aggressive settings may hurt KL/entropy.",
+                    "",
+                    "2. fig_phi_comparisons.pdf/png",
+                    "   - Metadata story: phi1 vs phi0 at matched family budget.",
+                    "   - Read as: phi1 should help most on retrieval and hard-negative-aware metrics.",
+                    "",
+                    "3. fig_finalist_main_results.pdf/png",
+                    "   - Finalist overall story: MRR, Recall@1, mean log-prob gap, KL.",
+                    "   - Read as: best overall finalist should balance retrieval/separation with controlled drift.",
+                    "",
+                    "4. fig_hard_negative_results.pdf/png",
+                    "   - Application story: v3 > v2 > v1 should show up most clearly here.",
+                    "   - Read as: easy-task metrics can flatter v1, but hard-negative-aware metrics are the main decision metrics.",
+                    "",
+                    "5. fig_training_diagnostics_finalists.pdf/png",
+                    "   - Stability story: finalists should train smoothly enough without obvious collapse.",
+                    "",
+                    "6. fig_promotion_scatter.pdf/png",
+                    "   - Process story: screening metrics should roughly predict final metrics, justifying promotion logic.",
+                    "",
+                    "Ablations:",
+                    "- fig_ablation_batchsize.pdf/png",
+                    "- fig_ablation_lr.pdf/png",
+                    "",
+                    "Appendix-only figures:",
+                    "- appendix_conditionals.pdf/png",
+                    "- appendix_ranked_metrics.pdf/png",
+                    "",
+                    "Deliberately omitted from main paper:",
+                    "- AP / F1 / ROC AUC",
+                    "- giant spaghetti loss overlays",
+                    "- raw histogram-heavy spread plots",
+                    "- single highlighted PCA panel",
+                    "",
+                    "Naming fixes:",
+                    "- tau0_10 and tau0_1 are canonicalized to tau=0.1",
+                    "- run discovery is split-aware and does not assume only *_val.json",
+                ]
+            )
+        )
+
+    print(f"[done] wrote plots to: {args.output_dir}")
 
 
 if __name__ == "__main__":
     main()
-

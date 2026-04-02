@@ -808,13 +808,125 @@ def normalize_rows(x: np.ndarray) -> np.ndarray:
     norms = np.clip(norms, 1e-12, None)
     return x / norms
 
+
+def _reservoir_update_player_samples(
+    sample_store: Dict[str, Dict[str, Any]],
+    player_id: Optional[str],
+    embedding: np.ndarray,
+    meta: Dict[str, Any],
+    per_player_cap: int,
+    rng: np.random.Generator,
+) -> None:
+    if player_id is None or per_player_cap <= 0:
+        return
+
+    bucket = sample_store.get(player_id)
+    if bucket is None:
+        bucket = {"seen": 0, "embeddings": [], "meta": []}
+        sample_store[player_id] = bucket
+
+    bucket["seen"] += 1
+    emb_copy = embedding.astype(np.float32, copy=True)
+    meta_copy = dict(meta)
+
+    if len(bucket["embeddings"]) < per_player_cap:
+        bucket["embeddings"].append(emb_copy)
+        bucket["meta"].append(meta_copy)
+        return
+
+    j = int(rng.integers(0, bucket["seen"]))
+    if j < per_player_cap:
+        bucket["embeddings"][j] = emb_copy
+        bucket["meta"][j] = meta_copy
+
+
+def finalize_sampled_anchor_embeddings(
+    sample_store: Dict[str, Dict[str, Any]],
+    *,
+    max_players: Optional[int],
+    min_examples_per_player: int,
+    player_selection: str,
+    seed: int,
+) -> Tuple[np.ndarray, List[Dict[str, Any]], Dict[str, Any]]:
+    eligible: List[Tuple[str, Dict[str, Any]]] = []
+    for pid, bucket in sample_store.items():
+        n_kept = len(bucket["embeddings"])
+        if n_kept >= min_examples_per_player:
+            eligible.append((pid, bucket))
+
+    if not eligible:
+        return (
+            np.zeros((0, 1), dtype=np.float32),
+            [],
+            {
+                "sampling_method": "anchor_reservoir",
+                "n_players_seen": int(len(sample_store)),
+                "n_players_eligible": 0,
+                "n_players_selected": 0,
+                "n_embeddings": 0,
+                "player_selection": player_selection,
+                "min_examples_per_player": int(min_examples_per_player),
+                "max_players": None if max_players is None else int(max_players),
+            },
+        )
+
+    if player_selection == "random":
+        rng = np.random.default_rng(seed)
+        rng.shuffle(eligible)
+    else:
+        eligible.sort(
+            key=lambda item: (int(item[1]["seen"]), len(item[1]["embeddings"]), str(item[0])),
+            reverse=True,
+        )
+
+    if max_players is not None:
+        eligible = eligible[:max_players]
+
+    embeddings: List[np.ndarray] = []
+    meta_rows: List[Dict[str, Any]] = []
+    players_summary: Dict[str, Any] = {}
+    for pid, bucket in eligible:
+        player_embs = [np.asarray(x, dtype=np.float32) for x in bucket["embeddings"]]
+        player_meta = [dict(m) for m in bucket["meta"]]
+        embeddings.extend(player_embs)
+        meta_rows.extend(player_meta)
+        players_summary[str(pid)] = {
+            "n_seen_anchor_rows": int(bucket["seen"]),
+            "n_sampled_embeddings": int(len(player_embs)),
+        }
+
+    if embeddings:
+        emb = normalize_rows(np.stack(embeddings, axis=0).astype(np.float32, copy=False))
+    else:
+        emb = np.zeros((0, 1), dtype=np.float32)
+
+    summary = {
+        "sampling_method": "anchor_reservoir",
+        "n_players_seen": int(len(sample_store)),
+        "n_players_eligible": int(len(players_summary)),
+        "n_players_selected": int(len(players_summary)),
+        "n_embeddings": int(len(meta_rows)),
+        "player_selection": player_selection,
+        "min_examples_per_player": int(min_examples_per_player),
+        "max_players": None if max_players is None else int(max_players),
+        "players": players_summary,
+    }
+    return emb, meta_rows, summary
+
+
 def compute_pair_metrics(
     model: torch.nn.Module,
     loader: DataLoader,
     device: torch.device,
     eval_taus: Sequence[float],
     max_batches: Optional[int] = None,
-) -> Dict[str, Any]:
+    *,
+    sample_anchor_embeddings_per_player: int = 16,
+    sampled_embedding_max_players: Optional[int] = 500,
+    sampled_embedding_min_examples_per_player: int = 2,
+    sampled_embedding_player_selection: str = "most_seen",
+    sampling_seed: int = 42,
+) -> Tuple[Dict[str, Any], np.ndarray, List[Dict[str, Any]], Dict[str, Any]]:
     def concat_or_empty(xs: List[np.ndarray]) -> np.ndarray:
         return np.concatenate(xs) if xs else np.array([], dtype=np.float32)
 
@@ -834,6 +946,8 @@ def compute_pair_metrics(
     row_hardest_neg_cos_all: List[np.ndarray] = []
 
     engine_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+    sample_store: Dict[str, Dict[str, Any]] = {}
+    rng = np.random.default_rng(sampling_seed)
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
@@ -851,6 +965,27 @@ def compute_pair_metrics(
             z_anchor = model(anchor)                 # [B, D]
             z_pos_all = model(positive_all)         # [sum_pos, D]
             z_neg_all = model(negative_all)         # [sum_neg, D]
+
+            z_anchor_np = z_anchor.detach().cpu().numpy().astype(np.float32, copy=False)
+            for i, m in enumerate(meta):
+                sampled_meta = {
+                    "player_id": m.get("anchor_player_id"),
+                    "phase_id": m.get("anchor_phase_id"),
+                    "engine_rank": m.get("anchor_engine_rank"),
+                    "engine_cp_gap": m.get("anchor_engine_cp_gap"),
+                    "example_id": m.get("anchor_example_id"),
+                    "source": "anchor_row_sample",
+                    "row_idx": m.get("row_idx"),
+                    "shard_id": m.get("shard_id"),
+                }
+                _reservoir_update_player_samples(
+                    sample_store=sample_store,
+                    player_id=sampled_meta["player_id"],
+                    embedding=z_anchor_np[i],
+                    meta=sampled_meta,
+                    per_player_cap=sample_anchor_embeddings_per_player,
+                    rng=rng,
+                )
 
             pos_owner = torch.repeat_interleave(
                 torch.arange(z_anchor.shape[0], device=device),
@@ -900,13 +1035,13 @@ def compute_pair_metrics(
 
                 row_mean_pos_l2[i] = float(np.mean(pos_l2_row))
                 row_mean_neg_l2[i] = float(np.mean(neg_l2_row))
-                row_best_pos_l2[i] = float(np.min(pos_l2_row))        # closest true positive
-                row_hardest_neg_l2[i] = float(np.min(neg_l2_row))     # closest negative
+                row_best_pos_l2[i] = float(np.min(pos_l2_row))
+                row_hardest_neg_l2[i] = float(np.min(neg_l2_row))
 
                 row_mean_pos_cos[i] = float(np.mean(pos_cos_row))
                 row_mean_neg_cos[i] = float(np.mean(neg_cos_row))
-                row_best_pos_cos[i] = float(np.max(pos_cos_row))      # strongest true positive
-                row_hardest_neg_cos[i] = float(np.max(neg_cos_row))   # strongest negative
+                row_best_pos_cos[i] = float(np.max(pos_cos_row))
+                row_hardest_neg_cos[i] = float(np.max(neg_cos_row))
 
                 rank = m.get("anchor_engine_rank")
                 if rank is None:
@@ -1049,7 +1184,15 @@ def compute_pair_metrics(
                 float(np.mean(pos_cos_b / tau) - np.mean(hard_neg_cos_b / tau)) if len(pos_cos_b) else math.nan
             )
 
-    return out
+    sampled_embeddings, sampled_meta_rows, sample_summary = finalize_sampled_anchor_embeddings(
+        sample_store,
+        max_players=sampled_embedding_max_players,
+        min_examples_per_player=sampled_embedding_min_examples_per_player,
+        player_selection=sampled_embedding_player_selection,
+        seed=sampling_seed,
+    )
+    return out, sampled_embeddings, sampled_meta_rows, sample_summary
+
 
 def encode_example_embeddings(
     model: torch.nn.Module,
@@ -1217,6 +1360,7 @@ def write_json(path: Path, obj: Dict[str, Any]) -> None:
         json.dump(obj, f, indent=2, sort_keys=True)
 
 
+
 def run_eval_for_split(
     split: str,
     cached_split_dir: Path,
@@ -1231,6 +1375,12 @@ def run_eval_for_split(
     max_embed_batches: Optional[int],
     max_examples: Optional[int],
     save_embeddings: bool,
+    *,
+    sampled_embedding_max_players: Optional[int],
+    sampled_embedding_max_examples_per_player: int,
+    sampled_embedding_min_examples_per_player: int,
+    sampled_embedding_player_selection: str,
+    sampled_embedding_seed: int,
 ) -> Dict[str, Any]:
     print(f"[eval] split={split} dir={cached_split_dir}")
     split_out = output_root / split
@@ -1252,25 +1402,20 @@ def run_eval_for_split(
         prefetch_factor=(2 if num_workers > 0 else None),
         pin_memory=False,
     )
-    pair_metrics = compute_pair_metrics(model, pair_loader, device, eval_taus, max_batches=max_pair_batches)
+    pair_metrics, embeddings, meta_rows, sample_summary = compute_pair_metrics(
+        model,
+        pair_loader,
+        device,
+        eval_taus,
+        max_batches=max_pair_batches,
+        sample_anchor_embeddings_per_player=sampled_embedding_max_examples_per_player,
+        sampled_embedding_max_players=sampled_embedding_max_players,
+        sampled_embedding_min_examples_per_player=sampled_embedding_min_examples_per_player,
+        sampled_embedding_player_selection=sampled_embedding_player_selection,
+        sampling_seed=sampled_embedding_seed,
+    )
     write_json(split_out / "pair_metrics.json", pair_metrics)
-
-    example_ds = ExampleEmbeddingDataset(
-        input_dir=cached_split_dir,
-        model_variant_name=cfg.model.variant_name,
-        max_examples=max_examples,
-    )
-    example_loader = DataLoader(
-        example_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_example_embeddings,
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=(2 if num_workers > 0 else None),
-        pin_memory=False,
-    )
-    embeddings, meta_rows = encode_example_embeddings(model, example_loader, device, max_batches=max_embed_batches)
+    write_json(split_out / "sampled_embedding_summary.json", sample_summary)
 
     retrieval = compute_retrieval_metrics(embeddings, meta_rows)
     classification = compute_binary_classification_metrics(embeddings, meta_rows)
@@ -1298,8 +1443,12 @@ def run_eval_for_split(
         "retrieval_metrics_path": str(split_out / "retrieval_metrics.json"),
         "classification_metrics_path": str(split_out / "classification_metrics.json"),
         "spread_metrics_path": str(split_out / "spread_metrics.json"),
+        "sampled_embedding_summary_path": str(split_out / "sampled_embedding_summary.json"),
+        "embedding_source": "sampled_anchor_rows_from_pair_eval",
         "n_embeddings": int(len(embeddings)),
         "saved_embeddings": bool(save_embeddings),
+        "max_embed_batches_used": max_embed_batches,
+        "max_examples_used": max_examples,
     }
     write_json(split_out / "summary.json", summary)
     return summary
@@ -1321,8 +1470,13 @@ def main() -> None:
     ap.add_argument("--max-eval-rows", type=int, default=None)
     ap.add_argument("--max-test-rows", type=int, default=None)
     ap.add_argument("--max-pair-batches", type=int, default=None)
-    ap.add_argument("--max-embed-batches", type=int, default=None)
-    ap.add_argument("--max-examples", type=int, default=None)
+    ap.add_argument("--max-embed-batches", type=int, default=None, help="Unused in sampled-anchor mode; kept for compatibility")
+    ap.add_argument("--max-examples", type=int, default=None, help="Unused in sampled-anchor mode; kept for compatibility")
+    ap.add_argument("--sampled-embedding-max-players", type=int, default=500)
+    ap.add_argument("--sampled-embedding-max-examples-per-player", type=int, default=16)
+    ap.add_argument("--sampled-embedding-min-examples-per-player", type=int, default=2)
+    ap.add_argument("--sampled-embedding-player-selection", choices=["most_seen", "random"], default="most_seen")
+    ap.add_argument("--sampled-embedding-seed", type=int, default=42)
     ap.add_argument("--save-embeddings", action="store_true")
     ap.add_argument("--keep-cached", action="store_true", help="Keep generated cached eval dirs instead of deleting later")
     args = ap.parse_args()
@@ -1361,6 +1515,12 @@ def main() -> None:
         "train_tau": getattr(cfg, "tau", None),
         "rows_per_shard": args.rows_per_shard,
         "splits": args.splits,
+        "embedding_source": "sampled_anchor_rows_from_pair_eval",
+        "sampled_embedding_max_players": args.sampled_embedding_max_players,
+        "sampled_embedding_max_examples_per_player": args.sampled_embedding_max_examples_per_player,
+        "sampled_embedding_min_examples_per_player": args.sampled_embedding_min_examples_per_player,
+        "sampled_embedding_player_selection": args.sampled_embedding_player_selection,
+        "sampled_embedding_seed": args.sampled_embedding_seed,
     }
     write_json(output_dir / "manifest.json", manifest)
 
@@ -1396,6 +1556,11 @@ def main() -> None:
             max_embed_batches=args.max_embed_batches,
             max_examples=args.max_examples,
             save_embeddings=args.save_embeddings,
+            sampled_embedding_max_players=args.sampled_embedding_max_players,
+            sampled_embedding_max_examples_per_player=args.sampled_embedding_max_examples_per_player,
+            sampled_embedding_min_examples_per_player=args.sampled_embedding_min_examples_per_player,
+            sampled_embedding_player_selection=args.sampled_embedding_player_selection,
+            sampled_embedding_seed=args.sampled_embedding_seed,
         )
         split_summary["cache_build_summary_path"] = str(cached_split_dir / "_build_summary.json")
         split_summaries.append(split_summary)
