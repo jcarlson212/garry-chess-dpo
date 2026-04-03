@@ -309,6 +309,13 @@ def resolve_checkpoint(model_dir: Path, checkpoint_name: str = "best") -> Path:
     if candidate.exists():
         return candidate
 
+    # Policy: for v3 runs, treat "best" as "last" to avoid selecting
+    # checkpoints based on potentially mismatched validation distributions.
+    if checkpoint_name == "best" and "__pair-v3__" in str(model_dir):
+        epoch_pts = sorted(model_dir.glob("epoch_*.pt"))
+        if epoch_pts:
+            return epoch_pts[-1]
+
     if checkpoint_name == "best":
         best_pt = model_dir / "best.pt"
         if best_pt.exists():
@@ -425,5 +432,4 @@ class StyleEncoder(nn.Module):
         z = self.mlp(x)
         z = F.normalize(z, p=2, dim=-1)
         return z
-
 

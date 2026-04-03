@@ -5,6 +5,7 @@ import gc
 import json
 import math
 import os
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,7 +152,7 @@ def example_meta_from_raw(ex: Dict[str, Any]) -> ExampleMeta:
     )
 
 
-def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int]) -> Iterable[Dict[str, Any]]:
+def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int], skip_rows: int = 0) -> Iterable[Dict[str, Any]]:
     seen = 0
     for path in sorted(input_dir.glob("*.jsonl")):
         print(f"[read] file={path}")
@@ -159,8 +160,10 @@ def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int]) -> Iterable[Dict[s
             for line in f:
                 if not line.strip():
                     continue
-                yield orjson.loads(line)
                 seen += 1
+                if skip_rows > 0 and seen <= skip_rows:
+                    continue
+                yield orjson.loads(line)
                 if seen % 10_000 == 0:
                     print(f"[read] rows={seen:,}")
                 if max_rows is not None and seen >= max_rows:
@@ -322,18 +325,87 @@ def save_eval_cache_shard(builder: EvalCacheShardBuilder, split_out_dir: Path) -
     return meta
 
 
+def _parse_shard_index(shard_dir: Path) -> Optional[int]:
+    name = shard_dir.name
+    if not name.startswith("shard_"):
+        return None
+    suffix = name.split("shard_", 1)[1]
+    try:
+        return int(suffix)
+    except Exception:
+        return None
+
+
+def _required_shard_file_names() -> Tuple[str, ...]:
+    return (
+        "meta.json",
+        "examples_board_tokens.uint8.npy",
+        "examples_moves.uint8.npy",
+        "examples_game_type.uint8.npy",
+        "pair_anchor_idx.int32.npy",
+        "pair_pos_flat.int32.npy",
+        "pair_pos_offsets.int64.npy",
+        "pair_neg_flat.int32.npy",
+        "pair_neg_offsets.int64.npy",
+    )
+
+
+def collect_resumable_shards(output_dir: Path) -> Tuple[List[Path], List[Dict[str, Any]], List[Path]]:
+    """
+    Keep only the longest contiguous prefix of complete shard dirs [0..k-1].
+    Any trailing/incomplete/non-contiguous shard dirs are returned as stale.
+    """
+    shard_dirs = [p for p in output_dir.glob("shard_*") if p.is_dir()]
+    indexed: List[Tuple[int, Path]] = []
+    stale: List[Path] = []
+    for sd in shard_dirs:
+        idx = _parse_shard_index(sd)
+        if idx is None:
+            stale.append(sd)
+            continue
+        indexed.append((idx, sd))
+    indexed.sort(key=lambda x: x[0])
+
+    keep_dirs: List[Path] = []
+    keep_meta: List[Dict[str, Any]] = []
+    expected_idx = 0
+    req = _required_shard_file_names()
+
+    for idx, sd in indexed:
+        if idx != expected_idx:
+            stale.append(sd)
+            continue
+        if any(not (sd / rel).exists() for rel in req):
+            stale.append(sd)
+            break
+        meta = read_json_if_exists(sd / "meta.json")
+        if meta is None:
+            stale.append(sd)
+            break
+        keep_dirs.append(sd)
+        keep_meta.append(meta)
+        expected_idx += 1
+
+    kept_set = {p.resolve() for p in keep_dirs}
+    for _, sd in indexed:
+        if sd.resolve() not in kept_set and sd not in stale:
+            stale.append(sd)
+
+    return keep_dirs, keep_meta, stale
+
+
 def build_eval_cache_from_pairs(
     input_dir: Path,
     output_dir: Path,
     rows_per_shard: int,
     max_rows: Optional[int],
     dataset_tag: str,
+    *,
+    resume_from_existing: bool = False,
 ) -> Dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     shard_idx = 0
-    builder = EvalCacheShardBuilder(shard_idx=shard_idx)
-
     split_rows_read = 0
     split_rows_kept = 0
     split_examples = 0
@@ -343,7 +415,33 @@ def build_eval_cache_from_pairs(
     split_skipped_no_neg = 0
     shard_count = 0
 
-    for row in iter_jsonl_rows(input_dir, max_rows=max_rows):
+    if resume_from_existing and output_dir.exists():
+        keep_dirs, keep_meta, stale_dirs = collect_resumable_shards(output_dir)
+        if stale_dirs:
+            for sd in stale_dirs:
+                shutil.rmtree(sd, ignore_errors=True)
+        if keep_meta:
+            for meta in keep_meta:
+                split_rows_read += int(meta.get("rows_read_in_shard", 0))
+                split_rows_kept += int(meta.get("rows_kept_in_shard", 0))
+                split_examples += int(meta.get("num_unique_examples", 0))
+                split_pos += int(meta.get("pair_pos_flat_shape", [0])[0]) if "pair_pos_flat_shape" in meta else 0
+                split_neg += int(meta.get("pair_neg_flat_shape", [0])[0]) if "pair_neg_flat_shape" in meta else 0
+                split_skipped_no_pos += int(meta.get("skipped_no_pos", 0))
+                split_skipped_no_neg += int(meta.get("skipped_no_neg", 0))
+            shard_count = len(keep_meta)
+            shard_idx = shard_count
+            print(
+                f"[cache-resume] split={input_dir.name} keeping {shard_count} shard(s), "
+                f"rows_read_already={split_rows_read:,}"
+            )
+
+    builder = EvalCacheShardBuilder(shard_idx=shard_idx)
+    skip_rows = split_rows_read
+
+    if max_rows is not None and split_rows_read >= max_rows:
+        print(f"[cache-resume] split={input_dir.name} already reached max_rows={max_rows:,}; no new cache rows needed")
+    for row in iter_jsonl_rows(input_dir, max_rows=max_rows, skip_rows=skip_rows):
         split_rows_read += 1
         add_pair_row(builder, row, dataset_tag=dataset_tag)
 
@@ -400,6 +498,8 @@ def build_eval_cache_from_pairs(
         "sum_neg_candidates_across_shards": split_neg,
         "skipped_no_pos": split_skipped_no_pos,
         "skipped_no_neg": split_skipped_no_neg,
+        "resume_from_existing": bool(resume_from_existing),
+        "rows_skipped_from_existing_cache": int(skip_rows),
         "note": "Examples are deduped within shard only, not globally across the whole split.",
     }
     with (output_dir / "_split_meta.json").open("w", encoding="utf-8") as f:
@@ -1231,7 +1331,10 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
 
     recall1 = 0.0
     recall5 = 0.0
+    recall10 = 0.0
+    recall20 = 0.0
     mrr = 0.0
+    ranks: List[int] = []
     n = len(pids)
     for i in range(n):
         order = np.argsort(-sims[i])
@@ -1240,16 +1343,30 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
         if len(matches) == 0:
             continue
         best_rank = int(matches[0]) + 1
+        ranks.append(best_rank)
         recall1 += float(best_rank <= 1)
         recall5 += float(best_rank <= 5)
+        recall10 += float(best_rank <= 10)
+        recall20 += float(best_rank <= 20)
         mrr += 1.0 / best_rank
+
+    rank_arr = np.asarray(ranks, dtype=np.float32) if ranks else np.asarray([], dtype=np.float32)
+    ks = [1, 3, 5, 10, 20, 50]
+    recall_at_k = {f"recall_at_{k}": (float(np.mean(rank_arr <= k)) if len(rank_arr) else math.nan) for k in ks}
 
     return {
         "skipped": False,
         "n_examples": int(n),
         "recall_at_1": float(recall1 / n) if n else math.nan,
         "recall_at_5": float(recall5 / n) if n else math.nan,
+        "recall_at_10": float(recall10 / n) if n else math.nan,
+        "recall_at_20": float(recall20 / n) if n else math.nan,
         "mrr": float(mrr / n) if n else math.nan,
+        "rank_mean": float(np.mean(rank_arr)) if len(rank_arr) else math.nan,
+        "rank_median": float(np.median(rank_arr)) if len(rank_arr) else math.nan,
+        "rank_p90": float(np.percentile(rank_arr, 90)) if len(rank_arr) else math.nan,
+        "rank_p95": float(np.percentile(rank_arr, 95)) if len(rank_arr) else math.nan,
+        "recall_curve": recall_at_k,
     }
 
 
@@ -1360,6 +1477,129 @@ def write_json(path: Path, obj: Dict[str, Any]) -> None:
         json.dump(obj, f, indent=2, sort_keys=True)
 
 
+def read_json_if_exists(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _required_shard_files() -> Tuple[str, ...]:
+    return (
+        "meta.json",
+        "examples_board_tokens.uint8.npy",
+        "examples_moves.uint8.npy",
+        "examples_game_type.uint8.npy",
+        "pair_anchor_idx.int32.npy",
+        "pair_pos_flat.int32.npy",
+        "pair_pos_offsets.int64.npy",
+        "pair_neg_flat.int32.npy",
+        "pair_neg_offsets.int64.npy",
+    )
+
+
+def validate_cached_split_dir(cached_split_dir: Path) -> Tuple[bool, str]:
+    """
+    A cache is reusable only if build summary exists and shard layout is complete.
+    This guards against partial cache writes after interrupted runs.
+    """
+    if not cached_split_dir.exists() or not cached_split_dir.is_dir():
+        return False, "missing_cache_dir"
+
+    summary_path = cached_split_dir / "_build_summary.json"
+    summary = read_json_if_exists(summary_path)
+    if summary is None:
+        return False, "missing_or_invalid_build_summary"
+
+    num_shards = summary.get("num_shards")
+    try:
+        num_shards_int = int(num_shards)
+    except Exception:
+        return False, "invalid_num_shards_in_summary"
+
+    shard_dirs = sorted(p for p in cached_split_dir.glob("shard_*") if p.is_dir())
+    if len(shard_dirs) != num_shards_int:
+        return False, f"shard_count_mismatch(expected={num_shards_int},found={len(shard_dirs)})"
+
+    expected_names = {f"shard_{i:06d}" for i in range(num_shards_int)}
+    actual_names = {p.name for p in shard_dirs}
+    if actual_names != expected_names:
+        return False, "non_contiguous_or_stale_shard_dirs"
+
+    req = _required_shard_files()
+    for shard_dir in shard_dirs:
+        for rel in req:
+            path = shard_dir / rel
+            if not path.exists() or not path.is_file():
+                return False, f"missing_required_file:{path.name}"
+
+    return True, "ok"
+
+
+def _safe_float(x: Any) -> float:
+    try:
+        v = float(x)
+    except Exception:
+        return math.nan
+    return v if math.isfinite(v) else math.nan
+
+
+def build_pair_score_components(pair_metrics: Dict[str, Any]) -> Dict[str, Any]:
+    row_cos = (((pair_metrics.get("row_aggregated") or {}).get("cosine")) or {})
+    out = {
+        "pos_mean_cos": _safe_float((((row_cos.get("mean_positive") or {}).get("row_mean_pos_cos_mean")))),
+        "hardneg_mean_cos": _safe_float((((row_cos.get("hardest_negative") or {}).get("row_hardest_neg_cos_mean")))),
+        "meanneg_mean_cos": _safe_float((((row_cos.get("mean_negative") or {}).get("row_mean_neg_cos_mean")))),
+        "bestpos_mean_cos": _safe_float((((row_cos.get("best_positive") or {}).get("row_best_pos_cos_mean")))),
+        "hard_gap_cos": _safe_float(row_cos.get("hard_gap")),
+        "mean_gap_cos": _safe_float(row_cos.get("mean_gap")),
+        "pair_acc_hardest": _safe_float(row_cos.get("pair_acc_mean_vs_hardest")),
+    }
+    return out
+
+
+def flatten_metrics_for_split(
+    *,
+    retrieval: Dict[str, Any],
+    classification: Dict[str, Any],
+    spread: Dict[str, Any],
+    pair_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    row_cos = (((pair_metrics.get("row_aggregated") or {}).get("cosine")) or {})
+    flat: Dict[str, Any] = {
+        "mrr": _safe_float(retrieval.get("mrr")),
+        "recall_at_1": _safe_float(retrieval.get("recall_at_1")),
+        "recall_at_5": _safe_float(retrieval.get("recall_at_5")),
+        "recall_at_10": _safe_float(retrieval.get("recall_at_10")),
+        "recall_at_20": _safe_float(retrieval.get("recall_at_20")),
+        "rank_mean": _safe_float(retrieval.get("rank_mean")),
+        "rank_median": _safe_float(retrieval.get("rank_median")),
+        "rank_p90": _safe_float(retrieval.get("rank_p90")),
+        "rank_p95": _safe_float(retrieval.get("rank_p95")),
+        "classification_roc_auc": _safe_float(classification.get("roc_auc")),
+        "classification_ap": _safe_float(classification.get("average_precision")),
+        "classification_best_f1": _safe_float(classification.get("best_f1")),
+        "classification_best_threshold": _safe_float(classification.get("best_threshold")),
+        "classification_positive_pair_rate": _safe_float(classification.get("positive_pair_rate")),
+        "spread_ratio": _safe_float(spread.get("spread_ratio_mean")),
+        "row_cos_hard_gap": _safe_float(row_cos.get("hard_gap")),
+        "row_cos_mean_gap": _safe_float(row_cos.get("mean_gap")),
+        "pair_acc_hardest": _safe_float(row_cos.get("pair_acc_mean_vs_hardest")),
+        "pos_mean_cos": _safe_float((((row_cos.get("mean_positive") or {}).get("row_mean_pos_cos_mean")))),
+        "hardneg_mean_cos": _safe_float((((row_cos.get("hardest_negative") or {}).get("row_hardest_neg_cos_mean")))),
+        "meanneg_mean_cos": _safe_float((((row_cos.get("mean_negative") or {}).get("row_mean_neg_cos_mean")))),
+    }
+    recall_curve = retrieval.get("recall_curve")
+    if isinstance(recall_curve, dict):
+        for k, v in recall_curve.items():
+            flat[str(k)] = _safe_float(v)
+    return flat
+
+
 
 def run_eval_for_split(
     split: str,
@@ -1420,10 +1660,20 @@ def run_eval_for_split(
     retrieval = compute_retrieval_metrics(embeddings, meta_rows)
     classification = compute_binary_classification_metrics(embeddings, meta_rows)
     spread = compute_spread_metrics(embeddings, meta_rows)
+    pair_score_components = build_pair_score_components(pair_metrics)
+    metrics_flat = flatten_metrics_for_split(
+        retrieval=retrieval,
+        classification=classification,
+        spread=spread,
+        pair_metrics=pair_metrics,
+    )
 
     write_json(split_out / "retrieval_metrics.json", retrieval)
     write_json(split_out / "classification_metrics.json", classification)
     write_json(split_out / "spread_metrics.json", spread)
+    write_json(split_out / "pair_score_components.json", pair_score_components)
+    write_json(split_out / "metrics_flat.json", metrics_flat)
+    write_json(split_out / "retrieval_curve.json", {"recall_curve": retrieval.get("recall_curve", {})})
 
     if save_embeddings:
         np.savez_compressed(
@@ -1443,6 +1693,9 @@ def run_eval_for_split(
         "retrieval_metrics_path": str(split_out / "retrieval_metrics.json"),
         "classification_metrics_path": str(split_out / "classification_metrics.json"),
         "spread_metrics_path": str(split_out / "spread_metrics.json"),
+        "pair_score_components_path": str(split_out / "pair_score_components.json"),
+        "metrics_flat_path": str(split_out / "metrics_flat.json"),
+        "retrieval_curve_path": str(split_out / "retrieval_curve.json"),
         "sampled_embedding_summary_path": str(split_out / "sampled_embedding_summary.json"),
         "embedding_source": "sampled_anchor_rows_from_pair_eval",
         "n_embeddings": int(len(embeddings)),
@@ -1479,6 +1732,23 @@ def main() -> None:
     ap.add_argument("--sampled-embedding-seed", type=int, default=42)
     ap.add_argument("--save-embeddings", action="store_true")
     ap.add_argument("--keep-cached", action="store_true", help="Keep generated cached eval dirs instead of deleting later")
+    ap.add_argument(
+        "--reuse-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Reuse existing generated_eval_cache/<split> when valid; disable with --no-reuse-cache.",
+    )
+    ap.add_argument(
+        "--force-rebuild-cache",
+        action="store_true",
+        help="Always rebuild generated_eval_cache/<split> even when reusable cache exists.",
+    )
+    ap.add_argument(
+        "--resume-cache-build",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When cache is not fully reusable, resume cache construction from completed shard_* dirs.",
+    )
     args = ap.parse_args()
 
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -1521,6 +1791,9 @@ def main() -> None:
         "sampled_embedding_min_examples_per_player": args.sampled_embedding_min_examples_per_player,
         "sampled_embedding_player_selection": args.sampled_embedding_player_selection,
         "sampled_embedding_seed": args.sampled_embedding_seed,
+        "reuse_cache": bool(args.reuse_cache),
+        "force_rebuild_cache": bool(args.force_rebuild_cache),
+        "resume_cache_build": bool(args.resume_cache_build),
     }
     write_json(output_dir / "manifest.json", manifest)
 
@@ -1532,15 +1805,41 @@ def main() -> None:
 
         max_rows = args.max_eval_rows if split == "eval" else args.max_test_rows if split == "test" else None
         cached_split_dir = cache_root / split
-        print(f"[stage] building eval cache for split={split}")
-        cache_meta = build_eval_cache_from_pairs(
-            input_dir=raw_split_dir,
-            output_dir=cached_split_dir,
-            rows_per_shard=args.rows_per_shard,
-            max_rows=max_rows,
-            dataset_tag=split,
-        )
-        write_json(cached_split_dir / "_build_summary.json", cache_meta)
+        cache_summary_path = cached_split_dir / "_build_summary.json"
+
+        cache_reused = False
+        if bool(args.reuse_cache) and not bool(args.force_rebuild_cache):
+            reusable, reason = validate_cached_split_dir(cached_split_dir)
+            if reusable:
+                print(f"[stage] reusing eval cache for split={split} from {cached_split_dir}")
+                cache_meta = read_json_if_exists(cache_summary_path) or {}
+                cache_reused = True
+            else:
+                print(f"[stage] cache not reusable for split={split}: {reason}; rebuilding")
+
+        if not cache_reused:
+            resume_build = bool(args.resume_cache_build) and cached_split_dir.exists() and not bool(args.force_rebuild_cache)
+            if cached_split_dir.exists() and not resume_build:
+                # Explicit clean rebuild path.
+                shutil.rmtree(cached_split_dir)
+            if resume_build:
+                print(f"[stage] resuming eval cache build for split={split}")
+            else:
+                print(f"[stage] building eval cache for split={split}")
+            cache_meta = build_eval_cache_from_pairs(
+                input_dir=raw_split_dir,
+                output_dir=cached_split_dir,
+                rows_per_shard=args.rows_per_shard,
+                max_rows=max_rows,
+                dataset_tag=split,
+                resume_from_existing=resume_build,
+            )
+            write_json(cache_summary_path, cache_meta)
+
+        cache_meta = dict(cache_meta)
+        cache_meta["cache_reused"] = bool(cache_reused)
+        cache_meta["cache_dir"] = str(cached_split_dir)
+        cache_meta["cache_build_summary_path"] = str(cache_summary_path)
 
         split_summary = run_eval_for_split(
             split=split,
@@ -1562,7 +1861,8 @@ def main() -> None:
             sampled_embedding_player_selection=args.sampled_embedding_player_selection,
             sampled_embedding_seed=args.sampled_embedding_seed,
         )
-        split_summary["cache_build_summary_path"] = str(cached_split_dir / "_build_summary.json")
+        split_summary["cache_build_summary_path"] = str(cache_summary_path)
+        split_summary["cache_reused"] = bool(cache_reused)
         split_summaries.append(split_summary)
 
     final_summary = {
@@ -1577,5 +1877,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

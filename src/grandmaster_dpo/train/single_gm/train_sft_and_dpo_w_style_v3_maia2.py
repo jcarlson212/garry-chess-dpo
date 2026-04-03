@@ -768,13 +768,13 @@ def main() -> None:
         print(f"[epoch {epoch}] val_sft_and_dpo_w_style_v3_loss={val_loss:.4f}")
 
 
-        ckpt_path = out_dir / f"policy_epoch{epoch}_sft_and_dpo_w_style_v3_beta={args.beta:.2f}_dpo_loss_weight={args.dpo_loss_weight:.2f}_style_tau={args.style_tau:.2f}_embedding_model={args.style_embedding_model_checkpoint.split('/')[-1]}.pt"
+        ckpt_path = out_dir / f"policy_epoch{epoch}_sft_and_dpo_w_style_v3_beta={args.beta:.2f}_dpo_loss_weight={args.dpo_loss_weight:.2f}_style_tau={args.style_tau:.2f}_embedding_model={args.style_embedding_model_checkpoint.split('/')[-2]}.pt"
         torch.save(policy.state_dict(), ckpt_path)
         print(f"Saved: {ckpt_path}")
 
         if val_loss < best_val:
             best_val = val_loss
-            best_path = out_dir / f"policy_best_sft_and_dpo_w_style_v3_beta={args.beta:.2f}_dpo_loss_weight={args.dpo_loss_weight:.2f}_style_tau={args.style_tau:.2f}_embedding_model={args.style_embedding_model_checkpoint.split('/')[-1]}.pt"
+            best_path = out_dir / f"policy_best_sft_and_dpo_w_style_v3_beta={args.beta:.2f}_dpo_loss_weight={args.dpo_loss_weight:.2f}_style_tau={args.style_tau:.2f}_embedding_model={args.style_embedding_model_checkpoint.split('/')[-2]}.pt"
             torch.save(policy.state_dict(), best_path)
             print(f"Saved best: {best_path} (val_sft_and_dpo_w_style_v3_loss={best_val:.4f})")
 
