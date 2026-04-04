@@ -6,6 +6,7 @@ import json
 import math
 import os
 import shutil
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -711,6 +712,7 @@ class PairEvalDataset(Dataset):
                 "anchor_engine_rank": int(engine_rank[anchor_idx]) if engine_rank is not None and int(engine_rank[anchor_idx]) >= 0 else None,
                 "anchor_engine_cp_gap": float(engine_cp_gap[anchor_idx]) if engine_cp_gap is not None and not math.isnan(float(engine_cp_gap[anchor_idx])) else None,
                 "anchor_example_id": self._decode_vocab(example_vocab, example_ids[anchor_idx]) if example_ids is not None else None,
+                "anchor_game_type_id": int(shard["game_types"][anchor_idx]) if "game_types" in shard else None,
                 "n_pos": int(len(pos_indices)),
                 "n_neg": int(len(neg_indices)),
             },
@@ -1026,7 +1028,8 @@ def compute_pair_metrics(
     sampled_embedding_min_examples_per_player: int = 2,
     sampled_embedding_player_selection: str = "most_seen",
     sampling_seed: int = 42,
-) -> Tuple[Dict[str, Any], np.ndarray, List[Dict[str, Any]], Dict[str, Any]]:
+    progress_every_batches: int = 100,
+) -> Tuple[Dict[str, Any], np.ndarray, List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     def concat_or_empty(xs: List[np.ndarray]) -> np.ndarray:
         return np.concatenate(xs) if xs else np.array([], dtype=np.float32)
 
@@ -1048,6 +1051,18 @@ def compute_pair_metrics(
     engine_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
     sample_store: Dict[str, Dict[str, Any]] = {}
     rng = np.random.default_rng(sampling_seed)
+
+    start_t = time.time()
+    total_batches: Optional[int] = None
+    try:
+        total_batches = len(loader)
+    except Exception:
+        total_batches = None
+    print(
+        f"[eval-progress] pair-metrics start: total_batches="
+        f"{total_batches if total_batches is not None else 'unknown'} "
+        f"max_batches={max_batches if max_batches is not None else 'none'}"
+    )
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
@@ -1071,6 +1086,7 @@ def compute_pair_metrics(
                 sampled_meta = {
                     "player_id": m.get("anchor_player_id"),
                     "phase_id": m.get("anchor_phase_id"),
+                    "game_type_id": m.get("anchor_game_type_id"),
                     "engine_rank": m.get("anchor_engine_rank"),
                     "engine_cp_gap": m.get("anchor_engine_cp_gap"),
                     "example_id": m.get("anchor_example_id"),
@@ -1172,6 +1188,27 @@ def compute_pair_metrics(
             row_mean_neg_cos_all.append(row_mean_neg_cos)
             row_best_pos_cos_all.append(row_best_pos_cos)
             row_hardest_neg_cos_all.append(row_hardest_neg_cos)
+
+            if progress_every_batches > 0 and ((batch_idx + 1) % progress_every_batches == 0):
+                elapsed = max(1e-9, time.time() - start_t)
+                done = batch_idx + 1
+                bps = done / elapsed
+                msg = (
+                    f"[eval-progress] pair-metrics batches={done}"
+                    f" elapsed_min={elapsed/60.0:.1f}"
+                    f" batches_per_sec={bps:.2f}"
+                )
+                if total_batches is not None:
+                    rem = max(total_batches - done, 0)
+                    eta_sec = rem / max(bps, 1e-9)
+                    msg += f" eta_min={eta_sec/60.0:.1f}"
+                print(msg)
+
+    elapsed_total = max(1e-9, time.time() - start_t)
+    print(
+        f"[eval-progress] pair-metrics done: batches={batch_idx + 1 if 'batch_idx' in locals() else 0} "
+        f"elapsed_min={elapsed_total/60.0:.1f}"
+    )
 
     cand_pos_l2 = concat_or_empty(cand_pos_l2_all)
     cand_neg_l2 = concat_or_empty(cand_neg_l2_all)
@@ -1291,7 +1328,52 @@ def compute_pair_metrics(
         player_selection=sampled_embedding_player_selection,
         seed=sampling_seed,
     )
-    return out, sampled_embeddings, sampled_meta_rows, sample_summary
+    rng_diag = np.random.default_rng(42)
+    max_diag = 300_000
+    def _subsample(arr: np.ndarray) -> np.ndarray:
+        if len(arr) <= max_diag:
+            return arr
+        idx = rng_diag.choice(len(arr), size=max_diag, replace=False)
+        return arr[idx]
+
+    pos_c = _subsample(cand_pos_cos)
+    neg_c = _subsample(cand_neg_cos)
+    hard_n = _subsample(row_hardest_neg_cos)
+    soft_n = _subsample(row_mean_neg_cos)
+    pos_r = _subsample(row_mean_pos_cos)
+
+    score_distributions = {
+        "positive_candidate_cosine": _distribution_summary(pos_c),
+        "negative_candidate_cosine": _distribution_summary(neg_c),
+        "positive_row_mean_cosine": _distribution_summary(pos_r),
+        "hard_negative_row_cosine": _distribution_summary(hard_n),
+        "soft_negative_row_cosine": _distribution_summary(soft_n),
+    }
+    pairwise_auc = {
+        "positive_vs_all_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_c), dtype=np.int64), np.zeros(len(neg_c), dtype=np.int64)]),
+            np.concatenate([pos_c, neg_c]),
+        )
+        if len(pos_c) and len(neg_c)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+        "positive_vs_hard_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_r), dtype=np.int64), np.zeros(len(hard_n), dtype=np.int64)]),
+            np.concatenate([pos_r, hard_n]),
+        )
+        if len(pos_r) and len(hard_n)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+        "positive_vs_soft_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_r), dtype=np.int64), np.zeros(len(soft_n), dtype=np.int64)]),
+            np.concatenate([pos_r, soft_n]),
+        )
+        if len(pos_r) and len(soft_n)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+    }
+    extra_pair_diagnostics = {
+        "score_distributions": score_distributions,
+        "pairwise_auc": pairwise_auc,
+    }
+    return out, sampled_embeddings, sampled_meta_rows, sample_summary, extra_pair_diagnostics
 
 
 def encode_example_embeddings(
@@ -1335,6 +1417,8 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
     recall20 = 0.0
     mrr = 0.0
     ranks: List[int] = []
+    positive_recall_sum = {1: 0.0, 3: 0.0, 5: 0.0, 10: 0.0, 20: 0.0, 50: 0.0}
+    positive_counts: List[int] = []
     n = len(pids)
     for i in range(n):
         order = np.argsort(-sims[i])
@@ -1342,6 +1426,8 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
         matches = np.where(ranked_pids == pids[i])[0]
         if len(matches) == 0:
             continue
+        pos_total = int(len(matches))
+        positive_counts.append(pos_total)
         best_rank = int(matches[0]) + 1
         ranks.append(best_rank)
         recall1 += float(best_rank <= 1)
@@ -1349,10 +1435,18 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
         recall10 += float(best_rank <= 10)
         recall20 += float(best_rank <= 20)
         mrr += 1.0 / best_rank
+        for k in positive_recall_sum:
+            in_top_k = int(np.sum(matches < k))
+            positive_recall_sum[k] += float(in_top_k / max(pos_total, 1))
 
     rank_arr = np.asarray(ranks, dtype=np.float32) if ranks else np.asarray([], dtype=np.float32)
     ks = [1, 3, 5, 10, 20, 50]
     recall_at_k = {f"recall_at_{k}": (float(np.mean(rank_arr <= k)) if len(rank_arr) else math.nan) for k in ks}
+    positive_recall_at_k = {
+        f"positive_recall_at_{k}": (float(positive_recall_sum[k] / len(ranks)) if len(ranks) else math.nan)
+        for k in ks
+    }
+    positive_count_arr = np.asarray(positive_counts, dtype=np.float32) if positive_counts else np.asarray([], dtype=np.float32)
 
     return {
         "skipped": False,
@@ -1366,7 +1460,11 @@ def compute_retrieval_metrics(embeddings: np.ndarray, meta_rows: List[Dict[str, 
         "rank_median": float(np.median(rank_arr)) if len(rank_arr) else math.nan,
         "rank_p90": float(np.percentile(rank_arr, 90)) if len(rank_arr) else math.nan,
         "rank_p95": float(np.percentile(rank_arr, 95)) if len(rank_arr) else math.nan,
+        "mean_positive_count_per_query": float(np.mean(positive_count_arr)) if len(positive_count_arr) else math.nan,
+        "median_positive_count_per_query": float(np.median(positive_count_arr)) if len(positive_count_arr) else math.nan,
+        "rank_values": [int(x) for x in ranks],
         "recall_curve": recall_at_k,
+        "positive_recall_curve": positive_recall_at_k,
     }
 
 
@@ -1425,6 +1523,331 @@ def compute_binary_classification_metrics(embeddings: np.ndarray, meta_rows: Lis
         "best_precision": best_precision,
         "best_recall": best_recall,
         "positive_pair_rate": float(np.mean(y_true)),
+    }
+
+
+def _distribution_summary(values: np.ndarray, *, bins: int = 80, lo: float = -1.0, hi: float = 1.0) -> Dict[str, Any]:
+    arr = np.asarray(values, dtype=np.float32)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return {
+            "count": 0,
+            "mean": math.nan,
+            "std": math.nan,
+            "p10": math.nan,
+            "p25": math.nan,
+            "p50": math.nan,
+            "p75": math.nan,
+            "p90": math.nan,
+            "hist": {"edges": [], "counts": []},
+        }
+    hist_counts, hist_edges = np.histogram(arr, bins=bins, range=(lo, hi))
+    return {
+        "count": int(len(arr)),
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr)),
+        "p10": float(np.percentile(arr, 10)),
+        "p25": float(np.percentile(arr, 25)),
+        "p50": float(np.percentile(arr, 50)),
+        "p75": float(np.percentile(arr, 75)),
+        "p90": float(np.percentile(arr, 90)),
+        "hist": {
+            "edges": [float(x) for x in hist_edges.tolist()],
+            "counts": [int(x) for x in hist_counts.tolist()],
+        },
+    }
+
+
+def _pair_auc_ap(y_true: np.ndarray, scores: np.ndarray) -> Dict[str, Any]:
+    y = np.asarray(y_true, dtype=np.int64)
+    s = np.asarray(scores, dtype=np.float64)
+    valid = np.isfinite(s)
+    y = y[valid]
+    s = s[valid]
+    if len(y) == 0:
+        return {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan}
+    return {
+        "n_pairs": int(len(y)),
+        "roc_auc": safe_auc_from_scores(y, s),
+        "average_precision": average_precision(y, s),
+    }
+
+
+def _threshold_table(y_true: np.ndarray, scores: np.ndarray, thresholds: np.ndarray) -> List[Dict[str, float]]:
+    y = np.asarray(y_true, dtype=np.int64)
+    s = np.asarray(scores, dtype=np.float64)
+    out: List[Dict[str, float]] = []
+    for thr in thresholds:
+        pred = (s >= thr).astype(np.int64)
+        tp = int(((pred == 1) & (y == 1)).sum())
+        fp = int(((pred == 1) & (y == 0)).sum())
+        tn = int(((pred == 0) & (y == 0)).sum())
+        fn = int(((pred == 0) & (y == 1)).sum())
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12)
+        tpr = recall
+        fpr = fp / max(fp + tn, 1)
+        specificity = tn / max(tn + fp, 1)
+        out.append(
+            {
+                "threshold": float(thr),
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+                "tpr": float(tpr),
+                "fpr": float(fpr),
+                "specificity": float(specificity),
+                "tp": float(tp),
+                "fp": float(fp),
+                "tn": float(tn),
+                "fn": float(fn),
+            }
+        )
+    return out
+
+
+def _calibration_from_scores(y_true: np.ndarray, scores: np.ndarray, num_bins: int = 12) -> Dict[str, Any]:
+    y = np.asarray(y_true, dtype=np.int64)
+    s = np.asarray(scores, dtype=np.float64)
+    valid = np.isfinite(s)
+    y = y[valid]
+    s = s[valid]
+    if len(y) == 0:
+        return {"n_pairs": 0, "ece": math.nan, "bins": []}
+    # Dot/cosine in [-1, 1] -> pseudo probability.
+    p = np.clip((s + 1.0) * 0.5, 0.0, 1.0)
+    edges = np.linspace(0.0, 1.0, num_bins + 1)
+    bins: List[Dict[str, Any]] = []
+    ece = 0.0
+    for i in range(num_bins):
+        lo, hi = edges[i], edges[i + 1]
+        if i == num_bins - 1:
+            m = (p >= lo) & (p <= hi)
+        else:
+            m = (p >= lo) & (p < hi)
+        n = int(m.sum())
+        if n == 0:
+            bins.append({"bin_lo": float(lo), "bin_hi": float(hi), "count": 0, "mean_conf": math.nan, "empirical_acc": math.nan})
+            continue
+        conf = float(np.mean(p[m]))
+        acc = float(np.mean(y[m]))
+        w = n / max(len(y), 1)
+        ece += w * abs(acc - conf)
+        bins.append({"bin_lo": float(lo), "bin_hi": float(hi), "count": n, "mean_conf": conf, "empirical_acc": acc})
+    return {"n_pairs": int(len(y)), "ece": float(ece), "bins": bins}
+
+
+def _bootstrap_ci(values: np.ndarray, fn, *, n_boot: int = 300, seed: int = 42) -> Dict[str, float]:
+    arr = np.asarray(values)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0}
+    rng = np.random.default_rng(seed)
+    point = float(fn(arr))
+    if len(arr) == 1:
+        return {"mean": point, "ci95_lo": point, "ci95_hi": point, "n": 1}
+    boots = np.zeros(n_boot, dtype=np.float64)
+    n = len(arr)
+    for i in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        boots[i] = float(fn(arr[idx]))
+    return {
+        "mean": point,
+        "ci95_lo": float(np.percentile(boots, 2.5)),
+        "ci95_hi": float(np.percentile(boots, 97.5)),
+        "n": int(n),
+    }
+
+
+def _bootstrap_auc(y_true: np.ndarray, scores: np.ndarray, *, n_boot: int = 300, seed: int = 42) -> Dict[str, float]:
+    y = np.asarray(y_true, dtype=np.int64)
+    s = np.asarray(scores, dtype=np.float64)
+    valid = np.isfinite(s)
+    y = y[valid]
+    s = s[valid]
+    if len(y) == 0:
+        return {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0}
+    point = safe_auc_from_scores(y, s)
+    if point is None:
+        return {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": int(len(y))}
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    boots = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        auc = safe_auc_from_scores(y[idx], s[idx])
+        if auc is not None and np.isfinite(auc):
+            boots.append(float(auc))
+    if not boots:
+        return {"mean": float(point), "ci95_lo": math.nan, "ci95_hi": math.nan, "n": int(n)}
+    b = np.asarray(boots, dtype=np.float64)
+    return {
+        "mean": float(point),
+        "ci95_lo": float(np.percentile(b, 2.5)),
+        "ci95_hi": float(np.percentile(b, 97.5)),
+        "n": int(n),
+    }
+
+
+def build_extended_diagnostics(
+    *,
+    embeddings: np.ndarray,
+    meta_rows: List[Dict[str, Any]],
+    retrieval: Dict[str, Any],
+    classification: Dict[str, Any],
+    pair_metrics: Dict[str, Any],
+    score_distributions: Dict[str, Any],
+    pairwise_auc: Dict[str, Any],
+    sample_limit: int = 250_000,
+) -> Dict[str, Any]:
+    player_ids = np.asarray([m.get("player_id") for m in meta_rows], dtype=object)
+    phase_ids = np.asarray([m.get("phase_id") for m in meta_rows], dtype=object)
+    engine_ranks = np.asarray([m.get("engine_rank") for m in meta_rows], dtype=object)
+    game_type_ids = np.asarray([m.get("game_type_id") for m in meta_rows], dtype=object)
+
+    valid_idx = np.where(np.asarray([pid is not None for pid in player_ids]))[0]
+    emb = embeddings[valid_idx]
+    pids = player_ids[valid_idx]
+    phs = phase_ids[valid_idx]
+    eng = engine_ranks[valid_idx]
+    gts = game_type_ids[valid_idx]
+
+    rng = np.random.default_rng(42)
+    n = len(pids)
+    pair_count = min(sample_limit, n * (n - 1) // 2)
+    i_idx = rng.integers(0, n, size=pair_count)
+    j_idx = rng.integers(0, n, size=pair_count)
+    keep = i_idx != j_idx
+    i_idx = i_idx[keep]
+    j_idx = j_idx[keep]
+    y = (pids[i_idx] == pids[j_idx]).astype(np.int64)
+    s = np.sum(emb[i_idx] * emb[j_idx], axis=1)
+    same_phase = (phs[i_idx] == phs[j_idx]) & np.asarray([x is not None for x in phs[i_idx]]) & np.asarray([x is not None for x in phs[j_idx]])
+
+    thresholds = np.linspace(-1.0, 1.0, 201, dtype=np.float64)
+    masks = {
+        "overall": np.ones(len(y), dtype=bool),
+        "same_player_same_phase_vs_diff_player_diff_phase": (y == 1) & same_phase | ((y == 0) & (~same_phase)),
+        "hard_negative_vs_positive": (y == 1) | ((y == 0) & same_phase),
+        "soft_negative_vs_positive": (y == 1) | ((y == 0) & (~same_phase)),
+    }
+
+    threshold_sweep: Dict[str, Any] = {}
+    calibration: Dict[str, Any] = {}
+    for name, m in masks.items():
+        yy = y[m]
+        ss = s[m]
+        threshold_sweep[name] = {
+            "n_pairs": int(len(ss)),
+            "summary": _pair_auc_ap(yy, ss),
+            "points": _threshold_table(yy, ss, thresholds),
+        }
+        calibration[name] = _calibration_from_scores(yy, ss)
+
+    # Retrieval@K curve and CI from rank values.
+    ranks = np.asarray(retrieval.get("rank_values", []), dtype=np.float64)
+    ks = [1, 3, 5, 10, 20, 50, 100]
+    retrieval_at_k = {
+        "n_ranks": int(len(ranks)),
+        "recall_at_k": {f"k{k}": (float(np.mean(ranks <= k)) if len(ranks) else math.nan) for k in ks},
+        "positive_recall_at_k": retrieval.get("positive_recall_curve", {}),
+        "rank_mean": float(np.mean(ranks)) if len(ranks) else math.nan,
+        "rank_median": float(np.median(ranks)) if len(ranks) else math.nan,
+        "rank_p90": float(np.percentile(ranks, 90)) if len(ranks) else math.nan,
+        "rank_p95": float(np.percentile(ranks, 95)) if len(ranks) else math.nan,
+    }
+
+    # Conditioned metrics: phase, game_type, engine bucket.
+    def _condition_group(name: str, mask: np.ndarray) -> Dict[str, Any]:
+        yy = y[mask]
+        ss = s[mask]
+        return {
+            "name": name,
+            "n_pairs": int(len(ss)),
+            **_pair_auc_ap(yy, ss),
+            "score_distribution": _distribution_summary(ss, bins=60),
+        }
+
+    conditioned: Dict[str, Any] = {"phase": [], "game_type": [], "engine_rank_bucket": []}
+    phase_vals = sorted({int(x) for x in phs if x is not None})
+    for ph in phase_vals:
+        mask = np.asarray([(phs[i] == ph and phs[j] == ph) for i, j in zip(i_idx, j_idx)], dtype=bool)
+        conditioned["phase"].append(_condition_group(f"phase_{ph}", mask))
+    gt_vals = sorted({int(x) for x in gts if x is not None})
+    for gt in gt_vals:
+        mask = np.asarray([(gts[i] == gt and gts[j] == gt) for i, j in zip(i_idx, j_idx)], dtype=bool)
+        conditioned["game_type"].append(_condition_group(f"game_type_{gt}", mask))
+
+    def _eng_bucket(v: Any) -> str:
+        if v is None:
+            return "unknown"
+        vv = int(v)
+        if vv <= 3:
+            return "engine_like"
+        if vv > 10:
+            return "engine_unlike"
+        return "engine_middle"
+
+    buckets = ["engine_like", "engine_middle", "engine_unlike", "unknown"]
+    for b in buckets:
+        mask = np.asarray([(_eng_bucket(eng[i]) == b and _eng_bucket(eng[j]) == b) for i, j in zip(i_idx, j_idx)], dtype=bool)
+        conditioned["engine_rank_bucket"].append(_condition_group(b, mask))
+
+    # Bootstrap CIs.
+    bootstrap = {
+        "mrr": _bootstrap_ci(ranks, lambda x: np.mean(1.0 / np.clip(x, 1, None))) if len(ranks) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
+        "recall_at_1": _bootstrap_ci(ranks, lambda x: np.mean(x <= 1)) if len(ranks) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
+        "recall_at_5": _bootstrap_ci(ranks, lambda x: np.mean(x <= 5)) if len(ranks) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
+        "classification_roc_auc": _bootstrap_auc(y, s) if len(s) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
+        "row_cos_hard_gap": {
+            "mean": try_float((((pair_metrics.get("row_aggregated") or {}).get("cosine") or {}).get("hard_gap"))),
+            "ci95_lo": math.nan,
+            "ci95_hi": math.nan,
+            "n": int((pair_metrics.get("n_anchor_rows") or 0)),
+        },
+    }
+
+    # Top confusions via player centroids.
+    by_player: Dict[str, List[np.ndarray]] = defaultdict(list)
+    for z, pid in zip(emb, pids):
+        if pid is not None:
+            by_player[str(pid)].append(z)
+    confusions: List[Dict[str, Any]] = []
+    if len(by_player) >= 2:
+        pnames = sorted(by_player.keys())
+        cents = []
+        counts = []
+        for p in pnames:
+            mat = np.stack(by_player[p], axis=0)
+            c = normalize_rows(mat.mean(axis=0, keepdims=True))[0]
+            cents.append(c)
+            counts.append(len(mat))
+        cm = np.stack(cents, axis=0)
+        sim = cm @ cm.T
+        for i in range(len(pnames)):
+            for j in range(i + 1, len(pnames)):
+                confusions.append(
+                    {
+                        "player_a": pnames[i],
+                        "player_b": pnames[j],
+                        "cosine": float(sim[i, j]),
+                        "n_a": int(counts[i]),
+                        "n_b": int(counts[j]),
+                    }
+                )
+        confusions.sort(key=lambda r: r["cosine"], reverse=True)
+        confusions = confusions[:100]
+
+    return {
+        "threshold_sweep": threshold_sweep,
+        "retrieval_at_k": retrieval_at_k,
+        "score_distributions": score_distributions,
+        "pairwise_auc": pairwise_auc,
+        "conditioned_metrics": conditioned,
+        "bootstrap_ci": bootstrap,
+        "calibration": calibration,
+        "top_confusions": {"pairs": confusions, "n_players": int(len(by_player))},
     }
 
 
@@ -1576,6 +1999,11 @@ def flatten_metrics_for_split(
         "recall_at_5": _safe_float(retrieval.get("recall_at_5")),
         "recall_at_10": _safe_float(retrieval.get("recall_at_10")),
         "recall_at_20": _safe_float(retrieval.get("recall_at_20")),
+        "positive_recall_at_1": _safe_float(retrieval.get("positive_recall_at_1")),
+        "positive_recall_at_5": _safe_float(retrieval.get("positive_recall_at_5")),
+        "positive_recall_at_10": _safe_float(retrieval.get("positive_recall_at_10")),
+        "positive_recall_at_20": _safe_float(retrieval.get("positive_recall_at_20")),
+        "mean_positive_count_per_query": _safe_float(retrieval.get("mean_positive_count_per_query")),
         "rank_mean": _safe_float(retrieval.get("rank_mean")),
         "rank_median": _safe_float(retrieval.get("rank_median")),
         "rank_p90": _safe_float(retrieval.get("rank_p90")),
@@ -1596,6 +2024,10 @@ def flatten_metrics_for_split(
     recall_curve = retrieval.get("recall_curve")
     if isinstance(recall_curve, dict):
         for k, v in recall_curve.items():
+            flat[str(k)] = _safe_float(v)
+    pos_curve = retrieval.get("positive_recall_curve")
+    if isinstance(pos_curve, dict):
+        for k, v in pos_curve.items():
             flat[str(k)] = _safe_float(v)
     return flat
 
@@ -1621,6 +2053,7 @@ def run_eval_for_split(
     sampled_embedding_min_examples_per_player: int,
     sampled_embedding_player_selection: str,
     sampled_embedding_seed: int,
+    progress_every_batches: int,
 ) -> Dict[str, Any]:
     print(f"[eval] split={split} dir={cached_split_dir}")
     split_out = output_root / split
@@ -1642,7 +2075,7 @@ def run_eval_for_split(
         prefetch_factor=(2 if num_workers > 0 else None),
         pin_memory=False,
     )
-    pair_metrics, embeddings, meta_rows, sample_summary = compute_pair_metrics(
+    pair_metrics, embeddings, meta_rows, sample_summary, extra_pair_diag = compute_pair_metrics(
         model,
         pair_loader,
         device,
@@ -1653,6 +2086,7 @@ def run_eval_for_split(
         sampled_embedding_min_examples_per_player=sampled_embedding_min_examples_per_player,
         sampled_embedding_player_selection=sampled_embedding_player_selection,
         sampling_seed=sampled_embedding_seed,
+        progress_every_batches=progress_every_batches,
     )
     write_json(split_out / "pair_metrics.json", pair_metrics)
     write_json(split_out / "sampled_embedding_summary.json", sample_summary)
@@ -1660,6 +2094,15 @@ def run_eval_for_split(
     retrieval = compute_retrieval_metrics(embeddings, meta_rows)
     classification = compute_binary_classification_metrics(embeddings, meta_rows)
     spread = compute_spread_metrics(embeddings, meta_rows)
+    extended = build_extended_diagnostics(
+        embeddings=embeddings,
+        meta_rows=meta_rows,
+        retrieval=retrieval,
+        classification=classification,
+        pair_metrics=pair_metrics,
+        score_distributions=extra_pair_diag.get("score_distributions", {}),
+        pairwise_auc=extra_pair_diag.get("pairwise_auc", {}),
+    )
     pair_score_components = build_pair_score_components(pair_metrics)
     metrics_flat = flatten_metrics_for_split(
         retrieval=retrieval,
@@ -1674,6 +2117,14 @@ def run_eval_for_split(
     write_json(split_out / "pair_score_components.json", pair_score_components)
     write_json(split_out / "metrics_flat.json", metrics_flat)
     write_json(split_out / "retrieval_curve.json", {"recall_curve": retrieval.get("recall_curve", {})})
+    write_json(split_out / "threshold_sweep.json", extended.get("threshold_sweep", {}))
+    write_json(split_out / "retrieval_at_k.json", extended.get("retrieval_at_k", {}))
+    write_json(split_out / "score_distributions.json", extended.get("score_distributions", {}))
+    write_json(split_out / "pairwise_auc.json", extended.get("pairwise_auc", {}))
+    write_json(split_out / "conditioned_metrics.json", extended.get("conditioned_metrics", {}))
+    write_json(split_out / "bootstrap_ci.json", extended.get("bootstrap_ci", {}))
+    write_json(split_out / "calibration.json", extended.get("calibration", {}))
+    write_json(split_out / "top_confusions.json", extended.get("top_confusions", {}))
 
     if save_embeddings:
         np.savez_compressed(
@@ -1696,6 +2147,14 @@ def run_eval_for_split(
         "pair_score_components_path": str(split_out / "pair_score_components.json"),
         "metrics_flat_path": str(split_out / "metrics_flat.json"),
         "retrieval_curve_path": str(split_out / "retrieval_curve.json"),
+        "threshold_sweep_path": str(split_out / "threshold_sweep.json"),
+        "retrieval_at_k_path": str(split_out / "retrieval_at_k.json"),
+        "score_distributions_path": str(split_out / "score_distributions.json"),
+        "pairwise_auc_path": str(split_out / "pairwise_auc.json"),
+        "conditioned_metrics_path": str(split_out / "conditioned_metrics.json"),
+        "bootstrap_ci_path": str(split_out / "bootstrap_ci.json"),
+        "calibration_path": str(split_out / "calibration.json"),
+        "top_confusions_path": str(split_out / "top_confusions.json"),
         "sampled_embedding_summary_path": str(split_out / "sampled_embedding_summary.json"),
         "embedding_source": "sampled_anchor_rows_from_pair_eval",
         "n_embeddings": int(len(embeddings)),
@@ -1730,6 +2189,7 @@ def main() -> None:
     ap.add_argument("--sampled-embedding-min-examples-per-player", type=int, default=2)
     ap.add_argument("--sampled-embedding-player-selection", choices=["most_seen", "random"], default="most_seen")
     ap.add_argument("--sampled-embedding-seed", type=int, default=42)
+    ap.add_argument("--progress-every-batches", type=int, default=100, help="Print progress every N pair batches (<=0 disables).")
     ap.add_argument("--save-embeddings", action="store_true")
     ap.add_argument("--keep-cached", action="store_true", help="Keep generated cached eval dirs instead of deleting later")
     ap.add_argument(
@@ -1791,6 +2251,7 @@ def main() -> None:
         "sampled_embedding_min_examples_per_player": args.sampled_embedding_min_examples_per_player,
         "sampled_embedding_player_selection": args.sampled_embedding_player_selection,
         "sampled_embedding_seed": args.sampled_embedding_seed,
+        "progress_every_batches": args.progress_every_batches,
         "reuse_cache": bool(args.reuse_cache),
         "force_rebuild_cache": bool(args.force_rebuild_cache),
         "resume_cache_build": bool(args.resume_cache_build),
@@ -1860,6 +2321,7 @@ def main() -> None:
             sampled_embedding_min_examples_per_player=args.sampled_embedding_min_examples_per_player,
             sampled_embedding_player_selection=args.sampled_embedding_player_selection,
             sampled_embedding_seed=args.sampled_embedding_seed,
+            progress_every_batches=args.progress_every_batches,
         )
         split_summary["cache_build_summary_path"] = str(cache_summary_path)
         split_summary["cache_reused"] = bool(cache_reused)
