@@ -1016,6 +1016,484 @@ def finalize_sampled_anchor_embeddings(
     return emb, meta_rows, summary
 
 
+def _decode_vocab_value(vocab: Optional[List[str]], encoded_value: Any) -> Optional[str]:
+    if vocab is None or encoded_value is None:
+        return None
+    try:
+        idx = int(encoded_value)
+    except Exception:
+        return None
+    if idx < 0 or idx >= len(vocab):
+        return None
+    value = vocab[idx]
+    return value if value != "" else None
+
+
+def _checkpoint_signature(checkpoint_path: Optional[Path]) -> str:
+    if checkpoint_path is None:
+        return "unknown_checkpoint"
+    try:
+        stat = checkpoint_path.stat()
+        return f"{checkpoint_path.resolve()}|{int(stat.st_mtime)}|{int(stat.st_size)}"
+    except Exception:
+        return str(checkpoint_path)
+
+
+def _embedding_cache_paths(cache_dir: Path, shard_name: str) -> Tuple[Path, Path, Path]:
+    emb_path = cache_dir / f"{shard_name}.embeddings.npz"
+    meta_path = cache_dir / f"{shard_name}.meta.json"
+    tmp_emb_path = cache_dir / f".{shard_name}.embeddings.tmp.npz"
+    return emb_path, meta_path, tmp_emb_path
+
+
+def _load_cached_shard_embeddings(
+    *,
+    emb_path: Path,
+    meta_path: Path,
+    expected_examples: int,
+    model_signature: str,
+) -> Optional[np.ndarray]:
+    meta = read_json_if_exists(meta_path)
+    if meta is None:
+        return None
+    if str(meta.get("model_signature", "")) != model_signature:
+        return None
+    if int(meta.get("n_examples", -1)) != int(expected_examples):
+        return None
+    if not emb_path.exists():
+        return None
+    try:
+        with np.load(emb_path) as data:
+            emb = np.asarray(data["embeddings"], dtype=np.float32)
+    except Exception:
+        return None
+    if emb.ndim != 2 or emb.shape[0] != int(expected_examples):
+        return None
+    return emb
+
+
+def _save_cached_shard_embeddings(
+    *,
+    emb_path: Path,
+    meta_path: Path,
+    tmp_emb_path: Path,
+    embeddings: np.ndarray,
+    model_signature: str,
+) -> None:
+    emb_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(tmp_emb_path, embeddings=np.asarray(embeddings, dtype=np.float32))
+    os.replace(tmp_emb_path, emb_path)
+    write_json(
+        meta_path,
+        {
+            "model_signature": model_signature,
+            "n_examples": int(embeddings.shape[0]),
+            "embedding_dim": int(embeddings.shape[1]) if embeddings.ndim == 2 else None,
+        },
+    )
+
+
+def _encode_shard_embeddings(
+    *,
+    model: torch.nn.Module,
+    device: torch.device,
+    model_variant_name: str,
+    boards_u8: np.ndarray,
+    moves_u8: np.ndarray,
+    game_types_u8: np.ndarray,
+    batch_size: int,
+) -> np.ndarray:
+    chunks: List[np.ndarray] = []
+    n = int(boards_u8.shape[0])
+    with torch.no_grad():
+        for start in range(0, n, batch_size):
+            end = min(start + batch_size, n)
+            boards = torch.from_numpy(np.asarray(boards_u8[start:end])).long()
+            boards = F.one_hot(boards, num_classes=13)[..., 1:]
+            boards = boards.permute(0, 1, 3, 2).reshape(end - start, 5, 12, 8, 8).float()
+
+            feats: Dict[str, torch.Tensor] = {
+                "boards": boards.to(device),
+                "move": torch.from_numpy(np.asarray(moves_u8[start:end])).long().to(device),
+            }
+            if model_variant_uses_game_type(model_variant_name):
+                feats["game_type"] = torch.from_numpy(np.asarray(game_types_u8[start:end])).long().to(device)
+            if model_variant_uses_opponent_context(model_variant_name):
+                feats["opponent_context"] = torch.zeros((end - start, 32), dtype=torch.float32, device=device)
+            z = model(feats).detach().cpu().numpy().astype(np.float32, copy=False)
+            chunks.append(z)
+    if not chunks:
+        return np.zeros((0, 1), dtype=np.float32)
+    return np.concatenate(chunks, axis=0)
+
+
+def compute_pair_metrics_with_embedding_cache(
+    *,
+    model: torch.nn.Module,
+    device: torch.device,
+    model_variant_name: str,
+    cached_split_dir: Path,
+    eval_taus: Sequence[float],
+    batch_size: int,
+    max_batches: Optional[int],
+    progress_every_batches: int,
+    sample_anchor_embeddings_per_player: int,
+    sampled_embedding_max_players: Optional[int],
+    sampled_embedding_min_examples_per_player: int,
+    sampled_embedding_player_selection: str,
+    sampling_seed: int,
+    embedding_cache_dir: Path,
+    model_signature: str,
+) -> Tuple[Dict[str, Any], np.ndarray, List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    def concat_or_empty(xs: List[np.ndarray]) -> np.ndarray:
+        return np.concatenate(xs) if xs else np.array([], dtype=np.float32)
+
+    shard_dirs = sorted([p for p in cached_split_dir.glob("shard_*") if p.is_dir()])
+    if not shard_dirs:
+        raise ValueError(f"No shard_* dirs found in {cached_split_dir}")
+
+    cand_pos_l2_all: List[np.ndarray] = []
+    cand_neg_l2_all: List[np.ndarray] = []
+    cand_pos_cos_all: List[np.ndarray] = []
+    cand_neg_cos_all: List[np.ndarray] = []
+
+    row_mean_pos_l2_all: List[np.ndarray] = []
+    row_mean_neg_l2_all: List[np.ndarray] = []
+    row_best_pos_l2_all: List[np.ndarray] = []
+    row_hardest_neg_l2_all: List[np.ndarray] = []
+    row_mean_pos_cos_all: List[np.ndarray] = []
+    row_mean_neg_cos_all: List[np.ndarray] = []
+    row_best_pos_cos_all: List[np.ndarray] = []
+    row_hardest_neg_cos_all: List[np.ndarray] = []
+
+    engine_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+    sample_store: Dict[str, Dict[str, Any]] = {}
+    rng = np.random.default_rng(sampling_seed)
+
+    total_rows = 0
+    for sd in shard_dirs:
+        anchor_idx = np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
+        total_rows += int(len(anchor_idx))
+    max_rows = int(total_rows if max_batches is None else min(total_rows, max_batches * batch_size))
+    print(f"[eval-progress] pair-metrics (embedding-cache) start: total_rows={total_rows:,} max_rows={max_rows:,}")
+
+    processed_rows = 0
+    start_t = time.time()
+
+    for sd in shard_dirs:
+        boards = np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r")
+        moves = np.load(sd / "examples_moves.uint8.npy", mmap_mode="r")
+        game_types = np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r")
+        anchor_idx = np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
+        pos_flat = np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r")
+        pos_offsets = np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r")
+        neg_flat = np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r")
+        neg_offsets = np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r")
+
+        files = detect_optional_feature_files(sd)
+        player_ids = np.load(files.player_ids, mmap_mode="r") if files.player_ids is not None else None
+        phase_ids = np.load(files.phase_ids, mmap_mode="r") if files.phase_ids is not None else None
+        engine_rank = np.load(files.engine_rank, mmap_mode="r") if files.engine_rank is not None else None
+        engine_cp_gap = np.load(files.engine_cp_gap, mmap_mode="r") if files.engine_cp_gap is not None else None
+        example_ids = np.load(files.example_ids, mmap_mode="r") if files.example_ids is not None else None
+        player_vocab = load_vocab(files.player_vocab)
+        example_vocab = load_vocab(files.example_vocab)
+
+        emb_path, meta_path, tmp_emb_path = _embedding_cache_paths(embedding_cache_dir, sd.name)
+        emb = _load_cached_shard_embeddings(
+            emb_path=emb_path,
+            meta_path=meta_path,
+            expected_examples=int(boards.shape[0]),
+            model_signature=model_signature,
+        )
+        if emb is None:
+            print(f"[embed-cache] building {sd.name} embeddings cache")
+            emb = _encode_shard_embeddings(
+                model=model,
+                device=device,
+                model_variant_name=model_variant_name,
+                boards_u8=boards,
+                moves_u8=moves,
+                game_types_u8=game_types,
+                batch_size=max(1, int(batch_size)),
+            )
+            _save_cached_shard_embeddings(
+                emb_path=emb_path,
+                meta_path=meta_path,
+                tmp_emb_path=tmp_emb_path,
+                embeddings=emb,
+                model_signature=model_signature,
+            )
+
+        n_rows = int(len(anchor_idx))
+        for row_i in range(n_rows):
+            if processed_rows >= max_rows:
+                break
+            aidx = int(anchor_idx[row_i])
+            p0, p1 = int(pos_offsets[row_i]), int(pos_offsets[row_i + 1])
+            n0, n1 = int(neg_offsets[row_i]), int(neg_offsets[row_i + 1])
+            pos_idx = np.asarray(pos_flat[p0:p1], dtype=np.int64)
+            neg_idx = np.asarray(neg_flat[n0:n1], dtype=np.int64)
+            if len(pos_idx) == 0 or len(neg_idx) == 0:
+                processed_rows += 1
+                continue
+
+            z_anchor = emb[aidx]
+            z_pos = emb[pos_idx]
+            z_neg = emb[neg_idx]
+
+            pos_diff = z_pos - z_anchor[None, :]
+            neg_diff = z_neg - z_anchor[None, :]
+            pos_l2_row = np.linalg.norm(pos_diff, axis=1).astype(np.float32)
+            neg_l2_row = np.linalg.norm(neg_diff, axis=1).astype(np.float32)
+            pos_cos_row = (z_pos @ z_anchor).astype(np.float32)
+            neg_cos_row = (z_neg @ z_anchor).astype(np.float32)
+
+            cand_pos_l2_all.append(pos_l2_row)
+            cand_neg_l2_all.append(neg_l2_row)
+            cand_pos_cos_all.append(pos_cos_row)
+            cand_neg_cos_all.append(neg_cos_row)
+
+            row_mean_pos_l2 = float(np.mean(pos_l2_row))
+            row_mean_neg_l2 = float(np.mean(neg_l2_row))
+            row_best_pos_l2 = float(np.min(pos_l2_row))
+            row_hardest_neg_l2 = float(np.min(neg_l2_row))
+            row_mean_pos_cos = float(np.mean(pos_cos_row))
+            row_mean_neg_cos = float(np.mean(neg_cos_row))
+            row_best_pos_cos = float(np.max(pos_cos_row))
+            row_hardest_neg_cos = float(np.max(neg_cos_row))
+
+            row_mean_pos_l2_all.append(np.asarray([row_mean_pos_l2], dtype=np.float32))
+            row_mean_neg_l2_all.append(np.asarray([row_mean_neg_l2], dtype=np.float32))
+            row_best_pos_l2_all.append(np.asarray([row_best_pos_l2], dtype=np.float32))
+            row_hardest_neg_l2_all.append(np.asarray([row_hardest_neg_l2], dtype=np.float32))
+            row_mean_pos_cos_all.append(np.asarray([row_mean_pos_cos], dtype=np.float32))
+            row_mean_neg_cos_all.append(np.asarray([row_mean_neg_cos], dtype=np.float32))
+            row_best_pos_cos_all.append(np.asarray([row_best_pos_cos], dtype=np.float32))
+            row_hardest_neg_cos_all.append(np.asarray([row_hardest_neg_cos], dtype=np.float32))
+
+            anchor_player_id = _decode_vocab_value(player_vocab, player_ids[aidx]) if player_ids is not None else None
+            anchor_phase_id = int(phase_ids[aidx]) if phase_ids is not None else None
+            anchor_engine_rank = int(engine_rank[aidx]) if engine_rank is not None and int(engine_rank[aidx]) >= 0 else None
+            anchor_engine_cp_gap = (
+                float(engine_cp_gap[aidx]) if engine_cp_gap is not None and not math.isnan(float(engine_cp_gap[aidx])) else None
+            )
+            anchor_example_id = _decode_vocab_value(example_vocab, example_ids[aidx]) if example_ids is not None else None
+            anchor_game_type_id = int(game_types[aidx]) if game_types is not None else None
+
+            sampled_meta = {
+                "player_id": anchor_player_id,
+                "phase_id": anchor_phase_id,
+                "game_type_id": anchor_game_type_id,
+                "engine_rank": anchor_engine_rank,
+                "engine_cp_gap": anchor_engine_cp_gap,
+                "example_id": anchor_example_id,
+                "source": "anchor_row_sample",
+                "row_idx": int(row_i),
+                "shard_id": str(sd.name),
+            }
+            _reservoir_update_player_samples(
+                sample_store=sample_store,
+                player_id=sampled_meta["player_id"],
+                embedding=np.asarray(z_anchor, dtype=np.float32),
+                meta=sampled_meta,
+                per_player_cap=sample_anchor_embeddings_per_player,
+                rng=rng,
+            )
+
+            rank = anchor_engine_rank
+            if rank is not None:
+                if rank <= 3:
+                    bucket = "engine_like"
+                elif rank > 10:
+                    bucket = "engine_unlike"
+                else:
+                    bucket = "engine_middle"
+                engine_buckets[bucket]["row_mean_pos_l2"].append(row_mean_pos_l2)
+                engine_buckets[bucket]["row_mean_neg_l2"].append(row_mean_neg_l2)
+                engine_buckets[bucket]["row_best_pos_l2"].append(row_best_pos_l2)
+                engine_buckets[bucket]["row_hardest_neg_l2"].append(row_hardest_neg_l2)
+                engine_buckets[bucket]["row_mean_pos_cos"].append(row_mean_pos_cos)
+                engine_buckets[bucket]["row_mean_neg_cos"].append(row_mean_neg_cos)
+                engine_buckets[bucket]["row_best_pos_cos"].append(row_best_pos_cos)
+                engine_buckets[bucket]["row_hardest_neg_cos"].append(row_hardest_neg_cos)
+
+            processed_rows += 1
+            if progress_every_batches > 0 and (processed_rows % (progress_every_batches * max(1, int(batch_size))) == 0):
+                elapsed = max(1e-9, time.time() - start_t)
+                rps = processed_rows / elapsed
+                rem = max(max_rows - processed_rows, 0)
+                eta_min = rem / max(rps, 1e-9) / 60.0
+                print(
+                    f"[eval-progress] pair-metrics rows={processed_rows:,}/{max_rows:,} "
+                    f"elapsed_min={elapsed/60.0:.1f} rows_per_sec={rps:.1f} eta_min={eta_min:.1f}"
+                )
+
+        if processed_rows >= max_rows:
+            break
+
+    print(
+        f"[eval-progress] pair-metrics (embedding-cache) done: rows={processed_rows:,} "
+        f"elapsed_min={(time.time()-start_t)/60.0:.1f}"
+    )
+
+    cand_pos_l2 = concat_or_empty(cand_pos_l2_all)
+    cand_neg_l2 = concat_or_empty(cand_neg_l2_all)
+    cand_pos_cos = concat_or_empty(cand_pos_cos_all)
+    cand_neg_cos = concat_or_empty(cand_neg_cos_all)
+    row_mean_pos_l2 = concat_or_empty(row_mean_pos_l2_all)
+    row_mean_neg_l2 = concat_or_empty(row_mean_neg_l2_all)
+    row_best_pos_l2 = concat_or_empty(row_best_pos_l2_all)
+    row_hardest_neg_l2 = concat_or_empty(row_hardest_neg_l2_all)
+    row_mean_pos_cos = concat_or_empty(row_mean_pos_cos_all)
+    row_mean_neg_cos = concat_or_empty(row_mean_neg_cos_all)
+    row_best_pos_cos = concat_or_empty(row_best_pos_cos_all)
+    row_hardest_neg_cos = concat_or_empty(row_hardest_neg_cos_all)
+
+    out: Dict[str, Any] = {
+        "n_anchor_rows": int(len(row_mean_pos_l2)),
+        "n_pos_candidates": int(len(cand_pos_l2)),
+        "n_neg_candidates": int(len(cand_neg_l2)),
+        "candidate_level": {
+            "l2": {
+                "positive": percentiles_dict(cand_pos_l2, "pos_l2"),
+                "negative": percentiles_dict(cand_neg_l2, "neg_l2"),
+                "gap_mean": float(np.mean(cand_neg_l2) - np.mean(cand_pos_l2)) if len(cand_pos_l2) else math.nan,
+            },
+            "cosine": {
+                "positive": percentiles_dict(cand_pos_cos, "pos_cos"),
+                "negative": percentiles_dict(cand_neg_cos, "neg_cos"),
+                "gap_mean": float(np.mean(cand_pos_cos) - np.mean(cand_neg_cos)) if len(cand_pos_cos) else math.nan,
+            },
+        },
+        "row_aggregated": {
+            "l2": {
+                "mean_positive": percentiles_dict(row_mean_pos_l2, "row_mean_pos_l2"),
+                "mean_negative": percentiles_dict(row_mean_neg_l2, "row_mean_neg_l2"),
+                "best_positive": percentiles_dict(row_best_pos_l2, "row_best_pos_l2"),
+                "hardest_negative": percentiles_dict(row_hardest_neg_l2, "row_hardest_neg_l2"),
+                "mean_gap": float(np.mean(row_mean_neg_l2) - np.mean(row_mean_pos_l2)) if len(row_mean_pos_l2) else math.nan,
+                "hard_gap": float(np.mean(row_hardest_neg_l2) - np.mean(row_mean_pos_l2)) if len(row_mean_pos_l2) else math.nan,
+            },
+            "cosine": {
+                "mean_positive": percentiles_dict(row_mean_pos_cos, "row_mean_pos_cos"),
+                "mean_negative": percentiles_dict(row_mean_neg_cos, "row_mean_neg_cos"),
+                "best_positive": percentiles_dict(row_best_pos_cos, "row_best_pos_cos"),
+                "hardest_negative": percentiles_dict(row_hardest_neg_cos, "row_hardest_neg_cos"),
+                "mean_gap": float(np.mean(row_mean_pos_cos) - np.mean(row_mean_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_cos) - np.mean(row_hardest_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+                "pair_acc_mean_vs_hardest": float(np.mean(row_mean_pos_cos > row_hardest_neg_cos)) if len(row_mean_pos_cos) else math.nan,
+            },
+            "by_eval_tau": {},
+        },
+        "engine_conditioned": {},
+    }
+
+    for tau in eval_taus:
+        row_mean_pos_scaled = row_mean_pos_cos / tau
+        row_mean_neg_scaled = row_mean_neg_cos / tau
+        row_hard_neg_scaled = row_hardest_neg_cos / tau
+        row_mean_pos_exp = np.exp(np.clip(row_mean_pos_scaled, -60.0, 60.0))
+        row_mean_neg_exp = np.exp(np.clip(row_mean_neg_scaled, -60.0, 60.0))
+        row_hard_neg_exp = np.exp(np.clip(row_hard_neg_scaled, -60.0, 60.0))
+        logits = np.stack([row_mean_pos_scaled, row_hard_neg_scaled], axis=1)
+        logits = logits - logits.max(axis=1, keepdims=True)
+        probs = np.exp(logits)
+        probs = probs / np.clip(probs.sum(axis=1, keepdims=True), 1e-12, None)
+        loss = -np.log(np.clip(probs[:, 0], 1e-12, None))
+        out["row_aggregated"]["by_eval_tau"][str(tau)] = {
+            "dot_over_tau": {
+                "mean_positive": percentiles_dict(row_mean_pos_scaled, "row_mean_pos_dot_over_tau"),
+                "mean_negative": percentiles_dict(row_mean_neg_scaled, "row_mean_neg_dot_over_tau"),
+                "hardest_negative": percentiles_dict(row_hard_neg_scaled, "row_hard_neg_dot_over_tau"),
+                "mean_gap": float(np.mean(row_mean_pos_scaled) - np.mean(row_mean_neg_scaled)) if len(row_mean_pos_scaled) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_scaled) - np.mean(row_hard_neg_scaled)) if len(row_mean_pos_scaled) else math.nan,
+            },
+            "exp_dot_over_tau": {
+                "mean_positive": percentiles_dict(row_mean_pos_exp, "row_mean_pos_exp_dot_over_tau"),
+                "mean_negative": percentiles_dict(row_mean_neg_exp, "row_mean_neg_exp_dot_over_tau"),
+                "hardest_negative": percentiles_dict(row_hard_neg_exp, "row_hard_neg_exp_dot_over_tau"),
+                "mean_gap": float(np.mean(row_mean_pos_exp) - np.mean(row_mean_neg_exp)) if len(row_mean_pos_exp) else math.nan,
+                "hard_gap": float(np.mean(row_mean_pos_exp) - np.mean(row_hard_neg_exp)) if len(row_mean_pos_exp) else math.nan,
+            },
+            "infonce_like_loss_mean_vs_hardest_neg": float(np.mean(loss)) if len(loss) else math.nan,
+        }
+
+    for bucket, vals in engine_buckets.items():
+        pos_cos_b = np.asarray(vals.get("row_mean_pos_cos", []), dtype=np.float32)
+        neg_cos_b = np.asarray(vals.get("row_mean_neg_cos", []), dtype=np.float32)
+        hard_neg_cos_b = np.asarray(vals.get("row_hardest_neg_cos", []), dtype=np.float32)
+        pos_l2_b = np.asarray(vals.get("row_mean_pos_l2", []), dtype=np.float32)
+        neg_l2_b = np.asarray(vals.get("row_mean_neg_l2", []), dtype=np.float32)
+        hard_neg_l2_b = np.asarray(vals.get("row_hardest_neg_l2", []), dtype=np.float32)
+        out["engine_conditioned"][bucket] = {
+            "n_anchor_rows": int(len(pos_cos_b)),
+            "l2_mean_gap": float(np.mean(neg_l2_b) - np.mean(pos_l2_b)) if len(pos_l2_b) else math.nan,
+            "l2_hard_gap": float(np.mean(hard_neg_l2_b) - np.mean(pos_l2_b)) if len(pos_l2_b) else math.nan,
+            "cos_mean_gap": float(np.mean(pos_cos_b) - np.mean(neg_cos_b)) if len(pos_cos_b) else math.nan,
+            "cos_hard_gap": float(np.mean(pos_cos_b) - np.mean(hard_neg_cos_b)) if len(pos_cos_b) else math.nan,
+        }
+        for tau in eval_taus:
+            out["engine_conditioned"][bucket][f"dot_over_tau_mean_gap@{tau}"] = (
+                float(np.mean(pos_cos_b / tau) - np.mean(neg_cos_b / tau)) if len(pos_cos_b) else math.nan
+            )
+            out["engine_conditioned"][bucket][f"dot_over_tau_hard_gap@{tau}"] = (
+                float(np.mean(pos_cos_b / tau) - np.mean(hard_neg_cos_b / tau)) if len(pos_cos_b) else math.nan
+            )
+
+    sampled_embeddings, sampled_meta_rows, sample_summary = finalize_sampled_anchor_embeddings(
+        sample_store,
+        max_players=sampled_embedding_max_players,
+        min_examples_per_player=sampled_embedding_min_examples_per_player,
+        player_selection=sampled_embedding_player_selection,
+        seed=sampling_seed,
+    )
+
+    rng_diag = np.random.default_rng(42)
+    max_diag = 300_000
+
+    def _subsample(arr: np.ndarray) -> np.ndarray:
+        if len(arr) <= max_diag:
+            return arr
+        idx = rng_diag.choice(len(arr), size=max_diag, replace=False)
+        return arr[idx]
+
+    pos_c = _subsample(cand_pos_cos)
+    neg_c = _subsample(cand_neg_cos)
+    hard_n = _subsample(row_hardest_neg_cos)
+    soft_n = _subsample(row_mean_neg_cos)
+    pos_r = _subsample(row_mean_pos_cos)
+    score_distributions = {
+        "positive_candidate_cosine": _distribution_summary(pos_c),
+        "negative_candidate_cosine": _distribution_summary(neg_c),
+        "positive_row_mean_cosine": _distribution_summary(pos_r),
+        "hard_negative_row_cosine": _distribution_summary(hard_n),
+        "soft_negative_row_cosine": _distribution_summary(soft_n),
+    }
+    pairwise_auc = {
+        "positive_vs_all_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_c), dtype=np.int64), np.zeros(len(neg_c), dtype=np.int64)]),
+            np.concatenate([pos_c, neg_c]),
+        )
+        if len(pos_c) and len(neg_c)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+        "positive_vs_hard_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_r), dtype=np.int64), np.zeros(len(hard_n), dtype=np.int64)]),
+            np.concatenate([pos_r, hard_n]),
+        )
+        if len(pos_r) and len(hard_n)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+        "positive_vs_soft_negative": _pair_auc_ap(
+            np.concatenate([np.ones(len(pos_r), dtype=np.int64), np.zeros(len(soft_n), dtype=np.int64)]),
+            np.concatenate([pos_r, soft_n]),
+        )
+        if len(pos_r) and len(soft_n)
+        else {"n_pairs": 0, "roc_auc": math.nan, "average_precision": math.nan},
+    }
+    extra_pair_diagnostics = {"score_distributions": score_distributions, "pairwise_auc": pairwise_auc}
+    return out, sampled_embeddings, sampled_meta_rows, sample_summary, extra_pair_diagnostics
+
+
 def compute_pair_metrics(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -1801,7 +2279,7 @@ def build_extended_diagnostics(
         "recall_at_5": _bootstrap_ci(ranks, lambda x: np.mean(x <= 5)) if len(ranks) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
         "classification_roc_auc": _bootstrap_auc(y, s) if len(s) else {"mean": math.nan, "ci95_lo": math.nan, "ci95_hi": math.nan, "n": 0},
         "row_cos_hard_gap": {
-            "mean": try_float((((pair_metrics.get("row_aggregated") or {}).get("cosine") or {}).get("hard_gap"))),
+            "mean": _safe_float((((pair_metrics.get("row_aggregated") or {}).get("cosine") or {}).get("hard_gap"))),
             "ci95_lo": math.nan,
             "ci95_hi": math.nan,
             "n": int((pair_metrics.get("n_anchor_rows") or 0)),
@@ -1963,6 +2441,25 @@ def validate_cached_split_dir(cached_split_dir: Path) -> Tuple[bool, str]:
     return True, "ok"
 
 
+def is_prebuilt_cached_split_dir(path: Path) -> Tuple[bool, str]:
+    """
+    Detect whether `path` already contains shard_* cache layout.
+    Useful when input pairs are pre-cached (e.g. pairs_v3_cached/*) rather than JSONL.
+    """
+    if not path.exists() or not path.is_dir():
+        return False, "missing_dir"
+    shard_dirs = sorted(p for p in path.glob("shard_*") if p.is_dir())
+    if not shard_dirs:
+        return False, "no_shard_dirs"
+    req = _required_shard_files()
+    for shard_dir in shard_dirs:
+        for rel in req:
+            f = shard_dir / rel
+            if not f.exists() or not f.is_file():
+                return False, f"missing_required_file:{shard_dir.name}/{rel}"
+    return True, "ok"
+
+
 def _safe_float(x: Any) -> float:
     try:
         v = float(x)
@@ -2054,40 +2551,62 @@ def run_eval_for_split(
     sampled_embedding_player_selection: str,
     sampled_embedding_seed: int,
     progress_every_batches: int,
+    use_embedding_cache: bool,
+    embedding_cache_batch_size: int,
+    model_signature: str,
 ) -> Dict[str, Any]:
     print(f"[eval] split={split} dir={cached_split_dir}")
     split_out = output_root / split
     split_out.mkdir(parents=True, exist_ok=True)
     batch_size = batch_size_override or cfg.batch_size
 
-    pair_ds = PairEvalDataset(
-        input_dir=cached_split_dir,
-        model_variant_name=cfg.model.variant_name,
-    )
+    if use_embedding_cache:
+        pair_metrics, embeddings, meta_rows, sample_summary, extra_pair_diag = compute_pair_metrics_with_embedding_cache(
+            model=model,
+            device=device,
+            model_variant_name=cfg.model.variant_name,
+            cached_split_dir=cached_split_dir,
+            eval_taus=eval_taus,
+            batch_size=max(1, int(embedding_cache_batch_size)),
+            max_batches=max_pair_batches,
+            progress_every_batches=progress_every_batches,
+            sample_anchor_embeddings_per_player=sampled_embedding_max_examples_per_player,
+            sampled_embedding_max_players=sampled_embedding_max_players,
+            sampled_embedding_min_examples_per_player=sampled_embedding_min_examples_per_player,
+            sampled_embedding_player_selection=sampled_embedding_player_selection,
+            sampling_seed=sampled_embedding_seed,
+            embedding_cache_dir=split_out / "embedding_cache",
+            model_signature=model_signature,
+        )
+    else:
+        pair_ds = PairEvalDataset(
+            input_dir=cached_split_dir,
+            model_variant_name=cfg.model.variant_name,
+        )
 
-    pair_loader = DataLoader(
-        pair_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_pair_eval,
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=(2 if num_workers > 0 else None),
-        pin_memory=False,
-    )
-    pair_metrics, embeddings, meta_rows, sample_summary, extra_pair_diag = compute_pair_metrics(
-        model,
-        pair_loader,
-        device,
-        eval_taus,
-        max_batches=max_pair_batches,
-        sample_anchor_embeddings_per_player=sampled_embedding_max_examples_per_player,
-        sampled_embedding_max_players=sampled_embedding_max_players,
-        sampled_embedding_min_examples_per_player=sampled_embedding_min_examples_per_player,
-        sampled_embedding_player_selection=sampled_embedding_player_selection,
-        sampling_seed=sampled_embedding_seed,
-        progress_every_batches=progress_every_batches,
-    )
+        pair_loader = DataLoader(
+            pair_ds,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=collate_pair_eval,
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=(2 if num_workers > 0 else None),
+            pin_memory=False,
+        )
+        pair_metrics, embeddings, meta_rows, sample_summary, extra_pair_diag = compute_pair_metrics(
+            model,
+            pair_loader,
+            device,
+            eval_taus,
+            max_batches=max_pair_batches,
+            sample_anchor_embeddings_per_player=sampled_embedding_max_examples_per_player,
+            sampled_embedding_max_players=sampled_embedding_max_players,
+            sampled_embedding_min_examples_per_player=sampled_embedding_min_examples_per_player,
+            sampled_embedding_player_selection=sampled_embedding_player_selection,
+            sampling_seed=sampled_embedding_seed,
+            progress_every_batches=progress_every_batches,
+        )
     write_json(split_out / "pair_metrics.json", pair_metrics)
     write_json(split_out / "sampled_embedding_summary.json", sample_summary)
 
@@ -2190,6 +2709,18 @@ def main() -> None:
     ap.add_argument("--sampled-embedding-player-selection", choices=["most_seen", "random"], default="most_seen")
     ap.add_argument("--sampled-embedding-seed", type=int, default=42)
     ap.add_argument("--progress-every-batches", type=int, default=100, help="Print progress every N pair batches (<=0 disables).")
+    ap.add_argument(
+        "--use-embedding-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Cache per-shard example embeddings and reuse across reruns for faster eval.",
+    )
+    ap.add_argument(
+        "--embedding-cache-batch-size",
+        type=int,
+        default=8192,
+        help="Batch size for shard embedding-cache encoding path.",
+    )
     ap.add_argument("--save-embeddings", action="store_true")
     ap.add_argument("--keep-cached", action="store_true", help="Keep generated cached eval dirs instead of deleting later")
     ap.add_argument(
@@ -2252,6 +2783,8 @@ def main() -> None:
         "sampled_embedding_player_selection": args.sampled_embedding_player_selection,
         "sampled_embedding_seed": args.sampled_embedding_seed,
         "progress_every_batches": args.progress_every_batches,
+        "use_embedding_cache": bool(args.use_embedding_cache),
+        "embedding_cache_batch_size": int(args.embedding_cache_batch_size),
         "reuse_cache": bool(args.reuse_cache),
         "force_rebuild_cache": bool(args.force_rebuild_cache),
         "resume_cache_build": bool(args.resume_cache_build),
@@ -2265,37 +2798,56 @@ def main() -> None:
             raise FileNotFoundError(f"Missing split dir: {raw_split_dir}")
 
         max_rows = args.max_eval_rows if split == "eval" else args.max_test_rows if split == "test" else None
-        cached_split_dir = cache_root / split
-        cache_summary_path = cached_split_dir / "_build_summary.json"
+        input_is_cached, input_cached_reason = is_prebuilt_cached_split_dir(raw_split_dir)
+        if input_is_cached:
+            cached_split_dir = raw_split_dir
+            cache_summary_path = cached_split_dir / "_build_summary.json"
+            print(f"[stage] using pre-cached pair split for split={split} from {cached_split_dir}")
+            if max_rows is not None:
+                print(
+                    f"[stage] note: max_rows={max_rows:,} is ignored when using pre-cached split input "
+                    f"(evaluate-time row limiting remains available via max_pair_batches/max_examples)"
+                )
+            cache_meta = read_json_if_exists(cache_summary_path) or {
+                "input_dir": str(cached_split_dir),
+                "output_dir": str(cached_split_dir),
+                "source": "prebuilt_cached_pairs_input",
+            }
+            cache_reused = True
+        else:
+            if raw_split_dir.exists():
+                print(f"[stage] split={split} input cache detection: {input_cached_reason}; expecting JSONL input")
+            cached_split_dir = cache_root / split
+            cache_summary_path = cached_split_dir / "_build_summary.json"
 
-        cache_reused = False
-        if bool(args.reuse_cache) and not bool(args.force_rebuild_cache):
-            reusable, reason = validate_cached_split_dir(cached_split_dir)
-            if reusable:
-                print(f"[stage] reusing eval cache for split={split} from {cached_split_dir}")
-                cache_meta = read_json_if_exists(cache_summary_path) or {}
-                cache_reused = True
-            else:
-                print(f"[stage] cache not reusable for split={split}: {reason}; rebuilding")
+            cache_reused = False
+            if bool(args.reuse_cache) and not bool(args.force_rebuild_cache):
+                reusable, reason = validate_cached_split_dir(cached_split_dir)
+                if reusable:
+                    print(f"[stage] reusing eval cache for split={split} from {cached_split_dir}")
+                    cache_meta = read_json_if_exists(cache_summary_path) or {}
+                    cache_reused = True
+                else:
+                    print(f"[stage] cache not reusable for split={split}: {reason}; rebuilding")
 
-        if not cache_reused:
-            resume_build = bool(args.resume_cache_build) and cached_split_dir.exists() and not bool(args.force_rebuild_cache)
-            if cached_split_dir.exists() and not resume_build:
-                # Explicit clean rebuild path.
-                shutil.rmtree(cached_split_dir)
-            if resume_build:
-                print(f"[stage] resuming eval cache build for split={split}")
-            else:
-                print(f"[stage] building eval cache for split={split}")
-            cache_meta = build_eval_cache_from_pairs(
-                input_dir=raw_split_dir,
-                output_dir=cached_split_dir,
-                rows_per_shard=args.rows_per_shard,
-                max_rows=max_rows,
-                dataset_tag=split,
-                resume_from_existing=resume_build,
-            )
-            write_json(cache_summary_path, cache_meta)
+            if not cache_reused:
+                resume_build = bool(args.resume_cache_build) and cached_split_dir.exists() and not bool(args.force_rebuild_cache)
+                if cached_split_dir.exists() and not resume_build:
+                    # Explicit clean rebuild path.
+                    shutil.rmtree(cached_split_dir)
+                if resume_build:
+                    print(f"[stage] resuming eval cache build for split={split}")
+                else:
+                    print(f"[stage] building eval cache for split={split}")
+                cache_meta = build_eval_cache_from_pairs(
+                    input_dir=raw_split_dir,
+                    output_dir=cached_split_dir,
+                    rows_per_shard=args.rows_per_shard,
+                    max_rows=max_rows,
+                    dataset_tag=split,
+                    resume_from_existing=resume_build,
+                )
+                write_json(cache_summary_path, cache_meta)
 
         cache_meta = dict(cache_meta)
         cache_meta["cache_reused"] = bool(cache_reused)
@@ -2322,6 +2874,9 @@ def main() -> None:
             sampled_embedding_player_selection=args.sampled_embedding_player_selection,
             sampled_embedding_seed=args.sampled_embedding_seed,
             progress_every_batches=args.progress_every_batches,
+            use_embedding_cache=bool(args.use_embedding_cache),
+            embedding_cache_batch_size=int(args.embedding_cache_batch_size),
+            model_signature=_checkpoint_signature(checkpoint_path),
         )
         split_summary["cache_build_summary_path"] = str(cache_summary_path)
         split_summary["cache_reused"] = bool(cache_reused)

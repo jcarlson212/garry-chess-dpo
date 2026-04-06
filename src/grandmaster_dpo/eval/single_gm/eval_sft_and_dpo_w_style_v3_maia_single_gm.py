@@ -158,8 +158,19 @@ def main() -> None:
 
     style_embedding_model = StyleEncoder(style_encoder_training_cfg)
 
+    checkpoint_path = Path(args.style_embedding_model_checkpoint)
+    # If users pass ".../best.pt" for different style runs, use the parent run-dir
+    # name to avoid collisions in output/model naming.
+    if checkpoint_path.name == "best.pt":
+        style_embedding_model_tag = checkpoint_path.parent.name
+    else:
+        style_embedding_model_tag = checkpoint_path.stem
+
     for beta, dpo_loss_weight, style_tau in itertools.product(args.betas, args.dpo_loss_weights, args.style_taus):
-        full_name = f"sft_and_dpo_w_style_v3_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={args.style_embedding_model_checkpoint.split('/')[-1]}"
+        full_name = (
+            f"sft_and_dpo_w_style_v3_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_"
+            f"style_tau={style_tau:.2f}_embedding_model={style_embedding_model_tag}"
+        )
         jsonl = Path(f"{args.train_val_folder}/{args.gm_name}_{args.split_name}_dpo.jsonl")
         
         def supplied_loss_function(logp_pi_ch, 
