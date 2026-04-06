@@ -67,6 +67,7 @@ artifacts/
 src/grandmaster_dpo/train/style_embeddings_for_gms/study_supervisor/runs/
 ./final_experiments_for_paper/experiment2_style_model/eval_outputs/**/embedding_cache/
 ./final_experiments_for_paper/experiment2_style_model/eval_outputs/**/generated_eval_cache/
+./final_experiments_for_paper/experiment2_style_model/eval_outputs/**/generated_eval_cache/*
 
 # =========================
 # OS / editor
