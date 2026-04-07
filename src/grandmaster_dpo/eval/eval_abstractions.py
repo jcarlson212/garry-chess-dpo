@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import chess
+from grandmaster_dpo.eval.single_gm.eval_sft_and_dpo_w_style_sim_utility_weight_maia2 import compute_style_score, dpo_loss_style_weighted, supervised_nll_loss
+from grandmaster_dpo.eval.single_gm.eval_sft_and_dpo_w_style_v2_maia_single_gm import compute_style_score_v2
+from grandmaster_dpo.eval.single_gm.eval_sft_and_dpo_w_style_v3_maia_single_gm import compute_style_score_v3, dpo_loss_style_weighted_v3
+from grandmaster_dpo.train.style_embeddings_for_gms.train_configs import make_config
+from grandmaster_dpo.utilities.shared_style_emb_model_utils import StyleEncoder
 import torch
 from torch.utils.data import DataLoader, Dataset
 from torch import nn
@@ -219,6 +224,92 @@ def summarize_opening_distribution(
 # Shared chess helpers
 # ============================================================
 
+def fen_after_move(fen: str, uci: str) -> Optional[str]:
+    """
+    Applies a legal UCI move to fen and returns resulting fen.
+    Returns None on failure.
+    """
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci)
+    if move not in board.legal_moves:
+        raise ValueError("Engine proposed move was not legal somehow")
+    board.push(move)
+    return board.fen()
+
+def key_game_ply(meta: Dict[str, Any]) -> str:
+    return f'{meta["game_header_hash"]}_{meta["ply_idx"]}'
+
+def safe_get_prev_fens(
+    prev_map: Dict[str, List[Dict[str, Any]]],
+    meta: Dict[str, Any],
+    n: int = 5,
+) -> List[Optional[str]]:
+    """
+    Returns the previous n FENs for this training row, padded on the left with None.
+    Output length is exactly n.
+    """
+    key = key_game_ply(meta)
+    rows = prev_map.get(key, [])
+
+    # keep only fen strings if present
+    fens = []
+    for r in rows[-n:]:
+        try:
+            fens.append(r["prompt"]["fen"])
+        except Exception as e:
+            if r != None:
+                raise(e)
+            else:
+                fens.append(None)
+
+    # left-pad with None so length == n
+    if len(fens) < n:
+        fens = [None] * (n - len(fens)) + fens
+
+    return fens
+
+def safe_get_next_fens_chosen(
+    fut_map: Dict[str, List[Dict[str, Any]]],
+    meta: Dict[str, Any],
+    n: int = 5,
+) -> List[Optional[str]]:
+    """
+    Returns the next n recorded FENs along the chosen/game trajectory, padded on the right with None.
+    Output length is exactly n.
+    """
+    key = key_game_ply(meta)
+    rows = fut_map.get(key, [])
+
+    fens = []
+    for r in rows[:n]:
+        try:
+            fens.append(r["prompt"]["fen"])
+        except Exception as e:
+            if r != None:
+                raise(e)
+            else:
+                fens.append(None)
+
+    if len(fens) < n:
+        fens = fens + [None] * (n - len(fens))
+
+    return fens
+
+def safe_get_next_fens_rejected(
+    fen: str,
+    rejected_uci: str,
+    n: int = 5,
+) -> List[Optional[str]]:
+    """
+    We do NOT have true future trajectory for rejected moves in the dataset.
+    So we use only the immediate board after rejected move, then pad with None.
+    Output length is exactly n.
+    """
+    out = [fen_after_move(fen, rejected_uci)]
+    if len(out) < n:
+        out = out + [None] * (n - len(out))
+    return out[:n]
+
 def device_from_str(s: str) -> torch.device:
     s = s.lower()
     if s in ("cpu",):
@@ -250,6 +341,21 @@ def vocab_index_to_uci(all_moves: List[str], fen: str, idx: int) -> str:
 def apply_legal_mask(logits: torch.Tensor, legal_moves: torch.Tensor) -> torch.Tensor:
     neg_inf = torch.finfo(logits.dtype).min
     return torch.where(legal_moves > 0, logits, torch.full_like(logits, neg_inf))
+
+def extract_move_cp(meta: dict, uci: str) -> float:
+    sf_moves = meta["stockfish"]["sf_moves_returned"]
+    for sf_uci, cp in sf_moves:
+        if sf_uci == uci:
+            return float(cp)
+        
+    cp_values = [cp for _, cp in sf_moves]
+    fallback_cp = float(min(cp_values)) if cp_values else 0.0
+    #print(
+        #f"[WARN] move {uci} not found in sf_moves_returned "
+        #f"(game={meta.get('game_header_hash')}, ply={meta.get('ply_idx')}). "
+        #f"Using fallback cp={fallback_cp}"
+    #)
+    return fallback_cp
 
 def batch_preprocess(
     *,
@@ -928,6 +1034,10 @@ class EvalModel(ABC):
         logp_pi_rj: torch.Tensor,
         logp_ref_ch: torch.Tensor,
         logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data,
     ) -> torch.Tensor:
         """
         Return a scalar tensor loss that corresponds to the training objective style.
@@ -1101,6 +1211,7 @@ class EvalModel(ABC):
             game_ids = batch["game_id"]
             ply_idxs = batch["ply_idx"]
             opening_prefixes = batch["opening_prefix_uci_20"]
+            meta_list = batch["meta"]
 
             board_input, legal_moves, es_t, eo_t = batch_preprocess(
                 all_moves_dict=self.all_moves_dict,
@@ -1182,11 +1293,42 @@ class EvalModel(ABC):
             logp_ref_ch = gather_logprob_from_masked_logits(logits_ref_m, chosen_idx)
             logp_ref_rj = gather_logprob_from_masked_logits(logits_ref_m, rejected_idx)
 
+            chosen_cps = [extract_move_cp(m, ch) for m, ch in zip(meta_list, chosen)]
+            rejected_cps = [extract_move_cp(m, rj) for m, rj in zip(meta_list, rejected)]
+
+            prev_fens_batch = [
+                safe_get_prev_fens(ds.game_id_and_ply_to_prev_10_plys, m, n=5)
+                for m in meta_list
+            ]
+
+            next_fens_chosen_batch = [
+                safe_get_next_fens_chosen(ds.game_id_and_ply_to_fut_10_plys, m, n=5)
+                for m in meta_list
+            ]
+
+            next_fens_rejected_batch = [
+                safe_get_next_fens_rejected(fen, rj, n=5)
+                for fen, rj in zip(fens, rejected)
+            ]
+
             loss = self.compute_training_style_loss(
                 logp_pi_ch=logp_pi_ch,
                 logp_pi_rj=logp_pi_rj,
                 logp_ref_ch=logp_ref_ch,
                 logp_ref_rj=logp_ref_rj,
+                logits_pi_m=logits_pi_m,
+                logits_ref_m=logits_ref_m,
+                idx_t=chosen_idx,
+                batch_meta_data=zip(fens,
+                                    chosen,
+                                    rejected,
+                                    chosen_cps,
+                                    rejected_cps,
+                                    ply_idxs,
+                                    prev_fens_batch,
+                                    next_fens_chosen_batch,
+                                    next_fens_rejected_batch,
+                                    meta_list),
             )
 
             pi_gap = (logp_pi_ch - logp_pi_rj)
@@ -1593,6 +1735,7 @@ class BaseMaia2(EvalModel):
     def tag(self) -> str:
         return "base_maia2"
 
+    @torch.inference_mode()
     def compute_training_style_loss(
         self,
         *,
@@ -1600,6 +1743,10 @@ class BaseMaia2(EvalModel):
         logp_pi_rj: torch.Tensor,
         logp_ref_ch: torch.Tensor,
         logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
     ) -> torch.Tensor:
         # Not trained; define something stable for reporting.
         # Here: mean NLL on chosen.
@@ -1611,6 +1758,7 @@ class DpoModel(EvalModel):
     def tag(self) -> str:
         return "dpo"
 
+    @torch.inference_mode()
     def compute_training_style_loss(
         self,
         *,
@@ -1618,6 +1766,10 @@ class DpoModel(EvalModel):
         logp_pi_rj: torch.Tensor,
         logp_ref_ch: torch.Tensor,
         logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
     ) -> torch.Tensor:
         x = self.beta * ((logp_pi_ch - logp_pi_rj) - (logp_ref_ch - logp_ref_rj))
         return -torch.nn.functional.logsigmoid(x).mean()
@@ -1628,6 +1780,7 @@ class SftModel(EvalModel):
     def tag(self) -> str:
         return "sft"
 
+    @torch.inference_mode()
     def compute_training_style_loss(
         self,
         *,
@@ -1635,6 +1788,10 @@ class SftModel(EvalModel):
         logp_pi_rj: torch.Tensor,
         logp_ref_ch: torch.Tensor,
         logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
     ) -> torch.Tensor:
         # SFT objective approximated as NLL on chosen.
         return (-logp_pi_ch).mean()
@@ -1645,6 +1802,7 @@ class SftPairwiseModel(EvalModel):
     def tag(self) -> str:
         return "sft_pairwise"
 
+    @torch.inference_mode()
     def compute_training_style_loss(
         self,
         *,
@@ -1652,11 +1810,291 @@ class SftPairwiseModel(EvalModel):
         logp_pi_rj: torch.Tensor,
         logp_ref_ch: torch.Tensor,
         logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
     ) -> torch.Tensor:
         # Pairwise logistic loss without reference:
         # -log(sigmoid(logp(ch) - logp(rj)))
         x = (logp_pi_ch - logp_pi_rj)
         return -torch.nn.functional.logsigmoid(x).mean()
+    
+
+class SftAndDpo(EvalModel):
+
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, sf_cfg=sf_cfg)
+        self.dpo_loss_weight = dpo_loss_weight
+
+    @property
+    def tag(self) -> str:
+        return f"sft_and_dpo_beta={self.beta:.2f}"
+
+    @torch.inference_mode()
+    def compute_training_style_loss(
+        self,
+        *,
+        logp_pi_ch: torch.Tensor,
+        logp_pi_rj: torch.Tensor,
+        logp_ref_ch: torch.Tensor,
+        logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
+    ) -> torch.Tensor:
+        dpo_loss = self.beta * ((logp_pi_ch - logp_pi_rj) - (logp_ref_ch - logp_ref_rj))
+        sft_loss = -logp_pi_ch
+        return (-self.dpo_loss_weight * torch.nn.functional.logsigmoid(dpo_loss) + sft_loss).mean()
+
+# Todo: add style loss params to constructor and heuristics for v1/v2. V3 should use actual style embedding model
+class SftAndDpoWStyleV1(EvalModel):
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, sf_cfg=sf_cfg)
+        self.dpo_loss_weight = dpo_loss_weight
+        self.style_tau = style_tau
+        self.style_cp_scale = 40.0
+        self.style_piece_bonus = 1.0
+        self.style_positional_bonus = 2.0
+    
+    @property
+    def tag(self) -> str:
+        return "sft_and_dpo_w_style_sim_utility_weight"
+
+    @torch.inference_mode()
+    def compute_training_style_loss(
+        self,
+        *,
+        logp_pi_ch: torch.Tensor,
+        logp_pi_rj: torch.Tensor,
+        logp_ref_ch: torch.Tensor,
+        logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data,
+    ) -> torch.Tensor:
+    
+        style_scores = torch.tensor(
+            [
+                compute_style_score(
+                    fen=fen,
+                    chosen_uci=ch,
+                    rejected_uci=rj,
+                    chosen_cp=ch_cp,
+                    rejected_cp=rj_cp,
+                    cp_scale=self.style_cp_scale,
+                    piece_bonus=self.style_piece_bonus,
+                    positional_bonus=self.style_positional_bonus,
+                )
+                for fen, ch, rj, ch_cp, rj_cp, _, _, _, _, _ in batch_meta_data
+            ],
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        loss = (
+            self.dpo_loss_weight
+            * dpo_loss_style_weighted(
+                logp_pi_ch=logp_pi_ch,
+                logp_pi_rj=logp_pi_rj,
+                logp_ref_ch=logp_ref_ch,
+                logp_ref_rj=logp_ref_rj,
+                style_score=style_scores,
+                beta=self.beta,
+                tau=self.style_tau,
+            )
+            + supervised_nll_loss(logits_pi_m, idx_t)
+        )
+
+        return loss
+    
+
+class SftAndDpoWStyleV2(EvalModel):
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, sf_cfg=sf_cfg)
+        self.dpo_loss_weight = dpo_loss_weight
+        self.style_tau = style_tau
+        self.style_cp_scale = 40.0
+        self.style_piece_bonus = 1.0
+        self.style_positional_bonus = 2.0
+
+    @property
+    def tag(self) -> str:
+        return "sft_and_dpo_w_style_v2"
+
+    @torch.inference_mode()
+    def compute_training_style_loss(
+        self,
+        *,
+        logp_pi_ch: torch.Tensor,
+        logp_pi_rj: torch.Tensor,
+        logp_ref_ch: torch.Tensor,
+        logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
+    ) -> torch.Tensor:
+        style_scores = torch.tensor(
+            [
+                compute_style_score_v2(
+                        fen=fen,
+                        chosen_uci=ch,
+                        rejected_uci=rj,
+                        chosen_cp=ch_cp,
+                        rejected_cp=rj_cp,
+                        prev_fens=prev_fens,
+                        next_fens_chosen=next_fens_chosen,
+                        next_fens_rejected=next_fens_rejected,
+                        ply_idx=ply_idx,
+                        phase=None,
+                    )
+                    for fen, ch, rj, ch_cp, rj_cp, ply_idx, prev_fens, next_fens_chosen, next_fens_rejected, meta_list
+                    in batch_meta_data
+            ],
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        loss = (
+            self.dpo_loss_weight
+            * dpo_loss_style_weighted(
+                logp_pi_ch=logp_pi_ch,
+                logp_pi_rj=logp_pi_rj,
+                logp_ref_ch=logp_ref_ch,
+                logp_ref_rj=logp_ref_rj,
+                style_score=style_scores,
+                beta=self.beta,
+                tau=self.style_tau,
+            )
+            + supervised_nll_loss(logits_pi_m, idx_t)
+        )
+        return loss
+    
+class SftAndDpoWStyleV3(EvalModel):
+
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        style_embedding_chkpt: str = "",
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, sf_cfg=sf_cfg)
+        self.dpo_loss_weight = dpo_loss_weight
+        self.style_tau = style_tau
+        self.style_embedding_chkpt = style_embedding_chkpt
+
+        style_encoder_training_cfg = make_config(
+            study_name="super_v3_phi1_tau0_25_warm_from_v2final",
+            train_dir="./final_experiments_for_paper/experiment2_style_model/pairs_v3_cached/train",
+            eval_dir="./final_experiments_for_paper/experiment2_style_model/pairs_v2_cached/eval",
+            pair_variant="v3",
+            seed=42,
+            embedding_dim=256,
+            batch_size=4096,
+            lr=3e-4,
+            tau=0.25,
+            phi_variant="phi1",
+            epochs=8,
+            max_steps_per_epoch=5000,
+            max_eval_batches=150,
+            num_workers=0,
+            init_from_checkpoint=self.style_embedding_chkpt, # this is all that really matters for inference
+            init_reset_optimizer=True,
+            init_strict_load=True,
+        )
+        self.style_embedding_model = StyleEncoder(style_encoder_training_cfg)
+        self.style_embedding_model.eval()
+
+    @property
+    def tag(self) -> str:
+        return "sft_and_dpo_w_style_v3"
+
+    @torch.inference_mode()
+    def compute_training_style_loss(
+        self,
+        *,
+        logp_pi_ch: torch.Tensor,
+        logp_pi_rj: torch.Tensor,
+        logp_ref_ch: torch.Tensor,
+        logp_ref_rj: torch.Tensor,
+        logits_pi_m, 
+        logits_ref_m, 
+        idx_t, 
+        batch_meta_data
+    ) -> torch.Tensor:
+        style_scores = torch.tensor(
+            [
+                compute_style_score_v3(
+                    fen=fen,
+                    chosen_uci=ch,
+                    rejected_uci=rj,
+                    prev_fens=prev_fens,
+                    style_embedding_model=self.style_embedding_model,
+                    event=meta_list["event"],
+                    style_tau=self.style_tau,
+                )
+                for fen, ch, rj, ch_cp, rj_cp, ply_idx, prev_fens, next_fens_chosen, next_fens_rejected, meta_list
+                in batch_meta_data
+            ],
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        loss = (
+            self.dpo_loss_weight
+            * dpo_loss_style_weighted_v3(
+                logp_pi_ch=logp_pi_ch,
+                logp_pi_rj=logp_pi_rj,
+                logp_ref_ch=logp_ref_ch,
+                logp_ref_rj=logp_ref_rj,
+                style_score=style_scores,
+                beta=self.beta,
+                tau=self.style_tau,
+            )
+            + supervised_nll_loss(logits_pi_m, idx_t)
+        )
+        return loss
+    
+
+# ------------------------------------------------------------
 
 
 # Convenience “with SF helper” variants
@@ -1697,6 +2135,93 @@ class SftPairwiseWithSfHelper(SftPairwiseModel):
     def tag(self) -> str:
         return f"sft_pairwise_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
 
+class SftAndDpoWithSfHelper(SftAndDpo):
+
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, dpo_loss_weight=dpo_loss_weight, sf_cfg=sf_cfg)
+        self.depth = sf_cfg.depth = sf_cfg.depth 
+        self.multipv_topk = sf_cfg.multipv_topk
+        self.restrict_cp_window = sf_cfg.restrict_cp_window
+
+    @property
+    def tag(self) -> str:
+        return f"sft_and_dpo_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+    
+    
+class SftAndDpoWStyleV1WithSfHelper(SftAndDpoWStyleV1):
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, dpo_loss_weight=dpo_loss_weight, style_tau=style_tau, sf_cfg=sf_cfg)
+        self.depth = sf_cfg.depth = sf_cfg.depth 
+        self.multipv_topk = sf_cfg.multipv_topk
+        self.restrict_cp_window = sf_cfg.restrict_cp_window
+
+    @property
+    def tag(self) -> str:
+        return f"sft_and_dpo_w_style_v1_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+    
+class SftAndDpoWStyleV2WithSfHelper(SftAndDpoWStyleV2):
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, dpo_loss_weight=dpo_loss_weight, style_tau=style_tau, sf_cfg=sf_cfg)
+        self.depth = sf_cfg.depth = sf_cfg.depth 
+        self.multipv_topk = sf_cfg.multipv_topk
+        self.restrict_cp_window = sf_cfg.restrict_cp_window
+
+    @property
+    def tag(self) -> str:
+        return f"sft_and_dpo_w_style_v2_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+    
+class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
+    def __init__(
+        self,
+        *,
+        maia_type: str = "blitz",
+        device: torch.device,
+        policy_pt_path: Optional[str] = None,
+        beta: float = 0.1,
+        dpo_loss_weight: float = 1.0,
+        style_tau: float = 0.1,
+        embedding_model_chkpt_name: str = "",
+        sf_cfg: Optional[SfConfig] = None,
+    ):
+        super().__init__(maia_type=maia_type, device=device, policy_pt_path=policy_pt_path, beta=beta, dpo_loss_weight=dpo_loss_weight, style_tau=style_tau, style_embedding_chkpt=embedding_model_chkpt_name, sf_cfg=sf_cfg)
+        self.depth = sf_cfg.depth = sf_cfg.depth 
+        self.multipv_topk = sf_cfg.multipv_topk
+        self.restrict_cp_window = sf_cfg.restrict_cp_window
+        self.style_embedding_chkpt = embedding_model_chkpt_name
+
+    @property
+    def tag(self) -> str:
+        return f"sft_and_dpo_w_style_v3_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_emb_chkpt_{self.style_embedding_chkpt}"
+
 
 # ============================================================
 # Factory: instantiate the family you want with shared args
@@ -1722,6 +2247,8 @@ def build_models_for_gm(
     sft_pt = gm_dir / "policy_sft_best.pt"
     pw_pt = gm_dir / "policy_pairwise_sft_best.pt"
 
+    
+
     models: List[EvalModel] = []
 
     # base only
@@ -1738,5 +2265,126 @@ def build_models_for_gm(
             models.append(DpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=str(dpo_pt), beta=beta, sf_cfg=sf_cfg))
             models.append(SftWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=str(sft_pt), beta=beta, sf_cfg=sf_cfg))
             models.append(SftPairwiseWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=str(pw_pt), beta=beta, sf_cfg=sf_cfg))
+            beta = 0.6
+            dpo_loss_weight = 0.1
+            style_tau = 0.25
+            models.append(SftAndDpoWithSfHelper(maia_type=maia_type, 
+                                                device=device, 
+                                                policy_pt_path=f"{gm_dir}/policy_best_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt", 
+                                                beta=beta, 
+                                                dpo_loss_weight=dpo_loss_weight,
+                                                sf_cfg=sf_cfg))
+            
+            models.append(SftAndDpoWStyleV1WithSfHelper(maia_type=maia_type, 
+                                                        device=device, 
+                                                        policy_pt_path=f"{gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                        beta=beta, 
+                                                        dpo_loss_weight=dpo_loss_weight, 
+                                                        style_tau=style_tau, 
+                                                        sf_cfg=sf_cfg))
+            
+            models.append(SftAndDpoWStyleV2WithSfHelper(maia_type=maia_type, 
+                                                        device=device, 
+                                                        policy_pt_path=f"{gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                        beta=beta, 
+                                                        dpo_loss_weight=dpo_loss_weight,
+                                                        style_tau=style_tau,
+                                                        sf_cfg=sf_cfg))
 
     return models
+
+
+def build_sf_models_for_gm(
+    *,
+    maia_type: str,
+    device: torch.device,
+    experiment1_gm_dir: Path = Path("./final_experiments_for_paper/experiments1/trained_models_twic/carlsen/"),
+    experiment2_gm_dir: Path = Path("./final_experiments_for_paper/experiments2_style_model/trained_models_single_gm_twic/carlsen/"),
+    style_embedding_model_dir: Path = Path('./final_experiments_for_paper/experiments2_style_model/trained_models/'),
+    sf_cfgs: List[SfConfig],
+) -> List[EvalModel]:
+    """
+    gm_dir expected to contain:
+      - policy_dpo_best.pt
+      - policy_sft_best.pt
+      - policy_pairwise_sft_best.pt
+    Adjust filenames as needed.
+    """
+    dpo_pt = experiment1_gm_dir / "policy_dpo_best.pt"
+    sft_pt = experiment1_gm_dir / "policy_sft_best.pt"
+    pw_pt = experiment1_gm_dir / "policy_pairwise_sft_best.pt"
+    sft_and_dpo_pt = experiment1_gm_dir / "policy_sft_and_dpo_best.pt"
+    sft_and_dpo_w_style_v1_pt = experiment1_gm_dir / "policy_sft_and_dpo_w_style_v1_best.pt"
+    sft_and_dpo_w_style_v2_pt = experiment1_gm_dir / "policy_sft_and_dpo_w_style_v2_best.pt"
+
+    sft_and_dpo_w_style_v3_pt = experiment2_gm_dir / "policy_sft_and_dpo_w_style_v3_best.pt"
+
+    final_v2_embedding_model_name = "final_v2_phi1_tau0_25_if_winner__pair-v2__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42"
+    final_v3_embedding_model_name = "final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42"
+
+    models: List[EvalModel] = []
+
+
+    # SF-helper runs (depth lives in sf_cfg.depth)
+    for sf_cfg in sf_cfgs:
+        models.append(DpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_dpo_beta=0.60.pt", beta=0.6, sf_cfg=sf_cfg))
+        models.append(SftWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_sft_best.pt", beta=0.6, sf_cfg=sf_cfg))
+        models.append(SftPairwiseWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_pairwise_sft_best.pt", beta=0.6, sf_cfg=sf_cfg))
+
+        beta = 0.6
+        dpo_loss_weight = 0.1
+        style_tau = 0.25
+        models.append(SftAndDpoWithSfHelper(maia_type=maia_type, 
+                                            device=device, 
+                                            policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt", 
+                                            beta=beta, 
+                                            dpo_loss_weight=dpo_loss_weight,
+                                            sf_cfg=sf_cfg))        
+        #models.append(SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.20.pt", beta=0.6, dpo_loss_weight=0.2, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.40.pt", beta=0.6, dpo_loss_weight=0.4, sf_cfg=sf_cfg))
+
+
+        models.append(SftAndDpoWStyleV1WithSfHelper(maia_type=maia_type, 
+                                                    device=device, 
+                                                    policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                    beta=beta, 
+                                                    dpo_loss_weight=dpo_loss_weight, 
+                                                    style_tau=style_tau, 
+                                                    sf_cfg=sf_cfg))        #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg))
+
+        models.append(SftAndDpoWStyleV2WithSfHelper(maia_type=maia_type, 
+                                                    device=device, 
+                                                    policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                    beta=beta, 
+                                                    dpo_loss_weight=dpo_loss_weight,
+                                                    style_tau=style_tau,
+                                                    sf_cfg=sf_cfg))        #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg))
+        #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg))
+
+        models.append(SftAndDpoWStyleV3WithSfHelper(maia_type=maia_type, 
+                                                    device=device, 
+                                                    policy_pt_path=f"{experiment2_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model=final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42.pt", 
+                                                    beta=beta, 
+                                                    dpo_loss_weight=dpo_loss_weight,
+                                                    style_tau=style_tau,
+                                                    embedding_model_chkpt_name=f"{style_embedding_model_dir}/final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt",
+                                                    sf_cfg=sf_cfg))        
+        #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment2_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight=0.10_style_tau=0.25_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=0.1, style_tau_inference=0.25, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg))
+
+        for dpo_loss_weight in [0.10, 0.20, 0.40, 0.60, 0.80, 1.00]:
+            for style_tau in [0.25, 0.75, 1.25]:
+                #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v2_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v2_embedding_model_name, sf_cfg=sf_cfg))
+                #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg))
+                pass
+        
+
+
+    return models
+
