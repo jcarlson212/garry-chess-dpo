@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import chess
 import itertools
+import math
 
 import torch
 
