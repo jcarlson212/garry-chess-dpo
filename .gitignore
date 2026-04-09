@@ -30,6 +30,8 @@ pip-wheel-metadata/
 *.h5
 *.npz
 **/epoch*.pt
+*.npy
+*.uint8.npy
 
 # =========================
 # Jupyter
@@ -58,11 +60,15 @@ runs/
 artifacts/
 *.pgn
 ./final_experiments_for_paper/experiment2_style_model/flattened_style_jsonl/
+./final_experiments_for_paper/experiment2_style_model/flattened_style_jsonl/
 ./final_experiments_for_paper/experiment2_style_model/splits/
 ./final_experiments_for_paper/experiment2_style_model/pairs_v1/
-./final_experiments_for_paper/experiment2_style_model/pairs_v1/
+./final_experiments_for_paper/experiment2_style_model/pairs_v2/
+./final_experiments_for_paper/experiment2_style_model/pairs_v3_cached/
 ./final_experiments_for_paper/experiment2_style_model/pairs_*/
-./final_experiments_for_paper/experiment2_style_model/training_models/
+./final_experiments_for_paper/experiment2_style_model/trained_models/*epoch*.pt
+./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic/*epoch*.pt
+./final_experiments_for_paper/experiment2_style_model/splits
 ./final_experiments_for_paper/experiment2_style_model/pairs_v1_cached/
 ./final_experiments_for_paper/experiment2_style_model/pairs_v2_cached/
 src/grandmaster_dpo/train/style_embeddings_for_gms/study_supervisor/runs/
