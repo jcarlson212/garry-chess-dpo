@@ -1,0 +1,16 @@
+Global TWIC dataset manifest
+===========================
+
+Random seed: 42
+
+Available candidate games before balancing:
+  blitz:     339548
+  rapid:     105271
+  classical: 550445
+  total:     995264
+
+Selected final global mix:
+  blitz:     210542
+  rapid:     105271
+  classical: 35091
+  total:     350904
