@@ -30,6 +30,7 @@ pip-wheel-metadata/
 *.h5
 *.npz
 **/epoch*.pt
+**/*.npy
 *.npy
 *.uint8.npy
 
