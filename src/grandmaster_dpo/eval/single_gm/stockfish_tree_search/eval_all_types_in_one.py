@@ -5,18 +5,15 @@ import argparse
 import json
 from pathlib import Path
 
-from dataclasses import asdict
-
 from grandmaster_dpo.eval.eval_abstractions import (
-    DpoWithSfHelper,
     build_sf_models_for_gm,
 )
 
 from grandmaster_dpo.eval.eval_abstractions import (
-    DpoPairs,
     SfConfig,
 )
 
+from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import pick_device
 
 def parse_int_list(s: str):
@@ -56,11 +53,12 @@ def main() -> None:
 
     jsonl_path = args.jsonl_template.format(gm=args.gm_name, split=args.split)
     ds = DpoPairs(jsonl_path)
+    print(f"dpo pairs has length: {len(ds)}")
     
     import random
     rng = random.Random(0) 
     rng.shuffle(ds.rows)
-    ds.rows = ds.rows[:500]
+    #ds.rows = ds.rows[:500]
 
     gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
     experiment2_gm_ckpt_dir = Path(args.exp2_gm_ckpt_dir_template.format(gm=args.gm_name))
@@ -98,8 +96,8 @@ def main() -> None:
         for m in models:
             m_out = out_dir / m.tag
             m_out.mkdir(parents=True, exist_ok=True)
-            res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name, n_boot=0)
-            results.append(asdict(res))
+            res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name, n_boot=1000)
+            results.append(res)
             print(f"[done] {m.tag} -> {m_out}")
     finally:
         for m in models:

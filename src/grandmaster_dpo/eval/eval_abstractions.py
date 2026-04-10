@@ -516,10 +516,10 @@ class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
         self.multipv_topk = sf_cfg.multipv_topk
         self.restrict_cp_window = sf_cfg.restrict_cp_window
         self.style_embedding_chkpt = embedding_model_chkpt_name
-
+        print(f"Style embedding checkpoint filename is: {Path(embedding_model_chkpt_name).parent.name}")
     @property
     def tag(self) -> str:
-        return f"sft_and_dpo_w_style_v3_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_emb_chkpt_{self.style_embedding_chkpt}"
+        return f"sft_and_dpo_w_style_v3_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_emb_chkpt_{Path(self.style_embedding_chkpt).parent.name}"
 
 
 # ============================================================

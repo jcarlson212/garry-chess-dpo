@@ -12,11 +12,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import chess
-from grandmaster_dpo.eval.chess_utils import batch_preprocess, coarse_opening_family_from_prefix, extract_move_cp, fen_to_ply_abs, ply_to_phase, vocab_index_to_uci
+from grandmaster_dpo.eval.chess_utils import batch_preprocess, coarse_opening_family_from_prefix, extract_move_cp, fen_to_ply_abs, forward_logits, ply_to_phase, vocab_index_to_uci
 from grandmaster_dpo.eval.configs import OpeningLogitDistConfig, SfConfig
-from grandmaster_dpo.eval.eval_abstractions import forward_logits
 from grandmaster_dpo.eval.opening_metrics import summarize_opening_distribution, update_opening_distributions_from_logits
-from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs, apply_legal_mask, collate_batch, hit_at_k
+from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs, add_piece_selection_per_row_stats, apply_legal_mask, collate_batch, hit_at_k
 from grandmaster_dpo.eval.tensor_metrics import chosen_probability, chosen_rank, gather_logprob_from_masked_logits, kl_policy_base_from_logits
 from grandmaster_dpo.eval.trajectory_utils import safe_get_next_fens_chosen, safe_get_next_fens_rejected, safe_get_prev_fens
 from grandmaster_dpo.eval.types import _SfBatchContext, EvalAggMetrics, EvalPerRowInput, EvalRowMetrics, SfHelperEvalAggregate, SfPerPosResult
@@ -29,6 +28,98 @@ from maia2.utils import create_elo_dict, get_all_possible_moves
 
 from grandmaster_dpo.eval.stockfish_helpers import make_stockfish, uci_to_vocab_index
 
+
+def entropy_from_logits(masked_logits: torch.Tensor) -> torch.Tensor:
+    logp = torch.nn.functional.log_softmax(masked_logits, dim=-1)
+    p = logp.exp()
+    return -(p * logp).sum(dim=-1)
+
+
+def _safe_mean(xs: List[float]) -> float:
+    return float(sum(xs) / max(1, len(xs)))
+
+
+def _binary_mean(rows: List[Dict[str, Any]], key: str) -> float:
+    vals = [float(r.get(key, 0.0)) for r in rows]
+    return _safe_mean(vals)
+
+
+def _precision_at_k(rows: List[Dict[str, Any]], hit_key: str) -> float:
+    return _binary_mean(rows, hit_key)
+
+
+def _recall_at_k(rows: List[Dict[str, Any]], hit_key: str) -> float:
+    return _binary_mean(rows, hit_key)
+
+
+def _f1_from_pr(p: float, r: float) -> float:
+    if p + r <= 0:
+        return 0.0
+    return 2.0 * p * r / (p + r)
+
+
+def _bootstrap_ci(
+    vals: List[float],
+    stat_fn: Callable[[List[float]], float] = _safe_mean,
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> Optional[Dict[str, float]]:
+    if not vals:
+        return None
+    rng = np.random.default_rng(seed)
+    arr = np.asarray(vals, dtype=float)
+    boots = []
+    for _ in range(n_boot):
+        sample = rng.choice(arr, size=len(arr), replace=True)
+        boots.append(float(stat_fn(sample.tolist())))
+    boots = np.asarray(boots, dtype=float)
+    return {
+        "mean": float(stat_fn(arr.tolist())),
+        "ci_lo": float(np.quantile(boots, 0.025)),
+        "ci_hi": float(np.quantile(boots, 0.975)),
+        "n": int(len(arr)),
+    }
+
+
+def _cluster_bootstrap_ci(
+    rows: List[Dict[str, Any]],
+    cluster_key: str,
+    value_key: str,
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> Optional[Dict[str, float]]:
+    grouped: Dict[Any, List[float]] = defaultdict(list)
+    for r in rows:
+        cluster = r.get(cluster_key)
+        val = r.get(value_key)
+        if cluster is None or val is None:
+            continue
+        grouped[cluster].append(float(val))
+
+    clusters = list(grouped.keys())
+    if not clusters:
+        return None
+
+    rng = np.random.default_rng(seed)
+
+    def stat(sampled_clusters: List[Any]) -> float:
+        vals: List[float] = []
+        for c in sampled_clusters:
+            vals.extend(grouped[c])
+        return _safe_mean(vals)
+
+    boots = []
+    for _ in range(n_boot):
+        sampled = rng.choice(clusters, size=len(clusters), replace=True).tolist()
+        boots.append(stat(sampled))
+
+    point = stat(clusters)
+    return {
+        "mean": float(point),
+        "ci_lo": float(np.quantile(boots, 0.025)),
+        "ci_hi": float(np.quantile(boots, 0.975)),
+        "n_clusters": int(len(clusters)),
+    }
 
 def _score_to_cp(
     score,
@@ -685,12 +776,14 @@ class EvalModel(ABC):
             vocab_idx = int(legal_indices[j].item())
             print(f"[{rank:02d}] vocab_idx={vocab_idx:4d}  p={p:.4f}")
 
-    def _compute_eval_per_row_input(self, 
-                                    batch: Dict[str, Any], 
-                                    opening_counts_adv: Dict[str, Counter], 
-                                    dataset: DpoPairs, 
-                                    opening_cfg: OpeningLogitDistConfig,
-                                    opening_by_game: Dict[str, str]):
+    def _compute_eval_per_row_input(
+        self,
+        batch: Dict[str, Any],
+        opening_counts_adv: Dict[str, Counter],
+        dataset: DpoPairs,
+        opening_cfg: OpeningLogitDistConfig,
+        opening_by_game: Dict[str, str],
+    ) -> EvalPerRowInput:
         fens = batch["fen"]
         es = batch["elo_self"]
         eo = batch["elo_oppo"]
@@ -712,65 +805,35 @@ class EvalModel(ABC):
             device=self.device,
         )
 
-        print("=== DEBUG: first batch ===")
-        print("batch size:", len(fens))
-        print("ply_idx sample:", ply_idxs[:10])
-
-        # Always print first few rows no matter what (so you know logging works)
-        for i in range(min(5, len(fens))):
-            lm_sum = int(legal_moves[i].sum().item())
-            print(f"[row {i}] ply_idx={ply_idxs[i]} ply_abs={fen_to_ply_abs(fens[i])} lm_sum={lm_sum}")
-            legal_idxs = torch.nonzero(legal_moves[i] > 0).squeeze(1)[:30].tolist()
-            print("  first legal idxs:", legal_idxs)
-    
-        self.debug_opening_distribution(self.policy, self.device)
-
         logits_pi = forward_logits(self.policy, board_input, es_t, eo_t)
         logits_ref = forward_logits(self.base, board_input, es_t, eo_t)
 
         logits_pi_m = apply_legal_mask(logits_pi, legal_moves)
-
-        # After logits_pi_m is computed:
-        # find first ply_abs==0 row in this batch
-        ply0 = [i for i, fen in enumerate(fens) if fen_to_ply_abs(fen) == 0]
-        if ply0:
-            i = ply0[0]
-            row = logits_pi_m[i]                 # already masked
-            probs = torch.softmax(row, dim=-1)   # over vocab indices
-
-            # show top legal moves by prob, decoded to uci
-            vals, idxs = torch.topk(probs, k=20)
-            for k in range(20):
-                print("\n=== PLY0 ROW (from batch) distribution ===")
-            print("fen:", fens[i])
-            print("elo_self raw:", es[i], "elo_oppo raw:", eo[i])
-            print("elo_self_cat:", int(es_t[i].item()), "elo_oppo_cat:", int(eo_t[i].item()))
-            ent = float(-(probs * torch.log(probs + 1e-12)).sum().item())
-            print("entropy:", ent)
-
-            for r, (p, j) in enumerate(zip(vals.tolist(), idxs.tolist()), 1):
-                uci = vocab_index_to_uci(self.all_moves, fens[i], int(j))
-                print(f"[{r:02d}] idx={int(j):4d} uci={uci:6s} p={p:.6f}")
-
-
         logits_ref_m = apply_legal_mask(logits_ref, legal_moves)
 
         chosen_idx = torch.tensor(
             [uci_to_vocab_index(self.all_moves_dict, fen, u) for fen, u in zip(fens, chosen)],
-            device=self.device, dtype=torch.long
+            device=self.device,
+            dtype=torch.long,
         )
         rejected_idx = torch.tensor(
             [uci_to_vocab_index(self.all_moves_dict, fen, u) for fen, u in zip(fens, rejected)],
-            device=self.device, dtype=torch.long
+            device=self.device,
+            dtype=torch.long,
         )
 
-        # legality checks (match your prior behavior)
-        chosen_ok = (chosen_idx >= 0) & (legal_moves.gather(1, chosen_idx.clamp(min=0).view(-1,1)).squeeze(1) > 0)
-        rejected_ok = (rejected_idx >= 0) & (legal_moves.gather(1, rejected_idx.clamp(min=0).view(-1,1)).squeeze(1) > 0)
+        chosen_ok = (chosen_idx >= 0) & (
+            legal_moves.gather(1, chosen_idx.clamp(min=0).view(-1, 1)).squeeze(1) > 0
+        )
+        rejected_ok = (rejected_idx >= 0) & (
+            legal_moves.gather(1, rejected_idx.clamp(min=0).view(-1, 1)).squeeze(1) > 0
+        )
         bad = ~(chosen_ok & rejected_ok)
         if bad.any():
             j = int(bad.nonzero()[0])
-            raise RuntimeError(f"Illegal chosen/rejected. fen={fens[j]} chosen={chosen[j]} rejected={rejected[j]}")
+            raise RuntimeError(
+                f"Illegal chosen/rejected. fen={fens[j]} chosen={chosen[j]} rejected={rejected[j]}"
+            )
 
         logp_pi_ch = gather_logprob_from_masked_logits(logits_pi_m, chosen_idx)
         logp_pi_rj = gather_logprob_from_masked_logits(logits_pi_m, rejected_idx)
@@ -784,16 +847,29 @@ class EvalModel(ABC):
             safe_get_prev_fens(dataset.game_id_and_ply_to_prev_10_plys, m, n=5)
             for m in meta_list
         ]
-
         next_fens_chosen_batch = [
             safe_get_next_fens_chosen(dataset.game_id_and_ply_to_fut_10_plys, m, n=5)
             for m in meta_list
         ]
-
         next_fens_rejected_batch = [
             safe_get_next_fens_rejected(fen, rj, n=5)
             for fen, rj in zip(fens, rejected)
         ]
+
+        batch_meta_data = list(
+            zip(
+                fens,
+                chosen,
+                rejected,
+                chosen_cps,
+                rejected_cps,
+                ply_idxs,
+                prev_fens_batch,
+                next_fens_chosen_batch,
+                next_fens_rejected_batch,
+                meta_list
+            )
+        )
 
         loss = self.compute_training_style_loss(
             logp_pi_ch=logp_pi_ch,
@@ -803,155 +879,324 @@ class EvalModel(ABC):
             logits_pi_m=logits_pi_m,
             logits_ref_m=logits_ref_m,
             idx_t=chosen_idx,
-            batch_meta_data=zip(fens,
-                                chosen,
-                                rejected,
-                                chosen_cps,
-                                rejected_cps,
-                                ply_idxs,
-                                prev_fens_batch,
-                                next_fens_chosen_batch,
-                                next_fens_rejected_batch,
-                                meta_list),
+            batch_meta_data=batch_meta_data,
         )
-
-        return EvalPerRowInput.from_dict({
-                "logp_pi_ch": logp_pi_ch,
-                "logp_pi_rj": logp_pi_rj,
-                "logp_ref_ch": logp_ref_ch,
-                "logp_ref_rj": logp_ref_rj,
-                "logits_pi_m": logits_pi_m,
-                "logits_ref_m": logits_ref_m,
-                "chosen_idx": chosen_idx,
-                "batch_size": batch_size,
-                "ply_idxs": ply_idxs,
-                "opening_counts_adv": opening_counts_adv,
-                "fens": fens,
-                "loss": loss,
-                "game_ids": game_ids,
-                "chosen": chosen,
-                "rejected": rejected,
-                "opening_cfg": opening_cfg,
-                "opening_by_game": opening_by_game,
-                "opening_prefixes": opening_prefixes
-            })
-
-    def _add_per_row_metrics(self, eval_per_row_input: EvalPerRowInput, sums: Dict[str, float], rows: List[EvalRowMetrics], phase_buckets: Dict[Tuple[str, str], List]):
-        pi_gap = (eval_per_row_input.logp_pi_ch - eval_per_row_input.logp_pi_rj)
-        ref_gap = (eval_per_row_input.logp_ref_ch - eval_per_row_input.logp_ref_rj)
-        gap_improve = (pi_gap - ref_gap)
-
-        # core metrics
-        top1 = (eval_per_row_input.logits_pi_m.argmax(dim=-1) == eval_per_row_input.chosen_idx).float()
-        hit5 = hit_at_k(eval_per_row_input.logits_pi_m, eval_per_row_input.chosen_idx, 5)
-        hit10 = hit_at_k(eval_per_row_input.logits_pi_m, eval_per_row_input.chosen_idx, 10)
-        rank = chosen_rank(eval_per_row_input.logits_pi_m, eval_per_row_input.chosen_idx)
-        mrr = torch.where(rank < 1e8, 1.0 / rank.float(), torch.zeros_like(rank.float()))
-
-        p_chosen = chosen_probability(eval_per_row_input.logits_pi_m, eval_per_row_input.fens, self.all_moves_dict, eval_per_row_input.chosen)
-        kl = kl_policy_base_from_logits(eval_per_row_input.logits_pi_m, eval_per_row_input.logits_ref_m)
-
-        # accumulate
-        sums["loss"] += float(eval_per_row_input.loss) * eval_per_row_input.batch_size
-        sums["pi_gap"] += float(pi_gap.mean()) * eval_per_row_input.batch_size
-        sums["ref_gap"] += float(ref_gap.mean()) * eval_per_row_input.batch_size
-        sums["gap_improve"] += float(gap_improve.mean()) * eval_per_row_input.batch_size
-        sums["top1"] += float(top1.mean()) * eval_per_row_input.batch_size
-        sums["hit5"] += float(hit5.mean()) * eval_per_row_input.batch_size
-        sums["hit10"] += float(hit10.mean()) * eval_per_row_input.batch_size
-        sums["p_chosen"] += float(p_chosen.mean()) * eval_per_row_input.batch_size
-        sums["kl"] += float(kl.mean()) * eval_per_row_input.batch_size
-        sums["mrr"] += float(mrr.mean()) * eval_per_row_input.batch_size
 
         update_opening_distributions_from_logits(
-            opening_counts=eval_per_row_input.opening_counts_adv,
-            fens=eval_per_row_input.fens,
-            logits_masked=eval_per_row_input.logits_pi_m,
+            opening_counts=opening_counts_adv,
+            fens=fens,
+            logits_masked=logits_pi_m,
             all_moves=self.all_moves,
-            cfg=eval_per_row_input.opening_cfg,
+            cfg=opening_cfg,
         )
 
-        pred_idx = eval_per_row_input.logits_pi_m.argmax(dim=-1).tolist()
-        pred_uci = [vocab_index_to_uci(self.all_moves, fen, i) for fen, i in zip(eval_per_row_input.fens, pred_idx)]
+        for gid, prefix in zip(game_ids, opening_prefixes):
+            if gid not in opening_by_game:
+                opening_by_game[gid] = coarse_opening_family_from_prefix(prefix)
 
-        for i in range(eval_per_row_input.batch_size):
-            fen = eval_per_row_input.fens[i]
-            ply_abs = fen_to_ply_abs(fen)
+        return EvalPerRowInput.from_dict({
+            "logp_pi_ch": logp_pi_ch,
+            "logp_pi_rj": logp_pi_rj,
+            "logp_ref_ch": logp_ref_ch,
+            "logp_ref_rj": logp_ref_rj,
+            "logits_pi_m": logits_pi_m,
+            "logits_ref_m": logits_ref_m,
+            "chosen_idx": chosen_idx,
+            "batch_size": batch_size,
+            "ply_idxs": ply_idxs,
+            "opening_counts_adv": opening_counts_adv,
+            "fens": fens,
+            "loss": loss,
+            "game_ids": game_ids,
+            "chosen": chosen,
+            "rejected": rejected,
+            "opening_cfg": opening_cfg,
+            "opening_by_game": opening_by_game,
+            "opening_prefixes": opening_prefixes,
+        })
+
+    def _add_per_row_metrics(
+        self,
+        eval_input: EvalPerRowInput,
+        sums: Dict[str, float],
+        rows: List[Dict[str, Any]],
+        phase_buckets: Dict[Tuple[str, str], List[float]],
+    ) -> None:
+        logp_pi_ch = eval_input.logp_pi_ch
+        logp_pi_rj = eval_input.logp_pi_rj
+        logp_ref_ch = eval_input.logp_ref_ch
+        logp_ref_rj = eval_input.logp_ref_rj
+        logits_pi_m = eval_input.logits_pi_m
+        logits_ref_m = eval_input.logits_ref_m
+        chosen_idx = eval_input.chosen_idx
+        fens = eval_input.fens
+        game_ids = eval_input.game_ids
+        chosen = eval_input.chosen
+        rejected = eval_input.rejected
+
+        p_chosen_pi = chosen_probability(logits_pi_m, fens, self.all_moves_dict, chosen)
+        p_chosen_ref = chosen_probability(logits_ref_m, fens, self.all_moves_dict, chosen)
+
+        hit1_pi = hit_at_k(logits_pi_m, chosen_idx, 1)
+        hit5_pi = hit_at_k(logits_pi_m, chosen_idx, 5)
+        hit10_pi = hit_at_k(logits_pi_m, chosen_idx, 10)
+
+        hit1_ref = hit_at_k(logits_ref_m, chosen_idx, 1)
+        hit5_ref = hit_at_k(logits_ref_m, chosen_idx, 5)
+        hit10_ref = hit_at_k(logits_ref_m, chosen_idx, 10)
+
+        rank_pi = chosen_rank(logits_pi_m, chosen_idx)
+        rank_ref = chosen_rank(logits_ref_m, chosen_idx)
+
+        kl_pi_ref = kl_policy_base_from_logits(logits_pi_m, logits_ref_m)
+        entropy_pi = entropy_from_logits(logits_pi_m)
+        entropy_ref = entropy_from_logits(logits_ref_m)
+
+        pi_gap = logp_pi_ch - logp_pi_rj
+        ref_gap = logp_ref_ch - logp_ref_rj
+        gap_improve = pi_gap - ref_gap
+        mrr = 1.0 / rank_pi.float()
+
+        probs_pi = torch.softmax(logits_pi_m, dim=-1)
+        probs_ref = torch.softmax(logits_ref_m, dim=-1)
+
+        top3_pi = torch.topk(logits_pi_m, k=min(3, logits_pi_m.size(-1)), dim=-1).indices
+        top10_pi = torch.topk(logits_pi_m, k=min(10, logits_pi_m.size(-1)), dim=-1).indices
+
+        for i in range(eval_input.batch_size):
+            ply_abs = fen_to_ply_abs(fens[i])
             phase = ply_to_phase(ply_abs)
 
-            gid = str(eval_per_row_input.game_ids[i] or "")
-            if gid and gid not in eval_per_row_input.opening_by_game:
-                pref = eval_per_row_input.opening_prefixes[i] or []
-                eval_per_row_input.opening_by_game[gid] = coarse_opening_family_from_prefix(pref)
+            pred_idx = int(torch.argmax(logits_pi_m[i]).item())
+            pred_uci = vocab_index_to_uci(self.all_moves, fens[i], pred_idx)
 
-            r = EvalRowMetrics.from_dict({
-                "game_id": gid,
-                "ply_idx": int(eval_per_row_input.ply_idxs[i]) if eval_per_row_input.ply_idxs[i] is not None else -1,
+            chosen_vocab_idx = int(chosen_idx[i].item())
+            chosen_is_in_top3 = bool((top3_pi[i] == chosen_vocab_idx).any().item())
+            chosen_is_in_top10 = bool((top10_pi[i] == chosen_vocab_idx).any().item())
+
+            row = {
+                "game_id": game_ids[i],
+                "ply_idx": int(eval_input.ply_idxs[i]),
                 "ply_abs": int(ply_abs),
                 "phase": phase,
-                "fen": fen,
-                "chosen_uci": eval_per_row_input.chosen[i],
-                "rejected_uci": eval_per_row_input.rejected[i],
-                "pred_uci": pred_uci[i],
-                "correct_top1": float(top1[i].item()),
-                "hit_top5": float(hit5[i].item()),
-                "hit_top10": float(hit10[i].item()),
-                "rank_chosen": int(rank[i].item()) if rank[i].item() < 1e8 else -1,
+                "fen": fens[i],
+                "chosen_uci": chosen[i],
+                "rejected_uci": rejected[i],
+                "pred_uci": pred_uci,
+
+                "correct_top1": float(hit1_pi[i].item()),
+                "hit_top3": float(chosen_is_in_top3),
+                "hit_top5": float(hit5_pi[i].item()),
+                "hit_top10": float(hit10_pi[i].item()),
+                "rank_chosen": int(rank_pi[i].item()),
                 "mrr": float(mrr[i].item()),
+
                 "logp_gap_pi": float(pi_gap[i].item()),
                 "logp_gap_ref": float(ref_gap[i].item()),
                 "gap_improve": float(gap_improve[i].item()),
-                "p_chosen_pi": float(p_chosen[i].item()),
-                "kl_pi_ref": float(kl[i].item()),
-                "nll_chosen_pi": float((-eval_per_row_input.logp_pi_ch[i]).item()),
-            })
-            rows.append(r)
 
-            phase_buckets[("kl_pi_ref", phase)].append(r.kl_pi_ref)
-            phase_buckets[("logp_gap_pi", phase)].append(r.logp_gap_pi)
-            phase_buckets[("p_chosen_pi", phase)].append(r.p_chosen_pi)
-            phase_buckets[("correct_top1", phase)].append(r.correct_top1)
+                "p_chosen_pi": float(p_chosen_pi[i].item()),
+                "p_chosen_ref": float(p_chosen_ref[i].item()),
+                "kl_pi_ref": float(kl_pi_ref[i].item()),
+                "nll_chosen_pi": float((-logp_pi_ch[i]).item()),
 
-    def generate_aggregate_eval_metrics(self,
-                                        num_rows: int,
-                                        opening_by_game: Dict[str, str],
-                                        sums: Dict[str, float],
-                                        gm_name: str,
-                                        dataset: DpoPairs,
-                                        batch_size: int,
-                                        opening_counts_adv: Dict[str, Counter]) -> EvalAggMetrics:
-        def avg(x: float) -> float:
-            return x / max(1, num_rows)
+                "entropy_pi": float(entropy_pi[i].item()),
+                "entropy_ref": float(entropy_ref[i].item()),
+
+                "correct_top1_base": float(hit1_ref[i].item()),
+                "hit_top5_base": float(hit5_ref[i].item()),
+                "hit_top10_base": float(hit10_ref[i].item()),
+                "rank_chosen_base": int(rank_ref[i].item()),
+
+                "chosen_is_in_top_ten": float(chosen_is_in_top10),
+                "chosen_is_in_top_three": float(chosen_is_in_top3),
+
+                "opening_family": eval_input.opening_by_game.get(game_ids[i], "Unknown"),
+
+                # these are useful for old enrichment helpers
+                "prob": float(torch.max(probs_pi[i]).item()),
+                "prob_ref": float(torch.max(probs_ref[i]).item()),
+            }
+            rows.append(row)
+
+            sums["loss"] += float(eval_input.loss.item()) / max(1, eval_input.batch_size)
+            sums["pi_gap"] += float(pi_gap[i].item())
+            sums["ref_gap"] += float(ref_gap[i].item())
+            sums["gap_improve"] += float(gap_improve[i].item())
+            sums["top1"] += float(hit1_pi[i].item())
+            sums["top1_base"] += float(hit1_ref[i].item())
+            sums["hit3"] += float(chosen_is_in_top3)
+            sums["hit5"] += float(hit5_pi[i].item())
+            sums["hit10"] += float(hit10_pi[i].item())
+            sums["mrr"] += float(mrr[i].item())
+            sums["p_chosen"] += float(p_chosen_pi[i].item())
+            sums["p_chosen_base"] += float(p_chosen_ref[i].item())
+            sums["kl"] += float(kl_pi_ref[i].item())
+            sums["ent_pi"] += float(entropy_pi[i].item())
+            sums["ent_ref"] += float(entropy_ref[i].item())
+
+            if chosen_is_in_top10:
+                sums["pi_gap_cond_in_top10"] += float(pi_gap[i].item())
+                sums["ref_gap_cond_in_top10"] += float(ref_gap[i].item())
+                sums["gap_improve_cond_in_top10"] += float(gap_improve[i].item())
+                sums["p_chosen_cond_in_top10"] += float(p_chosen_pi[i].item())
+                sums["p_chosen_base_cond_in_top10"] += float(p_chosen_ref[i].item())
+                sums["kl_cond_in_top10"] += float(kl_pi_ref[i].item())
+                sums["top5_cond_in_top10"] += float(hit5_pi[i].item())
+                sums["top10_cond_in_top10"] += float(hit10_pi[i].item())
+                sums["n_in_top10"] += 1.0
+            else:
+                sums["pi_gap_cond_not_in_top10"] += float(pi_gap[i].item())
+                sums["ref_gap_cond_not_in_top10"] += float(ref_gap[i].item())
+                sums["gap_improve_cond_not_in_top10"] += float(gap_improve[i].item())
+                sums["p_chosen_cond_not_in_top10"] += float(p_chosen_pi[i].item())
+                sums["p_chosen_base_cond_not_in_top10"] += float(p_chosen_ref[i].item())
+                sums["kl_cond_not_in_top10"] += float(kl_pi_ref[i].item())
+                sums["n_not_in_top10"] += 1.0
+
+            phase_buckets[("kl_pi_ref", phase)].append(float(kl_pi_ref[i].item()))
+            phase_buckets[("logp_gap_pi", phase)].append(float(pi_gap[i].item()))
+            phase_buckets[("p_chosen_pi", phase)].append(float(p_chosen_pi[i].item()))
+            phase_buckets[("correct_top1", phase)].append(float(hit1_pi[i].item()))
+            phase_buckets[("entropy_pi", phase)].append(float(entropy_pi[i].item()))
+            phase_buckets[("entropy_ref", phase)].append(float(entropy_ref[i].item()))
+
+    def generate_aggregate_eval_metrics(
+        self,
+        num_rows: int,
+        opening_by_game: Dict[str, str],
+        sums: Dict[str, float],
+        gm_name: str,
+        dataset: DpoPairs,
+        batch_size: int,
+        opening_counts_adv: Dict[str, Counter],
+        per_rows: List[Dict[str, Any]],
+        phase_buckets: Dict[Tuple[str, str], List[float]],
+        n_boot: int = 1000,
+    ) -> Dict[str, Any]:
+        def avg_total(key: str) -> float:
+            return float(sums[key] / max(1, num_rows))
+
+        def avg_cond(key: str, denom_key: str) -> float:
+            return float(sums[key] / max(1.0, sums[denom_key]))
 
         opening_counts = Counter(opening_by_game.values())
         opening_dist = {k: v for k, v in opening_counts.most_common()}
         opening_summary = summarize_opening_distribution(opening_counts_adv, topn=50, normalize=True)
-        stockfish_data = None
 
+        stockfish_data = None
         if self.sf_cfg is not None:
             stockfish_data = self._run_sf_helper_eval(ds=dataset, batch_size=batch_size)
 
-        agg = EvalAggMetrics.from_dict({
+        top1_p = _precision_at_k(per_rows, "correct_top1")
+        top1_r = _recall_at_k(per_rows, "correct_top1")
+        top3_p = _precision_at_k(per_rows, "hit_top3")
+        top3_r = _recall_at_k(per_rows, "hit_top3")
+        top5_p = _precision_at_k(per_rows, "hit_top5")
+        top5_r = _recall_at_k(per_rows, "hit_top5")
+        top10_p = _precision_at_k(per_rows, "hit_top10")
+        top10_r = _recall_at_k(per_rows, "hit_top10")
+
+        chosen_in_top10_rows = [r for r in per_rows if float(r.get("chosen_is_in_top_ten", 0.0)) > 0.0]
+        chosen_not_in_top10_rows = [r for r in per_rows if float(r.get("chosen_is_in_top_ten", 0.0)) <= 0.0]
+
+        phase_summary = {
+            f"{metric}__{phase}": {
+                "mean": _safe_mean(vals),
+                "n": len(vals),
+            }
+            for (metric, phase), vals in phase_buckets.items()
+            if vals
+        }
+
+        agg = {
             "gm": gm_name,
             "tag": self.tag,
             "maia_type": self.maia_type,
             "device": str(self.device),
             "num_rows": num_rows,
-            "mean_loss": avg(sums["loss"]),
-            "mean_logp_gap_pi": avg(sums["pi_gap"]),
-            "mean_logp_gap_ref": avg(sums["ref_gap"]),
-            "mean_gap_improve": avg(sums["gap_improve"]),
-            "top1_accuracy": avg(sums["top1"]),
-            "hit5": avg(sums["hit5"]),
-            "hit10": avg(sums["hit10"]),
-            "mrr": avg(sums["mrr"]),
-            "mean_p_chosen": avg(sums["p_chosen"]),
-            "mean_kl_pi_ref": avg(sums["kl"]),
+
+            "loss": avg_total("loss"),
+            "mean_logp_gap_policy_chosen_rejected": avg_total("pi_gap"),
+            "mean_logp_gap_base_chosen_rejected": avg_total("ref_gap"),
+            "mean_gap_improvement": avg_total("gap_improve"),
+
+            "top1_accuracy_on_chosen_policy": avg_total("top1"),
+            "top1_accuracy_on_chosen_base": avg_total("top1_base"),
+            "hit3_policy": avg_total("hit3"),
+            "hit5_policy": avg_total("hit5"),
+            "hit10_policy": avg_total("hit10"),
+            "mrr": avg_total("mrr"),
+
+            "mean_p_chosen_policy": avg_total("p_chosen"),
+            "mean_p_chosen_base": avg_total("p_chosen_base"),
+            "mean_kl": avg_total("kl"),
+            "mean_ent_pi": avg_total("ent_pi"),
+            "mean_ent_ref": avg_total("ent_ref"),
+
+            "top1_precision": top1_p,
+            "top1_recall": top1_r,
+            "top1_f1": _f1_from_pr(top1_p, top1_r),
+            "top3_precision": top3_p,
+            "top3_recall": top3_r,
+            "top3_f1": _f1_from_pr(top3_p, top3_r),
+            "top5_precision": top5_p,
+            "top5_recall": top5_r,
+            "top5_f1": _f1_from_pr(top5_p, top5_r),
+            "top10_precision": top10_p,
+            "top10_recall": top10_r,
+            "top10_f1": _f1_from_pr(top10_p, top10_r),
+
+            "mean_logp_gap_policy_chosen_rejected_cond_on_in_top_ten": avg_cond("pi_gap_cond_in_top10", "n_in_top10"),
+            "mean_logp_gap_base_chosen_rejected_cond_on_in_top_ten": avg_cond("ref_gap_cond_in_top10", "n_in_top10"),
+            "mean_gap_improvement_cond_on_in_top_ten": avg_cond("gap_improve_cond_in_top10", "n_in_top10"),
+            "mean_p_chosen_policy_cond_on_in_top_ten": avg_cond("p_chosen_cond_in_top10", "n_in_top10"),
+            "mean_p_chosen_base_cond_on_in_top_ten": avg_cond("p_chosen_base_cond_in_top10", "n_in_top10"),
+            "mean_kl_cond_on_in_top_ten": avg_cond("kl_cond_in_top10", "n_in_top10"),
+
+            "mean_logp_gap_policy_chosen_rejected_cond_on_not_in_top_ten": avg_cond("pi_gap_cond_not_in_top10", "n_not_in_top10"),
+            "mean_logp_gap_base_chosen_rejected_cond_on_not_in_top_ten": avg_cond("ref_gap_cond_not_in_top10", "n_not_in_top10"),
+            "mean_gap_improvement_cond_on_not_in_top_ten": avg_cond("gap_improve_cond_not_in_top10", "n_not_in_top10"),
+            "mean_p_chosen_policy_cond_on_not_in_top_ten": avg_cond("p_chosen_cond_not_in_top10", "n_not_in_top10"),
+            "mean_p_chosen_base_cond_on_not_in_top_ten": avg_cond("p_chosen_base_cond_on_not_in_top10", "n_not_in_top10") if "p_chosen_base_cond_on_not_in_top10" in sums else avg_cond("p_chosen_base_cond_not_in_top10", "n_not_in_top10"),
+            "mean_kl_cond_on_not_in_top_ten": avg_cond("kl_cond_not_in_top10", "n_not_in_top10"),
+
+            "top5_precision_cond_on_in_top_ten": _precision_at_k(chosen_in_top10_rows, "hit_top5"),
+            "top5_recall_cond_on_in_top_ten": _recall_at_k(chosen_in_top10_rows, "hit_top5"),
+            "top5_f1_cond_on_in_top_ten": _f1_from_pr(
+                _precision_at_k(chosen_in_top10_rows, "hit_top5"),
+                _recall_at_k(chosen_in_top10_rows, "hit_top5"),
+            ),
+            "top10_precision_cond_on_in_top_ten": _precision_at_k(chosen_in_top10_rows, "hit_top10"),
+            "top10_recall_cond_on_in_top_ten": _recall_at_k(chosen_in_top10_rows, "hit_top10"),
+            "top10_f1_cond_on_in_top_ten": _f1_from_pr(
+                _precision_at_k(chosen_in_top10_rows, "hit_top10"),
+                _recall_at_k(chosen_in_top10_rows, "hit_top10"),
+            ),
+
             "opening_family_counts_by_game": opening_dist,
             "opening_summary": opening_summary,
+            "phase_summary": phase_summary,
             "stockfish": stockfish_data,
-        })
-        
+
+            "bootstrap_ci_row": {
+                "accuracy_top1": _bootstrap_ci([float(r["correct_top1"]) for r in per_rows], n_boot=n_boot, seed=1),
+                "mean_logp_gap_pi": _bootstrap_ci([float(r["logp_gap_pi"]) for r in per_rows], n_boot=n_boot, seed=2),
+                "mean_p_chosen_pi": _bootstrap_ci([float(r["p_chosen_pi"]) for r in per_rows], n_boot=n_boot, seed=3),
+                "mrr": _bootstrap_ci([float(r["mrr"]) for r in per_rows], n_boot=n_boot, seed=4),
+            },
+            "bootstrap_ci_cluster_by_game_player_chosen": {
+                "accuracy_top1": _cluster_bootstrap_ci(per_rows, "game_id", "correct_top1", n_boot=n_boot, seed=10),
+                "mean_logp_gap_pi": _cluster_bootstrap_ci(per_rows, "game_id", "logp_gap_pi", n_boot=n_boot, seed=11),
+                "mean_p_chosen_pi": _cluster_bootstrap_ci(per_rows, "game_id", "p_chosen_pi", n_boot=n_boot, seed=12),
+                "mrr": _cluster_bootstrap_ci(per_rows, "game_id", "mrr", n_boot=n_boot, seed=13),
+            },
+            "notes": {
+                "opening_family_is_coarse_heuristic_player_chosen": True,
+                "precision_recall_f1_equals_accuracy_for_top1_hit": True,
+            },
+        }
+
         return agg
 
     @torch.inference_mode()
@@ -963,39 +1208,99 @@ class EvalModel(ABC):
         n_boot: int,
         out_dir: Path,
         gm_name: str,
-    ) -> EvalAggMetrics:
-        loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=collate_batch)
+    ) -> Dict[str, Any]:
+        loader = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=collate_batch,
+        )
 
-        # aggregate scalars
         num_rows = 0
         sums = defaultdict(float)
-
-        per_rows: List[EvalRowMetrics] = []
+        per_rows: List[Dict[str, Any]] = []
         phase_buckets: Dict[Tuple[str, str], List[float]] = defaultdict(list)
         opening_by_game: Dict[str, str] = {}
 
         opening_counts_adv = {"ply0_white": Counter(), "ply1_black": Counter()}
-        opening_cfg = OpeningLogitDistConfig(plies=(0,1), temperature=1.0, topk=50)
+        opening_cfg = OpeningLogitDistConfig(plies=(0, 1), temperature=1.0, topk=50)
 
         for batch in loader:
-            eval_per_row_input = self._compute_eval_per_row_input(batch, opening_counts_adv, ds, opening_cfg, opening_by_game)
-            self._add_per_row_metrics(eval_per_row_input, sums, per_rows, phase_buckets)
-            num_rows += eval_per_row_input.batch_size
+            eval_input = self._compute_eval_per_row_input(
+                batch=batch,
+                opening_counts_adv=opening_counts_adv,
+                dataset=ds,
+                opening_cfg=opening_cfg,
+                opening_by_game=opening_by_game,
+            )
+            self._add_per_row_metrics(eval_input, sums, per_rows, phase_buckets)
+            num_rows += eval_input.batch_size
 
-        eval_agg_metrics = self.generate_aggregate_eval_metrics(num_rows, opening_by_game, sums, gm_name, ds, batch_size, opening_counts_adv)
+        per_rows_sorted = sorted(per_rows, key=lambda r: (r.get("game_id"), r.get("ply_idx")))
+        per_rows_sorted = add_piece_selection_per_row_stats(per_rows_sorted)
 
-        # Write outputs
+        eval_agg_metrics = self.generate_aggregate_eval_metrics(
+            num_rows=num_rows,
+            opening_by_game=opening_by_game,
+            sums=sums,
+            gm_name=gm_name,
+            dataset=ds,
+            batch_size=batch_size,
+            opening_counts_adv=opening_counts_adv,
+            per_rows=per_rows_sorted,
+            phase_buckets=phase_buckets,
+            n_boot=n_boot,
+        )
+
         if out_dir is not None:
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"eval_results__{self.tag}.json").write_text(json.dumps(eval_agg_metrics, indent=2))
 
-            # per-row
-            if per_rows:
+            json_path = out_dir / f"eval_results__{self.tag}.json"
+            json_path.write_text(json.dumps(eval_agg_metrics, indent=2))
+            print(f"Eval results saved to {json_path}")
+
+            if per_rows_sorted:
+                per_row_jsonl = out_dir / f"eval_per_row__{self.tag}.jsonl"
+                with open(per_row_jsonl, "w", encoding="utf-8") as f:
+                    for row in per_rows_sorted:
+                        f.write(json.dumps(row) + "\n")
+
                 per_csv = out_dir / f"eval_per_row__{self.tag}.csv"
-                with open(per_csv, "w", newline="") as f:
-                    w = csv.DictWriter(f, fieldnames=list(asdict(per_rows[0]).keys()))
-                    w.writeheader()
-                    w.writerows((asdict(r) for r in per_rows))
+                with open(per_csv, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=list(per_rows_sorted[0].keys()))
+                    writer.writeheader()
+                    writer.writerows(per_rows_sorted)
+
+                summary_csv = out_dir / f"eval_summary__{self.tag}.csv"
+                with open(summary_csv, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "loss",
+                        "mean_logp_gap_policy_chosen_rejected",
+                        "mean_logp_gap_base_chosen_rejected",
+                        "mean_gap_improvement",
+                        "top1_accuracy_on_chosen_policy",
+                        "top1_accuracy_on_chosen_base",
+                        "mean_p_chosen_policy",
+                        "mean_p_chosen_base",
+                        "mean_kl",
+                        "mean_ent_pi",
+                        "mean_ent_ref",
+                    ])
+                    writer.writerow([
+                        eval_agg_metrics["loss"],
+                        eval_agg_metrics["mean_logp_gap_policy_chosen_rejected"],
+                        eval_agg_metrics["mean_logp_gap_base_chosen_rejected"],
+                        eval_agg_metrics["mean_gap_improvement"],
+                        eval_agg_metrics["top1_accuracy_on_chosen_policy"],
+                        eval_agg_metrics["top1_accuracy_on_chosen_base"],
+                        eval_agg_metrics["mean_p_chosen_policy"],
+                        eval_agg_metrics["mean_p_chosen_base"],
+                        eval_agg_metrics["mean_kl"],
+                        eval_agg_metrics["mean_ent_pi"],
+                        eval_agg_metrics["mean_ent_ref"],
+                    ])
 
         return eval_agg_metrics
 

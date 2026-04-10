@@ -112,3 +112,8 @@ htmlcov/
 *.key
 *.crt
 secrets/
+
+
+# Misc / Personal
+queue.json
+training_summaries.txt
