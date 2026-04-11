@@ -568,6 +568,7 @@ class EvalModel(ABC):
         policy_pt_path: Optional[str] = None,
         beta: float = 0.1,
         sf_cfg: Optional[SfConfig] = None,
+        sf_engine: Optional[Any] = None
     ):
         self.maia_type = maia_type
         self.device = device
@@ -591,16 +592,7 @@ class EvalModel(ABC):
         self.policy.eval()
 
         # SF engine (single-process) if enabled
-        self._sf_engine = None
-        if self.sf_cfg is not None:
-            self._sf_engine = make_stockfish(
-                self.sf_cfg.stockfish_path,
-                threads=int(self.sf_cfg.threads),
-                hash_mb=int(self.sf_cfg.hash_mb),
-                uci_elo=self.sf_cfg.uci_elo,
-                skill_level=None,
-                timeout=float(self.sf_cfg.timeout_s),
-            )
+        self._sf_engine = sf_engine
 
     @property
     @abstractmethod
