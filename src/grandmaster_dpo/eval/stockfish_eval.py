@@ -1539,3 +1539,153 @@ class EvalModel(ABC):
             all_moves=self.all_moves,
             cfg=opening_logits_cfg,
         )
+
+
+def _serialize_sf_info(info: Dict[str, Any], board: chess.Board) -> Optional[Dict[str, Any]]:
+    pv = info.get("pv")
+    score = info.get("score")
+
+    if not pv or score is None:
+        return None
+
+    try:
+        pv_uci = [mv.uci() for mv in pv]
+    except Exception:
+        pv_uci = []
+
+    out: Dict[str, Any] = {
+        "pv": pv_uci,
+        "best_move": pv_uci[0] if pv_uci else None,
+        "cp": _score_to_cp(score, turn=board.turn),
+    }
+
+    if "depth" in info:
+        try:
+            out["depth"] = int(info["depth"])
+        except Exception:
+            pass
+
+    if "seldepth" in info:
+        try:
+            out["seldepth"] = int(info["seldepth"])
+        except Exception:
+            pass
+
+    if "nodes" in info:
+        try:
+            out["nodes"] = int(info["nodes"])
+        except Exception:
+            pass
+
+    if "time" in info:
+        try:
+            out["time"] = float(info["time"])
+        except Exception:
+            pass
+
+    if "nps" in info:
+        try:
+            out["nps"] = int(info["nps"])
+        except Exception:
+            pass
+
+    return out
+
+
+def generate_stockfish_cache(
+    sf_cfg: SfConfig,
+    jsonl_path: Path,
+    sf_cache_jsonl_path: Path,
+) -> None:
+    sf_cache_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sf_engine = make_stockfish(
+        sf_cfg.stockfish_path,
+        threads=int(sf_cfg.threads),
+        hash_mb=int(sf_cfg.hash_mb),
+        uci_elo=sf_cfg.uci_elo,
+        skill_level=None,
+        timeout=float(sf_cfg.timeout_s),
+    )
+
+    try:
+        ds = DpoPairs(jsonl_path=str(jsonl_path))
+        limit = chess.engine.Limit(depth=int(sf_cfg.depth))
+
+        with open(sf_cache_jsonl_path, "w", encoding="utf-8") as sf_cache_file:
+            for i, r in enumerate(ds):
+                fen = r["fen"]
+                board = chess.Board(fen)
+
+                if board.is_game_over(claim_draw=True):
+                    out_row = {
+                        "game_id": r.get("game_id"),
+                        "ply_idx": r.get("ply_idx"),
+                        "fen": fen,
+                        "stockfish": {
+                            "depth": int(sf_cfg.depth),
+                            "multipv_requested": int(sf_cfg.multipv_topk * 2),
+                            "sf_moves_returned": [],
+                            "best_cp": None,
+                        },
+                    }
+                    sf_cache_file.write(json.dumps(out_row) + "\n")
+                    continue
+
+                try:
+                    infos = sf_engine.analyse(
+                        board,
+                        limit,
+                        multipv=int(sf_cfg.multipv_topk * 2),
+                    )
+                except Exception as e:
+                    out_row = {
+                        **r,
+                        "stockfish": {
+                            "depth": int(sf_cfg.depth),
+                            "multipv_requested": int(sf_cfg.multipv_topk * 2),
+                            "sf_moves_returned": [],
+                            "best_cp": None,
+                            "error": str(e),
+                        },
+                    }
+                    sf_cache_file.write(json.dumps(out_row) + "\n")
+                    continue
+
+                if isinstance(infos, dict):
+                    infos = [infos]
+
+                serialized_infos: List[Dict[str, Any]] = []
+                sf_moves_returned: List[List[Any]] = []
+
+                for info in infos:
+                    s = _serialize_sf_info(info, board=board)
+                    if s is None:
+                        continue
+                    serialized_infos.append(s)
+                    if s["best_move"] is not None:
+                        sf_moves_returned.append([s["best_move"], s["cp"]])
+
+                best_cp = max((cp for _, cp in sf_moves_returned), default=None)
+
+                out_row = {
+                    **r,
+                    "stockfish": {
+                        "depth": int(sf_cfg.depth),
+                        "multipv_requested": int(sf_cfg.multipv_topk * 2),
+                        "sf_moves_returned": sf_moves_returned,
+                        "best_cp": best_cp,
+                        "infos": serialized_infos,
+                    },
+                }
+
+                sf_cache_file.write(json.dumps(out_row) + "\n")
+
+                if (i + 1) % 100 == 0:
+                    print(f"[stockfish-cache] processed {i + 1}/{len(ds)} rows")
+
+    finally:
+        try:
+            sf_engine.quit()
+        except Exception:
+            pass

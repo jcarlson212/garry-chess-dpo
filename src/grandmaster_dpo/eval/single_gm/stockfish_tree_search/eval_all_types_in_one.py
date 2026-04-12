@@ -14,6 +14,7 @@ from grandmaster_dpo.eval.eval_abstractions import (
 )
 
 from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs
+from grandmaster_dpo.eval.stockfish_eval import generate_stockfish_cache
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import pick_device
 
 def parse_int_list(s: str):
@@ -41,6 +42,7 @@ def main() -> None:
     ap.add_argument("--sf_depth", type=parse_int_list, default=[5], help="Stockfish depth (human-likeness sweep target).")
     ap.add_argument("--sf_tops", type=parse_int_list, default=[10], help="MultiPV candidates.")
     ap.add_argument("--sf_uci_elo", default="none", help="none or integer (e.g. 1600).")
+    ap.add_argument("--sf_cache_template", type=str, default="./final_experiments_for_paper/experiment3/sf_cache/{gm}/")
     ap.add_argument("--restrict_cp_window", type=int, default=60)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--sample", action="store_true")
@@ -52,18 +54,8 @@ def main() -> None:
     device = pick_device("auto")
 
     jsonl_path = args.jsonl_template.format(gm=args.gm_name, split=args.split)
-    ds = DpoPairs(jsonl_path)
-    print(f"dpo pairs has length: {len(ds)}")
-    
-    import random
-    rng = random.Random(0) 
-    rng.shuffle(ds.rows)
-    #ds.rows = ds.rows[:500]
-
-    gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
-    experiment2_gm_ckpt_dir = Path(args.exp2_gm_ckpt_dir_template.format(gm=args.gm_name))
-    out_dir = Path(args.out_root.format(gm=args.gm_name, split=args.split))
-    out_dir.mkdir(parents=True, exist_ok=True)
+    sf_cache_dir = Path(args.sf_cache_template.format(gm=args.gm_name))
+    sf_cache_dir.mkdir(parents=True, exist_ok=True)
 
     sf_cfgs = []
     uci_elo = None if args.sf_uci_elo.lower() in ("none", "null", "full", "max") else int(args.sf_uci_elo)
@@ -82,6 +74,26 @@ def main() -> None:
                 use_gibbs=True,
             )
             sf_cfgs.append(sf_cfg)
+
+    for sf_cfg in sf_cfgs:
+        sf_cache_jsonl_path = Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{sf_cfg.depth}_multipv_{sf_cfg.multipv_topk*2}_hash_mb_{sf_cfg.hash_mb}_uci_elo_{sf_cfg.uci_elo}")
+        if not sf_cache_jsonl_path.exists():
+            generate_stockfish_cache(sf_cfg, jsonl_path, sf_cache_jsonl_path)
+    
+    
+    ds = DpoPairs(jsonl_path)
+    print(f"dpo pairs has length: {len(ds)}")
+    
+    import random
+    rng = random.Random(0) 
+    rng.shuffle(ds.rows)
+    #ds.rows = ds.rows[:500]
+
+    gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
+    experiment2_gm_ckpt_dir = Path(args.exp2_gm_ckpt_dir_template.format(gm=args.gm_name))
+    out_dir = Path(args.out_root.format(gm=args.gm_name, split=args.split))
+    out_dir.mkdir(parents=True, exist_ok=True)
+
 
     models = build_sf_models_for_gm(
         maia_type=args.maia_type,
