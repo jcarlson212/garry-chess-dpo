@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import random
 
 from grandmaster_dpo.eval.eval_abstractions import (
     build_sf_models_for_gm,
@@ -24,7 +25,7 @@ def parse_int_list(s: str):
         raise argparse.ArgumentTypeError(f"Expected comma-separated ints, got: {s}")
 
 def main() -> None:
-    # Example: python ./src/grandmaster_dpo/eval/single_gm/stockfish_tree_search/eval_all_types_in_one.py --gm_name carlsen --split val --sf_depth 5 --sf_tops 10 
+    # Example: python ./src/grandmaster_dpo/eval/single_gm/stockfish_tree_search/eval_all_types_in_one.py --gm_name carlsen --split val --sf_depth 18 --sf_tops 10 
     ap = argparse.ArgumentParser()
     ap.add_argument("--gm_name", type=str, required=True)
     ap.add_argument("--split", default="val", choices=["train", "val"])
@@ -59,7 +60,7 @@ def main() -> None:
 
     sf_cfgs = []
     uci_elo = None if args.sf_uci_elo.lower() in ("none", "null", "full", "max") else int(args.sf_uci_elo)
-    for depth in args.sf_depth:
+    for depth in sorted(args.sf_depth, reverse=True):
         for topk in args.sf_tops:
             sf_cfg = SfConfig(
                 stockfish_path=args.sf_path,
@@ -76,24 +77,14 @@ def main() -> None:
             sf_cfgs.append(sf_cfg)
 
     for sf_cfg in sf_cfgs:
-        sf_cache_jsonl_path = Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{sf_cfg.depth}_multipv_{sf_cfg.multipv_topk*2}_hash_mb_{sf_cfg.hash_mb}_uci_elo_{sf_cfg.uci_elo}")
+        sf_cache_jsonl_path = Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{sf_cfg.depth}_multipv_{sf_cfg.multipv_topk}_hash_mb_{sf_cfg.hash_mb}_uci_elo_{sf_cfg.uci_elo}_restrict_cp_window_{sf_cfg.restrict_cp_window}_temperature_{sf_cfg.temperature}")
         if not sf_cache_jsonl_path.exists():
             generate_stockfish_cache(sf_cfg, jsonl_path, sf_cache_jsonl_path)
-    
-    
-    ds = DpoPairs(jsonl_path)
-    print(f"dpo pairs has length: {len(ds)}")
-    
-    import random
-    rng = random.Random(0) 
-    rng.shuffle(ds.rows)
-    #ds.rows = ds.rows[:500]
 
     gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
     experiment2_gm_ckpt_dir = Path(args.exp2_gm_ckpt_dir_template.format(gm=args.gm_name))
     out_dir = Path(args.out_root.format(gm=args.gm_name, split=args.split))
     out_dir.mkdir(parents=True, exist_ok=True)
-
 
     models = build_sf_models_for_gm(
         maia_type=args.maia_type,
@@ -106,6 +97,10 @@ def main() -> None:
     results = []
     try:
         for m in models:
+            ds = DpoPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{m.sf_cfg.depth}_multipv_{m.sf_cfg.multipv_topk*2}_hash_mb_{m.sf_cfg.hash_mb}_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
+            print(f"dpo pairs has length: {len(ds)}")
+            rng = random.Random(0) 
+            rng.shuffle(ds.rows)
             m_out = out_dir / m.tag
             m_out.mkdir(parents=True, exist_ok=True)
             res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name, n_boot=1000)

@@ -1619,15 +1619,15 @@ def generate_stockfish_cache(
 
                 if board.is_game_over(claim_draw=True):
                     out_row = {
-                        "game_id": r.get("game_id"),
-                        "ply_idx": r.get("ply_idx"),
-                        "fen": fen,
-                        "stockfish": {
-                            "depth": int(sf_cfg.depth),
-                            "multipv_requested": int(sf_cfg.multipv_topk * 2),
-                            "sf_moves_returned": [],
-                            "best_cp": None,
-                        },
+                        **r,
+                    }
+
+                    out_row["meta"]["stockfish"] = {
+                        "depth": int(sf_cfg.depth),
+                        "multipv_requested": int(sf_cfg.multipv_topk),
+                        "sf_moves_returned": [],
+                        "best_cp": None,
+                        "infos": [],
                     }
                     sf_cache_file.write(json.dumps(out_row) + "\n")
                     continue
@@ -1636,18 +1636,18 @@ def generate_stockfish_cache(
                     infos = sf_engine.analyse(
                         board,
                         limit,
-                        multipv=int(sf_cfg.multipv_topk * 2),
+                        multipv=int(sf_cfg.multipv_topk),
                     )
                 except Exception as e:
                     out_row = {
                         **r,
-                        "stockfish": {
-                            "depth": int(sf_cfg.depth),
-                            "multipv_requested": int(sf_cfg.multipv_topk * 2),
-                            "sf_moves_returned": [],
-                            "best_cp": None,
-                            "error": str(e),
-                        },
+                    }
+                    out_row["meta"]["stockfish"] = {
+                        "depth": int(sf_cfg.depth),
+                        "multipv_requested": int(sf_cfg.multipv_topk),
+                        "sf_moves_returned": [],
+                        "best_cp": None,
+                        "infos": [],
                     }
                     sf_cache_file.write(json.dumps(out_row) + "\n")
                     continue
@@ -1670,15 +1670,14 @@ def generate_stockfish_cache(
 
                 out_row = {
                     **r,
-                    "stockfish": {
-                        "depth": int(sf_cfg.depth),
-                        "multipv_requested": int(sf_cfg.multipv_topk * 2),
-                        "sf_moves_returned": sf_moves_returned,
-                        "best_cp": best_cp,
-                        "infos": serialized_infos,
-                    },
                 }
-
+                out_row["meta"]["stockfish"] = {
+                    "depth": int(sf_cfg.depth),
+                    "multipv_requested": int(sf_cfg.multipv_topk * 2),
+                    "sf_moves_returned": sf_moves_returned,
+                    "best_cp": best_cp,
+                    "infos": serialized_infos,
+                }
                 sf_cache_file.write(json.dumps(out_row) + "\n")
 
                 if (i + 1) % 100 == 0:
