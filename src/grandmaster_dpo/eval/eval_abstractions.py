@@ -412,7 +412,7 @@ class DpoWithSfHelper(DpoModel):
         
     @property
     def tag(self) -> str:
-        return f"dpo_w_sf_depth_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
+        return f"dpo_w_sf_depth_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"
 
 class SftWithSfHelper(SftModel):
 
@@ -424,7 +424,7 @@ class SftWithSfHelper(SftModel):
         
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"    
     
 class SftPairwiseWithSfHelper(SftPairwiseModel):
 
@@ -436,7 +436,7 @@ class SftPairwiseWithSfHelper(SftPairwiseModel):
         
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"    
     
 class SftAndDpoWithSfHelper(SftAndDpo):
 
@@ -458,7 +458,7 @@ class SftAndDpoWithSfHelper(SftAndDpo):
 
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"    
     
 class SftAndDpoWStyleV1WithSfHelper(SftAndDpoWStyleV1):
     def __init__(
@@ -480,7 +480,7 @@ class SftAndDpoWStyleV1WithSfHelper(SftAndDpoWStyleV1):
 
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"    
     
 class SftAndDpoWStyleV2WithSfHelper(SftAndDpoWStyleV2):
     def __init__(
@@ -502,7 +502,7 @@ class SftAndDpoWStyleV2WithSfHelper(SftAndDpoWStyleV2):
 
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}"    
     
 class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
     def __init__(
@@ -527,7 +527,7 @@ class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
 
     @property
     def tag(self) -> str:
-        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_emb_chkpt_{Path(self.style_embedding_chkpt).parent.name.replace('__bs-4096_', '').replace('__seed-42', '')}"
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_t{self.sf_cfg.temperature:.2f}_emb_chkpt_{Path(self.style_embedding_chkpt).parent.name.replace('__bs-4096_', '').replace('__seed-42', '')}"
 
 
 # ============================================================

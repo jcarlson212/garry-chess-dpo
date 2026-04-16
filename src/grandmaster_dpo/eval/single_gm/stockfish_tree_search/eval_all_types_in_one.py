@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import random
 
-from grandmaster_dpo.eval.dataset import DpoPairs, SFCachedPairs, merge_inf_sf_and_reference_sf
+from grandmaster_dpo.eval.dataset import SFCachedPairs, merge_inf_sf_and_reference_sf
 from grandmaster_dpo.eval.eval_abstractions import (
     build_sf_models_for_gm,
 )
@@ -50,6 +50,7 @@ def main() -> None:
     ap.add_argument("--restrict_cp_window", type=int, default=60)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--sample", action="store_true")
+    ap.add_argument("--use_gibbs", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--disable_initial_model_types", action="store_true")
 
@@ -66,6 +67,7 @@ def main() -> None:
     for depth in sorted(args.sf_depth, reverse=False):
         for topk in args.sf_tops:
             hash_mb = 4048 if depth == 16 else 128
+            use_gibbs = True if depth ==16 else args.use_gibbs # depth = 16 gibbs doesn't matter it's just what was set. Ref stockfish is never sampled
             sf_cfg = SfConfig(
                 stockfish_path=args.sf_path,
                 depth=depth,
@@ -76,7 +78,7 @@ def main() -> None:
                 sample=bool(args.sample),
                 seed=int(args.seed),
                 threads=18,
-                use_gibbs=True,
+                use_gibbs=use_gibbs,
                 hash_mb=hash_mb,
             )
             sf_cfgs.append(sf_cfg)
@@ -105,8 +107,9 @@ def main() -> None:
     try:
         for m in models:
             print(f"Generating data for gm {args.gm_name} and model {m.tag}...")
-            cached_inference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{m.sf_cfg.depth}_multipv_{m.sf_cfg.multipv_topk}_hash_mb_{m.sf_cfg.hash_mb}_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
-            cached_reference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_16_multipv_{m.sf_cfg.multipv_topk}_hash_mb_4048_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
+            # temperature loaded is 1.0 since we are just loading stockfish multipv=10 effectively, the gibbs sampling would be recalculated with temperature
+            cached_inference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{m.sf_cfg.depth}_multipv_{m.sf_cfg.multipv_topk}_hash_mb_{m.sf_cfg.hash_mb}_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{1.0}")))
+            cached_reference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_16_multipv_{m.sf_cfg.multipv_topk}_hash_mb_4048_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{1.0}")))
             base_eval_dataset = merge_inf_sf_and_reference_sf(cached_inference_stockfish_dpo_pairs, cached_reference_stockfish_dpo_pairs)
             
             print(f"Running eval on {len(base_eval_dataset)} dpo pairs")

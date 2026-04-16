@@ -1114,7 +1114,6 @@ class EvalModel(ABC):
             }
             rows.append(row)
 
-            sums["loss"] += float(eval_input.loss.item()) / max(1, eval_input.batch_size)
             sums["pi_gap"] += float(pi_gap[i].item())
             sums["ref_gap"] += float(ref_gap[i].item())
             sums["gap_improve"] += float(gap_improve[i].item())
@@ -1155,6 +1154,8 @@ class EvalModel(ABC):
             phase_buckets[("correct_top1", phase)].append(float(hit1_pi[i].item()))
             phase_buckets[("entropy_pi", phase)].append(float(entropy_pi[i].item()))
             phase_buckets[("entropy_ref", phase)].append(float(entropy_ref[i].item()))
+            
+        sums["loss"] += float(eval_input.loss.item()) * eval_input.batch_size
 
     def generate_aggregate_eval_metrics(
         self,
