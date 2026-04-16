@@ -54,6 +54,7 @@ class DpoPairs(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         r = self.rows[idx]
+        print(f"current row is {r}")
         p = r.get("prompt", {}) or {}
         meta = r.get("meta", {}) or {}
 

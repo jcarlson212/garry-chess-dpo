@@ -9,16 +9,17 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import chess
 from grandmaster_dpo.eval.chess_utils import batch_preprocess, coarse_opening_family_from_prefix, extract_move_cp, fen_to_ply_abs, forward_logits, ply_to_phase, vocab_index_to_uci
 from grandmaster_dpo.eval.configs import OpeningLogitDistConfig, SfConfig
+from grandmaster_dpo.eval.dataset import DpoPairs
 from grandmaster_dpo.eval.opening_metrics import summarize_opening_distribution, update_opening_distributions_from_logits
-from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs, add_piece_selection_per_row_stats, apply_legal_mask, collate_batch, hit_at_k
+from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import add_piece_selection_per_row_stats, apply_legal_mask, collate_batch, hit_at_k
 from grandmaster_dpo.eval.tensor_metrics import chosen_probability, chosen_rank, gather_logprob_from_masked_logits, kl_policy_base_from_logits
 from grandmaster_dpo.eval.trajectory_utils import safe_get_next_fens_chosen, safe_get_next_fens_rejected, safe_get_prev_fens
-from grandmaster_dpo.eval.types import _SfBatchContext, EvalAggMetrics, EvalPerRowInput, EvalRowMetrics, SfHelperEvalAggregate, SfPerPosResult
+from grandmaster_dpo.eval.types import _SFCandidate, _SfBatchContext, EvalAggMetrics, EvalPerRowInput, EvalRowMetrics, SfHelperEvalAggregate, SfPerPosResult
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
@@ -56,6 +57,7 @@ def _f1_from_pr(p: float, r: float) -> float:
     if p + r <= 0:
         return 0.0
     return 2.0 * p * r / (p + r)
+
 
 
 def _bootstrap_ci(
@@ -158,19 +160,59 @@ def _entropy(probs: List[float], eps: float) -> float:
         s -= pp * math.log(pp)
     return float(s)
 
+def _get_stockfish_candidates_in_window(sf_candidates: List[_SFCandidate], adaptive_restrict_cp_window: float) -> List[_SFCandidate]:
+    # --------- cp-window filter ----------
+    best_cp = max(data.cp for data in sf_candidates)
+    return sorted([data for data in sf_candidates if data.cp >= best_cp - adaptive_restrict_cp_window], key=lambda x: x.cp, reverse=True)
+
+def _get_engine_plus_style_logits(logp_ref_all: torch.Tensor,
+                                  logits_masked_1d: torch.Tensor, 
+                                  kept: List[_SFCandidate], 
+                                  all_moves_dict: Dict[str, int], 
+                                  fen: str, 
+                                  cp_cap: int, 
+                                  cp_scale: float, 
+                                  lam: float):
+    # --------- compute pi_ref over kept moves (from policy logits) ----------
+    # This is the ref distribution in the KL term.
+    cand_moves: List[str] = [data.uci for data in kept]
+    cand_idxs: List[int] = [uci_to_vocab_index(all_moves_dict, fen, u) for u in cand_moves]
+
+    neg_inf = torch.finfo(logits_masked_1d.dtype).min
+    cand_logp_ref = []
+    for idx in cand_idxs:
+        if idx < 0:
+            cand_logp_ref.append(torch.tensor(neg_inf, device=logp_ref_all.device, dtype=logp_ref_all.dtype))
+        else:
+            cand_logp_ref.append(logp_ref_all[idx])
+    cand_logp_ref_t = torch.stack(cand_logp_ref, dim=0)  # [K]
+
+    # --------- Gibbs / KL-regularized policy improvement ----------
+    # pi_new(a) ∝ pi_ref(a) * exp(Q(a)/lambda)
+    cps = torch.tensor(
+        [int(round(data.cp)) for data in kept],
+        device=cand_logp_ref_t.device,
+        dtype=cand_logp_ref_t.dtype,
+    ).clamp(min=-cp_cap, max=cp_cap)
+
+    Q = cps / cp_scale
+    combined = cand_logp_ref_t + (Q / max(lam, 1e-6))          # [K]
+    return combined
+
 @torch.inference_mode()
 def compute_sf_helper_w_gibbs_for_one_position(
     *,
     fen: str,
     chosen_uci: str,
     rejected_uci: str,
-    sf_engine: chess.engine.SimpleEngine,
     logits_masked_1d: torch.Tensor,   # [V] masked logits for policy
     base_logp_full_1d: torch.Tensor,  # [V] log-softmax of base masked logits
     all_moves_dict: Dict[str, int],   # uci_eff -> idx
     cfg: SfConfig,
     full_hit: Dict[int, int],         # {1:0/1, 5:0/1, 10:0/1}
     rng: random.Random,
+    sf_inference_candidates: List[_SFCandidate],
+    sf_reference_candidates: Optional[List[_SFCandidate]],
 ) -> Optional[Tuple[SfPerPosResult, Dict[str, Any]]]:
 
     # --------- basic guards ----------
@@ -217,7 +259,7 @@ def compute_sf_helper_w_gibbs_for_one_position(
     cp_cap = int(getattr(cfg, "cp_cap", 2000))
     cp_scale = float(getattr(cfg, "cp_scale", 150.0))  # 150cp -> +1.0 logit bonus at lambda=1
 
-    # --------- policy top-k candidates ----------
+    # --------- policy top-k inference stockfish candidates ----------
     # logits are already masked; softmax is safe (masked moves -> prob 0)
     policy_probs = torch.softmax(logits_masked_1d, dim=-1)  # [V]
     topv, topi = torch.topk(policy_probs, k=k)
@@ -244,101 +286,56 @@ def compute_sf_helper_w_gibbs_for_one_position(
         return None
 
     # --------- stockfish eval restricted to those root moves ----------
-    limit = chess.engine.Limit(depth=int(cfg.depth))
-    multipv = k
-
-    try:
-        infos = sf_engine.analyse(
-            board,
-            limit,
-            multipv=min(multipv, len(policy_root_moves)),
-            root_moves=policy_root_moves,
-        )
-    except Exception:
+    if not sf_inference_candidates or len(sf_inference_candidates) == 0:
         return None
 
-    assert len(infos) <= len(topv.tolist())
+    kept = _get_stockfish_candidates_in_window(sf_inference_candidates, adaptive_restrict_cp_window)
+    kept_reference = _get_stockfish_candidates_in_window(sf_reference_candidates, adaptive_restrict_cp_window) if sf_reference_candidates else None
+    cand_moves = [data.uci for data in kept]
+    cand_ref_moves = [data.uci for data in kept_reference] if kept_reference else None
+    best_cp = max((data.cp for data in kept))
 
-    sf_cands: List[Tuple[str, int]] = []
-    for info in infos:
-        pv = info.get("pv")
-        score = info.get("score")
-        if not pv or score is None:
-            continue
-        uci = pv[0].uci()
-        # Convert to POV for side to move so cp comparisons are consistent
-        pov_score = score.pov(board.turn) if hasattr(score, "pov") else score
-        cp = _score_to_cp(score, turn=board.turn)
-        sf_cands.append((uci, cp))
-
-    if not sf_cands:
-        return None
-
-    # --------- cp-window filter ----------
-    best_cp = max(cp for _, cp in sf_cands)
-    kept: List[Tuple[str, int]] = sf_cands
-    w = int(adaptive_restrict_cp_window)
-    filtered = [(m, cp) for (m, cp) in kept if cp >= best_cp - w]
-    if filtered:
-        kept = filtered
-    if not kept:
-        return None
-
-    # Ensure stable ordering for reporting
-    kept = sorted(kept, key=lambda x: -x[1])
-
-    # --------- compute pi_ref over kept moves (from policy logits) ----------
-    # This is the ref distribution in the KL term.
+    # Combining style logits and engine "logits" from (cp_score / cp_scaled)*1/lam
     logp_ref_all = torch.log_softmax(logits_masked_1d, dim=-1)  # [V]
-
-    cand_moves: List[str] = [m for (m, _cp) in kept]
-    cand_idxs: List[int] = [uci_to_vocab_index(all_moves_dict, fen, u) for u in cand_moves]
-
-    neg_inf = torch.finfo(logits_masked_1d.dtype).min
-    cand_logp_ref = []
-    for idx in cand_idxs:
-        if idx < 0:
-            cand_logp_ref.append(torch.tensor(neg_inf, device=logp_ref_all.device, dtype=logp_ref_all.dtype))
-        else:
-            cand_logp_ref.append(logp_ref_all[idx])
-    cand_logp_ref_t = torch.stack(cand_logp_ref, dim=0)  # [K]
-
-    # --------- Gibbs / KL-regularized policy improvement ----------
-    # pi_new(a) ∝ pi_ref(a) * exp(Q(a)/lambda)
-    cps = torch.tensor(
-        [int(cp) for (_uci, cp) in kept],
-        device=cand_logp_ref_t.device,
-        dtype=cand_logp_ref_t.dtype,
-    ).clamp(min=-cp_cap, max=cp_cap)
-
-    Q = cps / cp_scale
-    combined = cand_logp_ref_t + (Q / max(lam, 1e-6))          # [K]
+    combined = _get_engine_plus_style_logits(logp_ref_all, logits_masked_1d, kept, all_moves_dict, fen, cp_cap, cp_scale, lam)
     cand_probs_t = torch.softmax(combined, dim=0)              # [K]
     cand_probs: List[float] = cand_probs_t.detach().cpu().tolist()
+    cand_idxs: List[int] = [uci_to_vocab_index(all_moves_dict, fen, u) for u in cand_moves]
 
     # Build a full-V "logits" tensor that corresponds to combined scores on candidates
+    neg_inf = torch.finfo(logits_masked_1d.dtype).min
     cands_logits_full = torch.full_like(logits_masked_1d, neg_inf)  # [V]
     for idx, comb in zip(cand_idxs, combined):
         if idx >= 0:
             cands_logits_full[idx] = comb
 
     # --------- select within candidates ----------
-    if bool(getattr(cfg, "sample", True)):
-        sel_i = int(torch.multinomial(cand_probs_t, 1).item())
-    else:
-        sel_i = int(torch.argmax(cand_probs_t).item())
+    # if bool(getattr(cfg, "sample", True)):
+    #    sel_i = int(torch.multinomial(cand_probs_t, 1).item())
+    # else:
+    #    sel_i = int(torch.argmax(cand_probs_t).item())
 
-    selected_uci, cp_selected = kept[sel_i]
-    cp_gap = float(best_cp - cp_selected)
-    is_best = (cp_gap <= 1e-9)
+
+    best_cp_ref = max([d.cp for d in sf_reference_candidates]) if sf_reference_candidates else None
+    cp_chosen_ref = [d.cp for d in sf_reference_candidates if d.uci == chosen_uci][0] if sf_reference_candidates and chosen_uci in [d.uci for d in sf_reference_candidates] else None
+    cp_chosen_inf = [d.cp for d in sf_inference_candidates if d.uci == chosen_uci][0] if chosen_uci in [d.uci for d in sf_inference_candidates] else None 
+    cp_rejected_ref = [d.cp for d in sf_reference_candidates if d.uci == rejected_uci][0] if sf_reference_candidates and rejected_uci in [d.uci for d in sf_reference_candidates] else None
+    cp_rejected_inf = [d.cp for d in sf_inference_candidates if d.uci == rejected_uci][0] if rejected_uci in [d.uci for d in sf_inference_candidates] else None
+    
+    def get_stockfish_rank(cands, move_uci):
+        sorted_ref = sorted(cands, key=lambda d: d.cp, reverse=True)
+        ranked = [(i+1, d) for i, d in enumerate(sorted_ref)]
+        return [rnk for rnk, d in ranked if d.uci == move_uci][0] if move_uci in [d.uci for rnk, d in ranked] else None
+    
+    cp_chosen_ref_rank = get_stockfish_rank(sf_reference_candidates, chosen_uci) if sf_reference_candidates else None
+    cp_chosen_inf_rank = get_stockfish_rank(sf_inference_candidates, chosen_uci)
+
+    cp_rejected_ref_rank = get_stockfish_rank(sf_reference_candidates, rejected_uci) if sf_reference_candidates else None
+    cp_rejected_inf_rank = get_stockfish_rank(sf_inference_candidates, rejected_uci)
 
     probs_np = cand_probs_t.detach().cpu().numpy()
     eps = float(getattr(cfg, "eps", 1e-12))
     ent = float(-(probs_np * np.log(probs_np + eps)).sum()) if probs_np.size else 0.0
-
-    # Log-prob of selected move under *full policy* (for comparability with other helper)
-    sel_idx = uci_to_vocab_index(all_moves_dict, fen, selected_uci)
-    logp_selected_full = float(logp_ref_all[sel_idx].item()) if sel_idx >= 0 else float("-inf")
 
     # chosen/rejected conditional probs in candidate set
     p_ch = float(cand_probs[cand_moves.index(chosen_uci)]) if chosen_uci in cand_moves else 0.0
@@ -360,38 +357,59 @@ def compute_sf_helper_w_gibbs_for_one_position(
 
     # KL(q || base_full) over candidate support
     kl = 0.0
-    for (uci, _cp), q in zip(kept, cand_probs):
-        idx = uci_to_vocab_index(all_moves_dict, fen, uci)
+    for cand, q in zip(kept, cand_probs):
+        idx = uci_to_vocab_index(all_moves_dict, fen, cand.uci)
         if idx < 0:
             continue
         logq = math.log(max(float(q), eps))
         logp_b = float(base_logp_full_1d[idx].item())
         kl += float(q) * (logq - logp_b)
-
+    
     res = SfPerPosResult(
-        selected_uci=str(selected_uci),
-        is_best_sf=bool(is_best),
-        cp_selected=int(cp_selected),
-        cp_best=int(best_cp),
-        cp_gap=float(cp_gap),
-        entropy=float(ent),
-        logp_selected_full=float(logp_selected_full),
+        inference_cp_best=int(best_cp),
+        reference_cp_best=int(best_cp_ref) if best_cp_ref else None,
+        entropy_cond_inference=float(ent),
 
-        p_chosen_cond=float(p_ch),
-        p_rejected_cond=float(p_rj),
-        logp_chosen_cond=float(logp_ch),
-        logp_rejected_cond=float(logp_rj),
-        gap_logp_cond=float(gap_logp),
+        num_candidates=len(sf_inference_candidates),
+        num_candidates_in_inference_window=len(kept),
+        num_candidates_in_reference_window=len(kept_reference) if kept_reference else None,
+
+        p_chosen_cond_inference=float(p_ch),
+        p_rejected_cond_inference=float(p_rj),
+        logp_chosen_cond_inference=float(logp_ch),
+        logp_rejected_cond_inference=float(logp_rj),
+        gap_logp_cond_inference=float(gap_logp),
 
         cand_hit1=float(cand_hit_at(1)),
+        cand_hit3=float(cand_hit_at(3)),
         cand_hit5=float(cand_hit_at(5)),
         cand_hit10=float(cand_hit_at(10)),
 
         full_hit1=float(full_hit.get(1, 0)),
+        full_hit3=float(full_hit.get(3, 0)),
         full_hit5=float(full_hit.get(5, 0)),
         full_hit10=float(full_hit.get(10, 0)),
 
         kl_q_vs_base=float(kl),
+
+        expected_cp_cond_inference=sum([data.cp for data in kept]) / (len(kept) + eps),
+        cp_std_cond_inference=float(np.std([float(data.cp) for data in kept])),
+        top1_cp_cond_inference=best_cp,
+        top1_uci_cond_inference=[data for data in kept if data.cp == best_cp][0].uci if len(kept) > 0 else "",
+        expected_cp_cond_reference=sum([data.cp for data in kept_reference]) / (len(kept_reference) + eps) if kept_reference else None,
+        cp_std_cond_reference=float(np.std([float(data.cp) for data in kept_reference])) if kept_reference else None,
+        top1_cp_cond_reference=best_cp_ref if sf_reference_candidates else None,
+        top1_uci_cond_reference=[data for data in kept_reference if data.cp == best_cp_ref][0].uci if kept_reference and len(kept_reference) > 0 else "",
+        
+        chosen_cp_inference=cp_chosen_inf,
+        chosen_cp_reference=cp_chosen_ref if sf_reference_candidates else None,
+        chosen_rank_reference=cp_chosen_ref_rank if sf_reference_candidates else None,
+        chosen_rank_inference=cp_chosen_inf_rank,
+
+        rejected_cp_inference=cp_rejected_inf,
+        rejected_cp_reference=cp_rejected_ref if sf_reference_candidates else None,
+        rejected_rank_reference=cp_rejected_ref_rank if sf_reference_candidates else None,
+        rejected_rank_inference=cp_rejected_inf_rank,
     )
 
     dbg = {
@@ -404,7 +422,6 @@ def compute_sf_helper_w_gibbs_for_one_position(
         "policy_topk": policy_cand_details,   # [(uci, prob)] before SF filtering
         "cands_kept": kept,                   # [(uci, cp)]
         "q_probs": cand_probs,                # q over kept
-        "selected_index": int(sel_i),
 
         # Full-V tensor with combined scores on candidate indices, -inf elsewhere
         "cands_logits_full": cands_logits_full.detach().cpu(),  # [V]
@@ -418,53 +435,70 @@ def compute_sf_helper_for_one_position(
     fen: str,
     chosen_uci: str,
     rejected_uci: str,
-    cands: List[Tuple[str, int]],     # [(uci,cp)]
-    best_cp: int,
     logits_masked_1d: torch.Tensor,   # [V] for model under eval
     base_logp_full_1d: torch.Tensor,  # [V] log-softmax of base masked logits
     all_moves_dict: Dict[str, int],
     cfg: SfConfig,
-    full_hit: Dict[int, int],         # {1:0/1, 5:0/1, 10:0/1}
+    full_hit: Dict[int, int],         # {1:0/1, 3:0/1, 5:0/1, 10:0/1}
     rng: random.Random,
+    sf_inference_candidates: List[_SFCandidate],
+    sf_reference_candidates: Optional[List[_SFCandidate]],
 ) -> Optional[Tuple[SfPerPosResult, Dict[str, Any]]]:
-    if not cands:
+    if not sf_inference_candidates:
         return None
 
-    kept = cands
+    best_cp_inference = max(d.cp for d in sf_inference_candidates)
+    best_cp_reference = max(d.cp for d in sf_reference_candidates) if sf_reference_candidates else None
+
+    kept = sf_inference_candidates
+    kept_reference = sf_reference_candidates
+
     if cfg.restrict_cp_window is not None:
         w = int(cfg.restrict_cp_window)
-        filt = [(m, cp) for (m, cp) in kept if cp >= best_cp - w]
-        if filt:
-            kept = filt
+
+        filt_inf = [d for d in kept if d.cp >= best_cp_inference - w]
+        if filt_inf:
+            kept = filt_inf
+
+        filt_ref = [d for d in kept_reference if d.cp >= best_cp_reference - w] if kept_reference and best_cp_reference else None
+        if filt_ref:
+            kept_reference = filt_ref
+
     if not kept:
         return None
 
+    eps = float(getattr(cfg, "eps", 1e-12))
     t = max(float(cfg.temperature), 1e-6)
+
+    # q distribution over kept inference candidates from model logits only (non-Gibbs)
     logp_all = torch.log_softmax(logits_masked_1d / t, dim=-1)  # [V]
 
-    cand_moves = [m for (m, _cp) in kept]
+    cand_moves: List[str] = [d.uci for d in kept]
     cand_idxs: List[int] = [uci_to_vocab_index(all_moves_dict, fen, u) for u in cand_moves]
 
+    neg_inf = torch.finfo(logp_all.dtype).min
     cand_logps = []
     for idx in cand_idxs:
         if idx < 0:
-            cand_logps.append(torch.tensor(torch.finfo(logp_all.dtype).min, device=logp_all.device))
+            cand_logps.append(torch.tensor(neg_inf, device=logp_all.device, dtype=logp_all.dtype))
         else:
             cand_logps.append(logp_all[idx])
-    cand_logps_t = torch.stack(cand_logps, dim=0)          # [K]
-    cand_probs_t = torch.softmax(cand_logps_t, dim=0)      # [K]
-    cand_probs = cand_probs_t.detach().cpu().tolist()
 
-    neg_inf = torch.finfo(logits_masked_1d.dtype).min
+    cand_logps_t = torch.stack(cand_logps, dim=0)     # [K]
+    cand_probs_t = torch.softmax(cand_logps_t, dim=0) # [K]
+    cand_probs: List[float] = cand_probs_t.detach().cpu().tolist()
+
+    # Full-V tensor with candidate logits only, -inf elsewhere
     cands_logits_full = torch.full_like(logits_masked_1d, neg_inf)
-    cands_logits_full[cand_idxs] = logits_masked_1d[cand_idxs]  # logits, not probs
+    for idx in cand_idxs:
+        if idx >= 0:
+            cands_logits_full[idx] = logits_masked_1d[idx]
 
-
-    # select within candidate set
+    # select within inference candidate set
     if cfg.sample:
         r = rng.random()
         acc = 0.0
-        sel_i = 0
+        sel_i = len(cand_probs) - 1
         for j, p in enumerate(cand_probs):
             acc += float(p)
             if r <= acc:
@@ -473,68 +507,137 @@ def compute_sf_helper_for_one_position(
     else:
         sel_i = int(torch.argmax(cand_probs_t).item())
 
-    selected_uci, cp_selected = kept[sel_i]
-    cp_gap = float(best_cp - cp_selected)
+    selected = kept[sel_i]
+    selected_uci = selected.uci
+    cp_selected = selected.cp
+    cp_gap = float(best_cp_inference - cp_selected)
     is_best = (cp_gap <= 1e-9)
-    ent = _entropy(cand_probs, cfg.eps)
+
+    probs_np = cand_probs_t.detach().cpu().numpy()
+    ent = float(-(probs_np * np.log(probs_np + eps)).sum()) if probs_np.size else 0.0
 
     sel_idx = uci_to_vocab_index(all_moves_dict, fen, selected_uci)
     logp_selected_full = float(logp_all[sel_idx].item()) if sel_idx >= 0 else float("-inf")
 
+    # chosen/rejected conditional probs in inference candidate set
     p_ch = float(cand_probs[cand_moves.index(chosen_uci)]) if chosen_uci in cand_moves else 0.0
     p_rj = float(cand_probs[cand_moves.index(rejected_uci)]) if rejected_uci in cand_moves else 0.0
-    logp_ch = math.log(max(p_ch, cfg.eps))
-    logp_rj = math.log(max(p_rj, cfg.eps))
+    logp_ch = math.log(max(p_ch, eps))
+    logp_rj = math.log(max(p_rj, eps))
     gap_logp = float(logp_ch - logp_rj)
 
     # candidate hits on chosen (based on q ordering)
     K = len(cand_probs)
     order = sorted(range(K), key=lambda j: cand_probs[j], reverse=True)
-    def cand_hit_at(k: int) -> float:
-        if k <= 0:
+
+    def cand_hit_at(k_: int) -> float:
+        if k_ <= 0:
             return 0.0
-        k = min(k, K)
-        top_moves = [cand_moves[j] for j in order[:k]]
+        kk = min(int(k_), K)
+        top_moves = [cand_moves[j] for j in order[:kk]]
         return 1.0 if chosen_uci in top_moves else 0.0
 
-    # KL(q || base_full) over candidate support
+    # KL(q || base_full) over inference candidate support
     kl = 0.0
-    for (uci, _cp), q in zip(kept, cand_probs):
-        idx = uci_to_vocab_index(all_moves_dict, fen, uci)
+    for cand, q in zip(kept, cand_probs):
+        idx = uci_to_vocab_index(all_moves_dict, fen, cand.uci)
         if idx < 0:
             continue
-        logq = math.log(max(float(q), cfg.eps))
+        logq = math.log(max(float(q), eps))
         logp_b = float(base_logp_full_1d[idx].item())
         kl += float(q) * (logq - logp_b)
 
-    res = SfPerPosResult(
-        selected_uci=selected_uci,
-        is_best_sf=is_best,
-        cp_selected=int(cp_selected),
-        cp_best=int(best_cp),
-        cp_gap=float(cp_gap),
-        entropy=float(ent),
-        logp_selected_full=float(logp_selected_full),
+    def get_cp(cands: List[_SFCandidate], move_uci: str) -> Optional[int]:
+        for d in cands:
+            if d.uci == move_uci:
+                return d.cp
+        return None
 
-        p_chosen_cond=float(p_ch),
-        p_rejected_cond=float(p_rj),
-        logp_chosen_cond=float(logp_ch),
-        logp_rejected_cond=float(logp_rj),
-        gap_logp_cond=float(gap_logp),
+    def get_stockfish_rank(cands: List[_SFCandidate], move_uci: str) -> Optional[int]:
+        ranked = sorted(cands, key=lambda d: d.cp, reverse=True)
+        for i, d in enumerate(ranked, start=1):
+            if d.uci == move_uci:
+                return i
+        return None
+
+    cp_chosen_inf = get_cp(sf_inference_candidates, chosen_uci)
+    cp_chosen_ref = get_cp(sf_reference_candidates, chosen_uci) if sf_reference_candidates else None
+    cp_rejected_inf = get_cp(sf_inference_candidates, rejected_uci)
+    cp_rejected_ref = get_cp(sf_reference_candidates, rejected_uci) if sf_reference_candidates else None
+
+    cp_chosen_inf_rank = get_stockfish_rank(sf_inference_candidates, chosen_uci)
+    cp_chosen_ref_rank = get_stockfish_rank(sf_reference_candidates, chosen_uci) if sf_reference_candidates else None
+    cp_rejected_inf_rank = get_stockfish_rank(sf_inference_candidates, rejected_uci)
+    cp_rejected_ref_rank = get_stockfish_rank(sf_reference_candidates, rejected_uci) if sf_reference_candidates else None
+
+    cps_kept_inf = [float(d.cp) for d in kept]
+    cps_kept_ref = [float(d.cp) for d in kept_reference] if kept_reference else None
+
+    top1_cp_cond_inference = int(max(d.cp for d in kept))
+    top1_uci_cond_inference = next(d.uci for d in kept if d.cp == top1_cp_cond_inference)
+
+    top1_cp_cond_reference = int(max(d.cp for d in kept_reference)) if kept_reference else None
+    top1_uci_cond_reference = next(d.uci for d in kept_reference if d.cp == top1_cp_cond_reference) if kept_reference else None
+
+    # Keeping naming/behavior aligned with your Gibbs version:
+    # this is a plain mean over CPs in the window, not q-weighted expectation.
+    expected_cp_cond_inference = float(sum(d.cp for d in kept) / (len(kept) + eps))
+    expected_cp_cond_reference = float(sum(d.cp for d in kept_reference) / (len(kept_reference) + eps)) if kept_reference else None
+
+    cp_std_cond_inference = float(np.std(cps_kept_inf))
+    cp_std_cond_reference = float(np.std(cps_kept_ref)) if cps_kept_ref else None
+
+    res = SfPerPosResult(
+        inference_cp_best=int(best_cp_inference),
+        reference_cp_best=int(best_cp_reference) if best_cp_reference else None,
+        entropy_cond_inference=float(ent),
+
+        num_candidates=len(sf_inference_candidates),
+        num_candidates_in_inference_window=len(kept),
+        num_candidates_in_reference_window=len(kept_reference) if kept_reference else None,
+
+        p_chosen_cond_inference=float(p_ch),
+        p_rejected_cond_inference=float(p_rj),
+        logp_chosen_cond_inference=float(logp_ch),
+        logp_rejected_cond_inference=float(logp_rj),
+        gap_logp_cond_inference=float(gap_logp),
 
         cand_hit1=float(cand_hit_at(1)),
+        cand_hit3=float(cand_hit_at(3)),
         cand_hit5=float(cand_hit_at(5)),
         cand_hit10=float(cand_hit_at(10)),
 
-        full_hit1=float(full_hit[1]),
-        full_hit5=float(full_hit[5]),
-        full_hit10=float(full_hit[10]),
+        full_hit1=float(full_hit.get(1, 0)),
+        full_hit3=float(full_hit.get(3, 0)),
+        full_hit5=float(full_hit.get(5, 0)),
+        full_hit10=float(full_hit.get(10, 0)),
 
         kl_q_vs_base=float(kl),
+
+        expected_cp_cond_inference=expected_cp_cond_inference,
+        cp_std_cond_inference=cp_std_cond_inference,
+        top1_cp_cond_inference=top1_cp_cond_inference,
+        top1_uci_cond_inference=top1_uci_cond_inference,
+
+        expected_cp_cond_reference=expected_cp_cond_reference if sf_reference_candidates else None,
+        cp_std_cond_reference=cp_std_cond_reference if sf_reference_candidates else None,
+        top1_cp_cond_reference=top1_cp_cond_reference if sf_reference_candidates else None,
+        top1_uci_cond_reference=top1_uci_cond_reference if sf_reference_candidates else None,
+
+        chosen_cp_inference=cp_chosen_inf,
+        chosen_cp_reference=cp_chosen_ref if sf_reference_candidates else None,
+        chosen_rank_reference=cp_chosen_ref_rank if sf_reference_candidates else None,
+        chosen_rank_inference=cp_chosen_inf_rank,
+
+        rejected_cp_inference=cp_rejected_inf,
+        rejected_cp_reference=cp_rejected_ref if sf_reference_candidates else None,
+        rejected_rank_reference=cp_rejected_ref_rank if sf_reference_candidates else None,
+        rejected_rank_inference=cp_rejected_inf_rank,
     )
 
     dbg = {
         "cands_kept": kept,
+        "cands_reference_kept": kept_reference if sf_reference_candidates else None,
         "q_probs": cand_probs,
         "selected_index": int(sel_i),
         "cands_logits_full": cands_logits_full.detach().cpu(),  # [V]
@@ -1300,8 +1403,8 @@ class EvalModel(ABC):
         """
         SF-helper evaluation:
         - SF gives top-k PV candidates at depth=cfg.depth (multipv=cfg.multipv_topk)
-        - Policy logits restricted to candidate set to produce q
-        - Metrics computed on q and on selection within candidates
+        - Policy logits restricted to candidate set to produce q over the inference-window candidates
+        - Metrics computed on q, on chosen/rejected diagnostics, and on inference/reference windows
         - KL(q || base_full) computed on candidate support using base masked log-softmax
         """
         assert self.sf_cfg is not None
@@ -1309,7 +1412,6 @@ class EvalModel(ABC):
 
         sf_cfg = self.sf_cfg
         rng = random.Random(sf_cfg.seed)
-        analysis_limit = chess.engine.Limit(depth=int(sf_cfg.depth))
 
         dataloader = self._build_sf_helper_eval_dataloader(ds=ds, batch_size=batch_size)
         opening_logits_cfg = OpeningLogitDistConfig(plies=(0, 1), temperature=1.0, topk=50)
@@ -1328,7 +1430,6 @@ class EvalModel(ABC):
                     batch_ctx=batch_ctx,
                     row_index=row_index,
                     sf_cfg=sf_cfg,
-                    analysis_limit=analysis_limit,
                     rng=rng,
                 )
                 if row_output is None:
@@ -1336,27 +1437,10 @@ class EvalModel(ABC):
 
                 result, debug_info = row_output
                 fen = batch_ctx.fens[row_index]
-                chosen_uci = batch_ctx.chosen_uci_list[row_index]
                 ply_abs = fen_to_ply_abs(fen)
 
                 aggregate.add_processed_row(
-                    selected_matches_chosen=(result.selected_uci == chosen_uci),
-                    cand_hit5=result.cand_hit5,
-                    cand_hit10=result.cand_hit10,
-                    cp_gap=result.cp_gap,
-                    is_best_sf=result.is_best_sf,
-                    entropy=result.entropy,
-                    logp_selected_full=result.logp_selected_full,
-                    p_chosen_cond=result.p_chosen_cond,
-                    p_rejected_cond=result.p_rejected_cond,
-                    logp_chosen_cond=result.logp_chosen_cond,
-                    logp_rejected_cond=result.logp_rejected_cond,
-                    gap_logp_cond=result.gap_logp_cond,
-                    kl_q_vs_base=result.kl_q_vs_base,
-                    full_hit1=result.full_hit1,
-                    full_hit5=result.full_hit5,
-                    full_hit10=result.full_hit10,
-                    selected_uci=result.selected_uci,
+                    result=result,
                     ply_abs=ply_abs,
                 )
 
@@ -1376,8 +1460,10 @@ class EvalModel(ABC):
             topn=50,
             normalize=True,
         )
-        return aggregate.to_dict(sf_config=sf_cfg, sf_opening_summary=opening_summary)
-
+        return aggregate.to_dict(
+            sf_config=sf_cfg,
+            sf_opening_summary=opening_summary,
+        )
 
     def _build_sf_helper_eval_dataloader(self, *, ds: DpoPairs, batch_size: int) -> DataLoader:
         return DataLoader(
@@ -1395,6 +1481,8 @@ class EvalModel(ABC):
         elo_oppo = batch["elo_oppo"]
         chosen_uci_list = batch["chosen"]
         rejected_uci_list = batch["rejected"]
+        stockfish_inference = [batch["meta"][i].get("stockfish_inference", None) for i in range(len(batch["meta"]))]
+        stockfish_reference = [batch["meta"][i].get("stockfish_reference", None) for i in range(len(batch["meta"]))]
 
         board_input, legal_moves, elo_self_t, elo_oppo_t = batch_preprocess(
             all_moves_dict=self.all_moves_dict,
@@ -1431,6 +1519,8 @@ class EvalModel(ABC):
             full_hit1=full_hit1,
             full_hit5=full_hit5,
             full_hit10=full_hit10,
+            stockfish_inference=stockfish_inference,
+            stockfish_reference=stockfish_reference
         )
 
 
@@ -1440,9 +1530,8 @@ class EvalModel(ABC):
         batch_ctx: _SfBatchContext,
         row_index: int,
         sf_cfg: Any,
-        analysis_limit: chess.engine.Limit,
         rng: random.Random,
-    ) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    ) -> Optional[Tuple[SfPerPosResult, Dict[str, Any]]]:
         fen = batch_ctx.fens[row_index]
         chosen_uci = batch_ctx.chosen_uci_list[row_index]
         rejected_uci = batch_ctx.rejected_uci_list[row_index]
@@ -1462,63 +1551,29 @@ class EvalModel(ABC):
                 fen=fen,
                 chosen_uci=chosen_uci,
                 rejected_uci=rejected_uci,
-                sf_engine=self._sf_engine,
                 logits_masked_1d=batch_ctx.masked_policy_logits[row_index],
                 base_logp_full_1d=batch_ctx.base_full_log_probs[row_index],
                 all_moves_dict=self.all_moves_dict,
                 cfg=sf_cfg,
                 full_hit=row_full_hit,
                 rng=rng,
+                sf_inference_candidates=batch_ctx.stockfish_inference[row_index],
+                sf_reference_candidates=batch_ctx.stockfish_reference[row_index],
             )
 
-        sf_candidates = self._get_sf_candidates_for_board(
-            board=board,
-            analysis_limit=analysis_limit,
-            multipv_topk=int(sf_cfg.multipv_topk),
-        )
-        if not sf_candidates:
-            return None
-
-        best_cp = max(cp for _, cp in sf_candidates)
         return compute_sf_helper_for_one_position(
             fen=fen,
             chosen_uci=chosen_uci,
             rejected_uci=rejected_uci,
-            cands=sf_candidates,
-            best_cp=int(best_cp),
             logits_masked_1d=batch_ctx.masked_policy_logits[row_index],
             base_logp_full_1d=batch_ctx.base_full_log_probs[row_index],
             all_moves_dict=self.all_moves_dict,
             cfg=sf_cfg,
             full_hit=row_full_hit,
             rng=rng,
+            sf_inference_candidates=batch_ctx.stockfish_inference[row_index],
+            sf_reference_candidates=batch_ctx.stockfish_reference[row_index],
         )
-
-
-    def _get_sf_candidates_for_board(
-        self,
-        *,
-        board: chess.Board,
-        analysis_limit: chess.engine.Limit,
-        multipv_topk: int,
-    ) -> List[Tuple[str, int]]:
-        assert self._sf_engine is not None
-
-        infos = self._sf_engine.analyse(board, analysis_limit, multipv=multipv_topk)
-        candidates: List[Tuple[str, int]] = []
-
-        for info in infos:
-            pv = info.get("pv")
-            score = info.get("score")
-            if not pv or score is None:
-                continue
-
-            uci = pv[0].uci()
-            cp = _score_to_cp(score, turn=board.turn)
-            candidates.append((uci, cp))
-
-        return candidates
-
 
     def _update_sf_opening_distributions(
         self,
@@ -1539,7 +1594,6 @@ class EvalModel(ABC):
             all_moves=self.all_moves,
             cfg=opening_logits_cfg,
         )
-
 
 def _serialize_sf_info(info: Dict[str, Any], board: chess.Board) -> Optional[Dict[str, Any]]:
     pv = info.get("pv")
@@ -1591,13 +1645,62 @@ def _serialize_sf_info(info: Dict[str, Any], board: chess.Board) -> Optional[Dic
 
     return out
 
+import time 
+
+def _safe_get_move_fields(row: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """
+    Best-effort extraction of move-ish fields from a row for debugging.
+    Adjust keys if your dataset uses different names.
+    """
+    meta = row.get("meta", {}) if isinstance(row.get("meta"), dict) else {}
+
+    return {
+        "chosen_move": row.get("chosen_move") or meta.get("chosen_move"),
+        "rejected_move": row.get("rejected_move") or meta.get("rejected_move"),
+        "move": row.get("move") or meta.get("move"),
+    }
+
+
+def _base_stockfish_meta(
+    sf_cfg: "SfConfig",
+    reason: str,
+    *,
+    error: Optional[str] = None,
+    legal_moves: Optional[int] = None,
+    elapsed_s: Optional[float] = None,
+    sf_moves_returned: Optional[List[List[Any]]] = None,
+    best_cp: Optional[int] = None,
+    infos: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    return {
+        "depth": int(sf_cfg.depth),
+        "multipv_requested": int(sf_cfg.multipv_topk),
+        "reason": reason,
+        "error": error,
+        "legal_moves": legal_moves,
+        "elapsed_s": elapsed_s,
+        "sf_moves_returned": sf_moves_returned or [],
+        "best_cp": best_cp,
+        "infos": infos or [],
+    }
+
+
+def _make_debug_prefix(i: int, total: Optional[int], fen: str) -> str:
+    if total is None:
+        return f"[stockfish-cache] row={i} fen={fen}"
+    return f"[stockfish-cache] row={i}/{total} fen={fen}"
+
 
 def generate_stockfish_cache(
     sf_cfg: SfConfig,
     jsonl_path: Path,
     sf_cache_jsonl_path: Path,
+    max_rows: Optional[int] = None,
 ) -> None:
     sf_cache_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    if sf_cache_jsonl_path.exists:
+        print(f"Skipping generating sf cache for {sf_cfg} as data has already bin generated")
+        return
 
     sf_engine = make_stockfish(
         sf_cfg.stockfish_path,
@@ -1610,28 +1713,80 @@ def generate_stockfish_cache(
 
     try:
         ds = DpoPairs(jsonl_path=str(jsonl_path))
+        if max_rows:
+            random.seed(max_rows)
+            random.shuffle(ds.rows)
+            ds.rows = ds.rows[:500]
+            
         limit = chess.engine.Limit(depth=int(sf_cfg.depth))
+
+        try:
+            total_rows = len(ds)
+        except Exception:
+            total_rows = None
 
         with open(sf_cache_jsonl_path, "w", encoding="utf-8") as sf_cache_file:
             for i, r in enumerate(ds):
                 fen = r["fen"]
-                board = chess.Board(fen)
+                move_fields = _safe_get_move_fields(r)
 
-                if board.is_game_over(claim_draw=True):
-                    out_row = {
-                        **r,
-                    }
+                debug_prefix = _make_debug_prefix(i, total_rows, fen)
 
-                    out_row["meta"]["stockfish"] = {
-                        "depth": int(sf_cfg.depth),
-                        "multipv_requested": int(sf_cfg.multipv_topk),
-                        "sf_moves_returned": [],
-                        "best_cp": None,
-                        "infos": [],
-                    }
+                print(
+                    f"{debug_prefix} "
+                    f"chosen={move_fields['chosen_move']} "
+                    f"rejected={move_fields['rejected_move']} "
+                    f"move={move_fields['move']}"
+                )
+
+                out_row = {**r}
+
+                try:
+                    board = chess.Board(fen)
+                except Exception as e:
+                    err = f"invalid_fen: {type(e).__name__}: {e}"
+                    print(f"{debug_prefix} ERROR {err}")
+                    out_row.setdefault("meta", {})
+                    out_row["meta"]["stockfish"] = _base_stockfish_meta(
+                        sf_cfg,
+                        "invalid_fen",
+                        error=err,
+                    )
                     sf_cache_file.write(json.dumps(out_row) + "\n")
+                    sf_cache_file.flush()
                     continue
 
+                legal_moves = board.legal_moves.count()
+                print(f"{debug_prefix} legal_moves={legal_moves}")
+
+                if not board.is_valid():
+                    err = "board.is_valid() == False"
+                    print(f"{debug_prefix} ERROR {err}")
+                    out_row.setdefault("meta", {})
+                    out_row["meta"]["stockfish"] = _base_stockfish_meta(
+                        sf_cfg,
+                        "invalid_board",
+                        error=err,
+                        legal_moves=legal_moves,
+                    )
+                    sf_cache_file.write(json.dumps(out_row) + "\n")
+                    sf_cache_file.flush()
+                    continue
+
+                if board.is_game_over(claim_draw=True):
+                    reason = "game_over"
+                    print(f"{debug_prefix} skipping: {reason}")
+                    out_row.setdefault("meta", {})
+                    out_row["meta"]["stockfish"] = _base_stockfish_meta(
+                        sf_cfg,
+                        reason,
+                        legal_moves=legal_moves,
+                    )
+                    sf_cache_file.write(json.dumps(out_row) + "\n")
+                    sf_cache_file.flush()
+                    continue
+
+                started = time.time()
                 try:
                     infos = sf_engine.analyse(
                         board,
@@ -1639,18 +1794,37 @@ def generate_stockfish_cache(
                         multipv=int(sf_cfg.multipv_topk),
                     )
                 except Exception as e:
-                    out_row = {
-                        **r,
-                    }
-                    out_row["meta"]["stockfish"] = {
-                        "depth": int(sf_cfg.depth),
-                        "multipv_requested": int(sf_cfg.multipv_topk),
-                        "sf_moves_returned": [],
-                        "best_cp": None,
-                        "infos": [],
-                    }
+                    elapsed_s = time.time() - started
+                    err = f"{type(e).__name__}: {e}"
+                    print(f"{debug_prefix} ANALYSE_ERROR after {elapsed_s:.2f}s: {err}")
+
+                    out_row.setdefault("meta", {})
+                    out_row["meta"]["stockfish"] = _base_stockfish_meta(
+                        sf_cfg,
+                        "analyse_exception",
+                        error=err,
+                        legal_moves=legal_moves,
+                        elapsed_s=elapsed_s,
+                    )
                     sf_cache_file.write(json.dumps(out_row) + "\n")
+                    sf_cache_file.flush()
+
+                    # Optional: restart engine after an exception in case the process wedged.
+                    try:
+                        sf_engine.quit()
+                    except Exception:
+                        pass
+                    sf_engine = make_stockfish(
+                        sf_cfg.stockfish_path,
+                        threads=int(sf_cfg.threads),
+                        hash_mb=int(sf_cfg.hash_mb),
+                        uci_elo=sf_cfg.uci_elo,
+                        skill_level=None,
+                        timeout=float(sf_cfg.timeout_s),
+                    )
                     continue
+
+                elapsed_s = time.time() - started
 
                 if isinstance(infos, dict):
                     infos = [infos]
@@ -1658,33 +1832,84 @@ def generate_stockfish_cache(
                 serialized_infos: List[Dict[str, Any]] = []
                 sf_moves_returned: List[List[Any]] = []
 
-                for info in infos:
-                    s = _serialize_sf_info(info, board=board)
+                serialize_error: Optional[str] = None
+
+                for info_idx, info in enumerate(infos):
+                    try:
+                        s = _serialize_sf_info(info, board=board)
+                    except Exception as e:
+                        serialize_error = (
+                            f"_serialize_sf_info failed on info_idx={info_idx}: "
+                            f"{type(e).__name__}: {e}"
+                        )
+                        print(f"{debug_prefix} SERIALIZE_ERROR {serialize_error}")
+                        continue
+
                     if s is None:
                         continue
+
                     serialized_infos.append(s)
-                    if s["best_move"] is not None:
-                        sf_moves_returned.append([s["best_move"], s["cp"]])
 
-                best_cp = max((cp for _, cp in sf_moves_returned), default=None)
+                    if s.get("best_move") is not None:
+                        sf_moves_returned.append([s["best_move"], s.get("cp")])
 
-                out_row = {
-                    **r,
-                }
-                out_row["meta"]["stockfish"] = {
-                    "depth": int(sf_cfg.depth),
-                    "multipv_requested": int(sf_cfg.multipv_topk * 2),
-                    "sf_moves_returned": sf_moves_returned,
-                    "best_cp": best_cp,
-                    "infos": serialized_infos,
-                }
+                best_cp = max(
+                    (cp for _, cp in sf_moves_returned if cp is not None),
+                    default=None,
+                )
+
+                if len(serialized_infos) < int(sf_cfg.multipv_topk):
+                    print(
+                        f"{debug_prefix} returned fewer PVs than requested: "
+                        f"requested={int(sf_cfg.multipv_topk)} returned={len(serialized_infos)} "
+                        f"legal_moves={legal_moves}"
+                    )
+
+                print(
+                    f"{debug_prefix} analysed in {elapsed_s:.2f}s "
+                    f"returned_infos={len(serialized_infos)}"
+                )
+
+                out_row.setdefault("meta", {})
+                out_row["meta"]["stockfish"] = _base_stockfish_meta(
+                    sf_cfg,
+                    "ok" if serialize_error is None else "ok_with_serialize_warnings",
+                    error=serialize_error,
+                    legal_moves=legal_moves,
+                    elapsed_s=elapsed_s,
+                    sf_moves_returned=sf_moves_returned,
+                    best_cp=best_cp,
+                    infos=serialized_infos,
+                )
+
                 sf_cache_file.write(json.dumps(out_row) + "\n")
+                sf_cache_file.flush()
 
                 if (i + 1) % 100 == 0:
-                    print(f"[stockfish-cache] processed {i + 1}/{len(ds)} rows")
+                    if total_rows is None:
+                        print(f"[stockfish-cache] processed {i + 1} rows")
+                    else:
+                        print(f"[stockfish-cache] processed {i + 1}/{total_rows} rows")
+
+                # Optional safety valve: periodically restart engine
+                if (i + 1) % 500 == 0:
+                    print(f"[stockfish-cache] restarting engine after {i + 1} rows")
+                    try:
+                        sf_engine.quit()
+                    except Exception:
+                        pass
+                    sf_engine = make_stockfish(
+                        sf_cfg.stockfish_path,
+                        threads=int(sf_cfg.threads),
+                        hash_mb=int(sf_cfg.hash_mb),
+                        uci_elo=sf_cfg.uci_elo,
+                        skill_level=None,
+                        timeout=float(sf_cfg.timeout_s),
+                    )
 
     finally:
         try:
             sf_engine.quit()
         except Exception:
             pass
+

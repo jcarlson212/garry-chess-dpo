@@ -25,7 +25,10 @@ def safe_get_prev_fens(
     fens: List[Optional[str]] = []
     for r in rows[-n:]:
         try:
-            fens.append(r["prompt"]["fen"])
+            if "prompt" in r.keys():
+                fens.append(r["prompt"]["fen"])
+            else:
+                fens.append(r["fen"])
         except Exception as e:
             if r != None:
                 raise(e)
@@ -53,7 +56,10 @@ def safe_get_next_fens_chosen(
     fens = []
     for r in rows[:n]:
         try:
-            fens.append(r["prompt"]["fen"])
+            if "prompt" in r.keys():
+                fens.append(r["prompt"]["fen"])
+            else:
+                fens.append(r["fen"])
         except Exception as e:
             if r != None:
                 raise(e)

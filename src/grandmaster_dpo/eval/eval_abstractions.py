@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Generator, List, Optional
 
 from grandmaster_dpo.eval.configs import SfConfig
 from grandmaster_dpo.eval.single_gm.eval_sft_and_dpo_w_style_sim_utility_weight_maia2 import compute_style_score, dpo_loss_style_weighted, supervised_nll_loss
@@ -24,7 +24,6 @@ def device_from_str(s: str) -> torch.device:
     if s in ("mps",):
         return torch.device("mps")
     return torch.device(s)
-
 
 # ============================================================
 # Concrete model types
@@ -181,7 +180,7 @@ class SftAndDpoWStyleV1(EvalModel):
     
     @property
     def tag(self) -> str:
-        return "sft_and_dpo_w_style_sim_utility_weight"
+        return "sft_and_dpo_w_style_v1"
 
     @torch.inference_mode()
     def compute_training_style_loss(
@@ -413,7 +412,7 @@ class DpoWithSfHelper(DpoModel):
         
     @property
     def tag(self) -> str:
-        return f"dpo_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
+        return f"dpo_w_sf_depth_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
 
 class SftWithSfHelper(SftModel):
 
@@ -425,8 +424,8 @@ class SftWithSfHelper(SftModel):
         
     @property
     def tag(self) -> str:
-        return f"sft_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
-
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+    
 class SftPairwiseWithSfHelper(SftPairwiseModel):
 
     def __init__(self, *, maia_type: str = "blitz", device: torch.device, policy_pt_path: Optional[str] = None, beta: float = 0.1, sf_cfg: Optional[SfConfig] = None, sf_engine: Optional[Any] = None):
@@ -437,8 +436,8 @@ class SftPairwiseWithSfHelper(SftPairwiseModel):
         
     @property
     def tag(self) -> str:
-        return f"sft_pairwise_w_sf_helper_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"
-
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
+    
 class SftAndDpoWithSfHelper(SftAndDpo):
 
     def __init__(
@@ -459,8 +458,7 @@ class SftAndDpoWithSfHelper(SftAndDpo):
 
     @property
     def tag(self) -> str:
-        return f"sft_and_dpo_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
-    
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
     
 class SftAndDpoWStyleV1WithSfHelper(SftAndDpoWStyleV1):
     def __init__(
@@ -482,7 +480,7 @@ class SftAndDpoWStyleV1WithSfHelper(SftAndDpoWStyleV1):
 
     @property
     def tag(self) -> str:
-        return f"sft_and_dpo_w_style_v1_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
     
 class SftAndDpoWStyleV2WithSfHelper(SftAndDpoWStyleV2):
     def __init__(
@@ -504,7 +502,7 @@ class SftAndDpoWStyleV2WithSfHelper(SftAndDpoWStyleV2):
 
     @property
     def tag(self) -> str:
-        return f"sft_and_dpo_w_style_v2_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}"
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}"    
     
 class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
     def __init__(
@@ -526,9 +524,10 @@ class SftAndDpoWStyleV3WithSfHelper(SftAndDpoWStyleV3):
         self.restrict_cp_window = sf_cfg.restrict_cp_window
         self.style_embedding_chkpt = embedding_model_chkpt_name
         print(f"Style embedding checkpoint filename is: {Path(embedding_model_chkpt_name).parent.name}")
+
     @property
     def tag(self) -> str:
-        return f"sft_and_dpo_w_style_v3_beta={self.beta:.2f}_dpo_w_{self.dpo_loss_weight:.2f}_tau_{self.style_tau:.2f}_depth_{self.depth}_multipv_topk_{self.multipv_topk}_restrict_cp_window_{self.restrict_cp_window}_emb_chkpt_{Path(self.style_embedding_chkpt).parent.name}"
+        return f"{super().tag}_d_{self.depth}_pv_{self.multipv_topk}_cp_w_{self.restrict_cp_window}_{self.sf_cfg.use_gibbs}_emb_chkpt_{Path(self.style_embedding_chkpt).parent.name.replace('__bs-4096_', '').replace('__seed-42', '')}"
 
 
 # ============================================================
@@ -615,11 +614,11 @@ def build_sf_models_for_gm(
     *,
     maia_type: str,
     device: torch.device,
-    experiment1_gm_dir: Path = Path("./final_experiments_for_paper/experiments1/trained_models_twic/carlsen/"),
-    experiment2_gm_dir: Path = Path("./final_experiments_for_paper/experiments2_style_model/trained_models_single_gm_twic/carlsen/"),
+    experiment1_gm_dir: Path = Path("./final_experiments_for_paper/experiment1/trained_models_twic/carlsen/"),
+    experiment2_gm_dir: Path = Path("./final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic/carlsen/"),
     style_embedding_model_dir: Path = Path('./final_experiments_for_paper/experiments2_style_model/trained_models/'),
     sf_cfgs: List[SfConfig],
-) -> List[EvalModel]:
+) -> Generator[EvalModel, None, None]:
     """
     gm_dir expected to contain:
       - policy_dpo_best.pt
@@ -641,7 +640,6 @@ def build_sf_models_for_gm(
 
     models: List[EvalModel] = []
 
-
     # SF-helper runs (depth lives in sf_cfg.depth)
     for sf_cfg in sf_cfgs:
         sf_engine = make_stockfish(
@@ -652,55 +650,56 @@ def build_sf_models_for_gm(
             skill_level=None,
             timeout=float(sf_cfg.timeout_s),
         )
-        models.append(DpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_dpo_beta=0.60.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine))
-        models.append(SftWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_sft_best.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine))
-        models.append(SftPairwiseWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_pairwise_sft_best.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine))
+        yield DpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_dpo_beta=0.60.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine)
+        yield SftWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_sft_best.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine)
+        yield SftPairwiseWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_pairwise_sft_best.pt", beta=0.6, sf_cfg=sf_cfg, sf_engine=sf_engine)
 
         beta = 0.6
         dpo_loss_weight = 0.1
         style_tau = 0.25
         for dpo_loss_weight in [0.2, 0.4]:
-            models.append(SftAndDpoWithSfHelper(maia_type=maia_type, 
+            yield SftAndDpoWithSfHelper(maia_type=maia_type, 
                                                 device=device, 
                                                 policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}.pt", 
                                                 beta=beta, 
                                                 dpo_loss_weight=dpo_loss_weight,
                                                 sf_cfg=sf_cfg,
-                                                sf_engine=sf_engine))        
-            #models.append(SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.20.pt", beta=0.6, dpo_loss_weight=0.2, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.40.pt", beta=0.6, dpo_loss_weight=0.4, sf_cfg=sf_cfg))
+                                                sf_engine=sf_engine)       
+            #yield SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.20.pt", beta=0.6, dpo_loss_weight=0.2, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelper(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_beta=0.60_dpo_loss_weight=0.40.pt", beta=0.6, dpo_loss_weight=0.4, sf_cfg=sf_cfg)
 
         for dpo_loss_weight in [0.1, 0.2]:
-            models.append(SftAndDpoWStyleV1WithSfHelper(maia_type=maia_type, 
-                                                        device=device, 
-                                                        policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
-                                                        beta=beta, 
-                                                        dpo_loss_weight=dpo_loss_weight, 
-                                                        style_tau=style_tau, 
-                                                        sf_cfg=sf_cfg,
-                                                        sf_engine=sf_engine))        
-            #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg))
+            for style_tau in [0.25, 0.75, 1.25]:
+                yield SftAndDpoWStyleV1WithSfHelper(maia_type=maia_type, 
+                                                            device=device, 
+                                                            policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                            beta=beta, 
+                                                            dpo_loss_weight=dpo_loss_weight, 
+                                                            style_tau=style_tau, 
+                                                            sf_cfg=sf_cfg,
+                                                            sf_engine=sf_engine)    
+            #yield SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV1(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_sim_utility_weight_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg)
 
-            models.append(SftAndDpoWStyleV2WithSfHelper(maia_type=maia_type, 
-                                                        device=device, 
-                                                        policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
-                                                        beta=beta, 
-                                                        dpo_loss_weight=dpo_loss_weight,
-                                                        style_tau=style_tau,
-                                                        sf_cfg=sf_cfg,
-                                                        sf_engine=sf_engine))        
-            #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg))
-            #models.append(SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg))
+                yield SftAndDpoWStyleV2WithSfHelper(maia_type=maia_type, 
+                                                            device=device, 
+                                                            policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau={style_tau:.2f}.pt", 
+                                                            beta=beta, 
+                                                            dpo_loss_weight=dpo_loss_weight,
+                                                            style_tau=style_tau,
+                                                            sf_cfg=sf_cfg,
+                                                            sf_engine=sf_engine)    
+            #yield SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=0.75, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.10_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.1, style_tau=1.25, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.25, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=0.75.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=0.75, sf_cfg=sf_cfg)
+            #yield SftAndDpoWithSfHelperWStyleV2(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v2_beta=0.60_dpo_loss_weight=0.20_style_cp_scale=40.00_style_piece_bonus=1.00_style_positional_bonus=2.00_style_tau=1.25.pt", beta=0.6, dpo_loss_weight=0.2, style_tau=1.25, sf_cfg=sf_cfg)
 
         for dpo_loss_weight in [0.6, 0.4, 0.8, 0.2, 1.0, 0.1]:
-            models.append(SftAndDpoWStyleV3WithSfHelper(maia_type=maia_type, 
+            yield SftAndDpoWStyleV3WithSfHelper(maia_type=maia_type, 
                                                         device=device, 
                                                         policy_pt_path=f"{experiment2_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta={beta:.2f}_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model=final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42.pt", 
                                                         beta=beta, 
@@ -708,16 +707,12 @@ def build_sf_models_for_gm(
                                                         style_tau=style_tau,
                                                         embedding_model_chkpt_name=f"{style_embedding_model_dir}/final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42/best.pt",
                                                         sf_cfg=sf_cfg,
-                                                        sf_engine=sf_engine))        
-        #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment2_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight=0.10_style_tau=0.25_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=0.1, style_tau_inference=0.25, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg))
+                                                        sf_engine=sf_engine)   
+        #yield SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment2_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight=0.10_style_tau=0.25_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=0.1, style_tau_inference=0.25, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg)
 
         for dpo_loss_weight in [0.10, 0.20, 0.40, 0.60, 0.80, 1.00]:
             for style_tau in [0.25, 0.75, 1.25]:
-                #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v2_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v2_embedding_model_name, sf_cfg=sf_cfg))
-                #models.append(SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg))
+                #yield SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v2_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v2_embedding_model_name, sf_cfg=sf_cfg)
+                #yield SftAndDpoWithSfHelperWStyleV3(maia_type=maia_type, device=device, policy_pt_path=f"{experiment1_gm_dir}/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight={dpo_loss_weight:.2f}_style_tau={style_tau:.2f}_embedding_model={final_v3_embedding_model_name}.pt", beta=0.6, dpo_loss_weight=dpo_loss_weight, style_tau_inference=style_tau, embedding_model_name=final_v3_embedding_model_name, sf_cfg=sf_cfg)
                 pass
-        
-
-
-    return models
 

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import random
 
+from grandmaster_dpo.eval.dataset import DpoPairs, SFCachedPairs, merge_inf_sf_and_reference_sf
 from grandmaster_dpo.eval.eval_abstractions import (
     build_sf_models_for_gm,
 )
@@ -14,9 +15,11 @@ from grandmaster_dpo.eval.eval_abstractions import (
     SfConfig,
 )
 
-from grandmaster_dpo.eval.single_gm.shared_eval_metric_utilities import DpoPairs
 from grandmaster_dpo.eval.stockfish_eval import generate_stockfish_cache
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import pick_device
+
+TRAINING_SEED = 5_000
+MAX_ROWS_SF_REF = 500 # since stockfish depth 16+ are very expensive to run
 
 def parse_int_list(s: str):
     try:
@@ -60,8 +63,9 @@ def main() -> None:
 
     sf_cfgs = []
     uci_elo = None if args.sf_uci_elo.lower() in ("none", "null", "full", "max") else int(args.sf_uci_elo)
-    for depth in sorted(args.sf_depth, reverse=True):
+    for depth in sorted(args.sf_depth, reverse=False):
         for topk in args.sf_tops:
+            hash_mb = 4048 if depth == 16 else 128
             sf_cfg = SfConfig(
                 stockfish_path=args.sf_path,
                 depth=depth,
@@ -71,18 +75,21 @@ def main() -> None:
                 temperature=float(args.temperature),
                 sample=bool(args.sample),
                 seed=int(args.seed),
-                threads=32,
+                threads=18,
                 use_gibbs=True,
+                hash_mb=hash_mb,
             )
             sf_cfgs.append(sf_cfg)
 
     for sf_cfg in sf_cfgs:
         sf_cache_jsonl_path = Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{sf_cfg.depth}_multipv_{sf_cfg.multipv_topk}_hash_mb_{sf_cfg.hash_mb}_uci_elo_{sf_cfg.uci_elo}_restrict_cp_window_{sf_cfg.restrict_cp_window}_temperature_{sf_cfg.temperature}")
         if not sf_cache_jsonl_path.exists():
-            generate_stockfish_cache(sf_cfg, jsonl_path, sf_cache_jsonl_path)
+            if sf_cfg.depth == 16: # reference stockfish data
+                generate_stockfish_cache(sf_cfg, jsonl_path, sf_cache_jsonl_path, max_rows=MAX_ROWS_SF_REF)
 
     gm_ckpt_dir = Path(args.gm_ckpt_dir_template.format(gm=args.gm_name))
     experiment2_gm_ckpt_dir = Path(args.exp2_gm_ckpt_dir_template.format(gm=args.gm_name))
+    experiment3_gm_dir=Path(f"./final_experiments_for_paper/experiment3/sf_cache/{args.gm_name}")
     out_dir = Path(args.out_root.format(gm=args.gm_name, split=args.split))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -97,22 +104,22 @@ def main() -> None:
     results = []
     try:
         for m in models:
-            ds = DpoPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{m.sf_cfg.depth}_multipv_{m.sf_cfg.multipv_topk*2}_hash_mb_{m.sf_cfg.hash_mb}_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
-            print(f"dpo pairs has length: {len(ds)}")
-            rng = random.Random(0) 
-            rng.shuffle(ds.rows)
+            print(f"Generating data for gm {args.gm_name} and model {m.tag}...")
+            cached_inference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_{m.sf_cfg.depth}_multipv_{m.sf_cfg.multipv_topk}_hash_mb_{m.sf_cfg.hash_mb}_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
+            cached_reference_stockfish_dpo_pairs = SFCachedPairs(str(Path(args.sf_cache_template.format(gm=args.gm_name) + f"{args.split}_depth_16_multipv_{m.sf_cfg.multipv_topk}_hash_mb_4048_uci_elo_{m.sf_cfg.uci_elo}_restrict_cp_window_{m.sf_cfg.restrict_cp_window}_temperature_{m.sf_cfg.temperature}")))
+            base_eval_dataset = merge_inf_sf_and_reference_sf(cached_inference_stockfish_dpo_pairs, cached_reference_stockfish_dpo_pairs)
+            
+            print(f"Running eval on {len(base_eval_dataset)} dpo pairs")
             m_out = out_dir / m.tag
             m_out.mkdir(parents=True, exist_ok=True)
-            res = m.run_eval(ds=ds, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name, n_boot=1000)
+            res = m.run_eval(ds=base_eval_dataset, batch_size=int(args.batch_size), out_dir=m_out, gm_name=args.gm_name, n_boot=1000)
             results.append(res)
-            print(f"[done] {m.tag} -> {m_out}")
+            print(f"[done w/ main eval] {m.tag} -> {m_out}")
+
+            m.close()      
     finally:
         for m in models:
             m.close()
-
-    # one combined summary file
-    (out_dir / "summary_all.json").write_text(json.dumps(results, indent=2))
-    print(f"[saved] {out_dir / 'summary_all.json'}")
 
 
 if __name__ == "__main__":
