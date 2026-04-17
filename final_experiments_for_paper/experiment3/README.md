@@ -1,6 +1,6 @@
 # Reproducibility Guide
 
-
+## Evals
 To run the stockfish studies, run 
 
 ```sh
@@ -101,3 +101,12 @@ done
 ```
 
 There's a slight naming inconsistency for the sf_cache. In particular, restrict cp window is redundant and the files produced are agnostic of it to support more downstream consumers (Eval runners)
+
+
+## Graphs
+
+```sh
+python src/grandmaster_dpo/graphs/single_gm/generate_experiment3_paper_plots.py \
+--eval-root final_experiments_for_paper/experiment3/depth_study_validation_results \
+--out-dir final_experiments_for_paper/experiment3/paper_plots_depth_study
+```
