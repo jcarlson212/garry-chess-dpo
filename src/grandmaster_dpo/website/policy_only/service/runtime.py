@@ -1,0 +1,758 @@
+from __future__ import annotations
+
+import logging
+import math
+import os
+import random
+import re
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
+
+import chess
+import torch
+
+from maia2 import inference, model as maia_model
+from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
+
+from grandmaster_dpo.eval.stockfish_helpers import make_stockfish
+from grandmaster_dpo.website.policy_only.schemas import ClockState, EngineConfigRequest, GameStatusResponse
+
+logger = logging.getLogger(__name__)
+
+
+def mirror_uci_like_board_mirror(uci: str) -> str:
+    mv = chess.Move.from_uci(uci)
+    f = chess.square_mirror(mv.from_square)
+    t = chess.square_mirror(mv.to_square)
+    return chess.Move(f, t, promotion=mv.promotion).uci()
+
+
+def uci_to_vocab_index(all_moves_dict: dict[str, int], fen: str, uci: str) -> int:
+    side = fen.split(" ")[1]
+    uci_eff = mirror_uci_like_board_mirror(uci) if side == "b" else uci
+    return int(all_moves_dict.get(uci_eff, -1))
+
+
+def apply_legal_mask(logits: torch.Tensor, legal_moves: torch.Tensor) -> torch.Tensor:
+    neg_inf = torch.finfo(logits.dtype).min
+    return torch.where(legal_moves > 0, logits, torch.full_like(logits, neg_inf))
+
+
+def batch_preprocess_single(
+    *,
+    all_moves_dict: dict[str, int],
+    elo_dict: dict[str, int],
+    fen: str,
+    elo_self: int,
+    elo_oppo: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    bi, es_cat, eo_cat, lm = inference.preprocessing(
+        fen,
+        int(elo_self),
+        int(elo_oppo),
+        elo_dict,
+        all_moves_dict,
+    )
+    board_input = bi.unsqueeze(0).to(device)
+    legal_moves = lm.unsqueeze(0).to(device)
+    es_t = torch.tensor([int(es_cat)], device=device).long()
+    eo_t = torch.tensor([int(eo_cat)], device=device).long()
+    return board_input, legal_moves, es_t, eo_t
+
+
+def forward_logits(
+    model: torch.nn.Module,
+    board_input: torch.Tensor,
+    es: torch.Tensor,
+    eo: torch.Tensor,
+) -> torch.Tensor:
+    logits, _, _ = model(board_input, es, eo)
+    return logits
+
+
+def load_state_dict_fuzzy(pt: Path, map_location: str = "cpu") -> dict[str, torch.Tensor]:
+    sd = torch.load(pt, map_location=map_location)
+    if isinstance(sd, dict) and "model_state_dict" in sd and isinstance(sd["model_state_dict"], dict):
+        sd = sd["model_state_dict"]
+    if isinstance(sd, dict) and "state_dict" in sd and isinstance(sd["state_dict"], dict):
+        sd = sd["state_dict"]
+    if not isinstance(sd, dict):
+        raise ValueError(f"Unsupported checkpoint format in {pt}: {type(sd)}")
+    if any(k.startswith("module.") for k in sd.keys()):
+        sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+    return sd
+
+
+def get_module_by_dotted_name(root: torch.nn.Module, dotted: str) -> Optional[torch.nn.Module]:
+    cur: Any = root
+    for part in dotted.split("."):
+        if part.isdigit():
+            idx = int(part)
+            if isinstance(cur, (torch.nn.ModuleList, list, tuple)):
+                if idx < 0 or idx >= len(cur):
+                    return None
+                cur = cur[idx]
+            else:
+                return None
+        else:
+            if not hasattr(cur, part):
+                return None
+            cur = getattr(cur, part)
+    return cur if isinstance(cur, torch.nn.Module) else None
+
+
+def max_elo_supported(elo_dict: dict[str, int]) -> int:
+    mx = None
+    for key in elo_dict.keys():
+        match = re.match(r"^>=\s*(\d+)$", str(key))
+        if match:
+            mx = max(mx or 0, int(match.group(1)))
+    return mx if mx is not None else 3000
+
+
+def fen_ply_abs(fen: str) -> int:
+    parts = fen.split()
+    side = parts[1]
+    fullmove = int(parts[5])
+    return 2 * (fullmove - 1) + (1 if side == "b" else 0)
+
+
+def game_status_from_board(board: chess.Board) -> GameStatusResponse:
+    if board.is_checkmate():
+        winner = "black" if board.turn == chess.WHITE else "white"
+        return GameStatusResponse(state="checkmate", winner=winner, reason="checkmate")
+    if board.is_stalemate():
+        return GameStatusResponse(state="stalemate", winner=None, reason="stalemate")
+    if board.is_insufficient_material():
+        return GameStatusResponse(state="draw", winner=None, reason="insufficient_material")
+    if board.can_claim_draw():
+        return GameStatusResponse(state="draw", winner=None, reason="claimable_draw")
+    if board.is_game_over(claim_draw=True):
+        return GameStatusResponse(state="draw", winner=None, reason="game_over")
+    return GameStatusResponse(state="ongoing", winner=None, reason="")
+
+
+def _score_to_cp(score: chess.engine.PovScore, mate_score: int = 100_000) -> int:
+    rel = score.relative
+    cp = rel.score(mate_score=mate_score)
+    if cp is None:
+        mate = rel.mate()
+        if mate is not None:
+            return mate_score if mate > 0 else -mate_score
+        return 0
+    return int(cp)
+
+
+@dataclass(frozen=True)
+class EngineProfile:
+    gm_name: str
+    maia_type: str = "blitz"
+    elo_self: int = 2800
+    elo_oppo: int = 2800
+
+
+@dataclass
+class TimerConfig:
+    hook_layer: str = "last_ln"
+    logits_feature: str = "masked_logits"
+    ply_norm: float = 120.0
+    min_think_ms: int = 50
+    max_think_ms: int = 10_000
+    safety_ms: int = 50
+
+
+class TimerHead(torch.nn.Module):
+    def __init__(self, in_dim: int, hidden1: int, hidden2: int, dropout: float) -> None:
+        super().__init__()
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(in_dim, hidden1),
+            torch.nn.GELU(),
+            torch.nn.Dropout(dropout),
+            torch.nn.Linear(hidden1, hidden2),
+            torch.nn.GELU(),
+            torch.nn.Dropout(dropout),
+            torch.nn.Linear(hidden2, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(-1)
+
+
+def build_timer_head_from_ckpt(timer_pt: Path, device: torch.device) -> tuple[TimerHead, int]:
+    sd = load_state_dict_fuzzy(timer_pt, map_location="cpu")
+    w0 = sd.get("net.0.weight")
+    w1 = sd.get("net.3.weight")
+    if w0 is None or w1 is None:
+        raise ValueError(f"Timer head checkpoint missing expected keys: {timer_pt}")
+    hidden1 = int(w0.shape[0])
+    in_dim = int(w0.shape[1])
+    hidden2 = int(w1.shape[0])
+    head = TimerHead(in_dim=in_dim, hidden1=hidden1, hidden2=hidden2, dropout=0.1)
+    head.load_state_dict(sd, strict=True)
+    head.to(device)
+    head.eval()
+    feat_dim = in_dim - 7
+    if feat_dim <= 0:
+        raise ValueError(f"Timer in_dim={in_dim} implies invalid feat_dim={feat_dim}")
+    return head, feat_dim
+
+
+class PolicyTimerRuntime:
+    def __init__(
+        self,
+        maia: torch.nn.Module,
+        all_moves_dict: dict[str, int],
+        elo_dict: dict[str, int],
+        device: torch.device,
+        timer_cfg: TimerConfig,
+    ) -> None:
+        self.maia = maia
+        self.all_moves_dict = all_moves_dict
+        self.elo_dict = elo_dict
+        self.device = device
+        self.cfg = timer_cfg
+        self._hook_buf: Optional[torch.Tensor] = None
+        self._hooked = False
+        self._hook_handle = None
+        if timer_cfg.hook_layer:
+            mod = get_module_by_dotted_name(self.maia, timer_cfg.hook_layer)
+            if mod is not None:
+                self._hook_handle = mod.register_forward_hook(self._forward_hook)
+                self._hooked = True
+
+    def _forward_hook(self, module: torch.nn.Module, inputs: tuple[Any, ...], output: Any) -> None:
+        out = output[0] if isinstance(output, (tuple, list)) else output
+        if not torch.is_tensor(out):
+            self._hook_buf = None
+            return
+        if out.dim() == 4:
+            out = out.mean(dim=(2, 3))
+        self._hook_buf = out
+
+    @torch.no_grad()
+    def forward_once(self, fen: str, elo_self: int, elo_oppo: int) -> tuple[torch.Tensor, torch.Tensor]:
+        mx = max_elo_supported(self.elo_dict)
+        elo_self = min(int(elo_self), mx)
+        elo_oppo = min(int(elo_oppo), mx)
+        board_input, legal_moves, es_t, eo_t = batch_preprocess_single(
+            all_moves_dict=self.all_moves_dict,
+            elo_dict=self.elo_dict,
+            fen=fen,
+            elo_self=elo_self,
+            elo_oppo=elo_oppo,
+            device=self.device,
+        )
+        self._hook_buf = None
+        logits = forward_logits(self.maia, board_input, es_t, eo_t)
+        masked_logits = apply_legal_mask(logits, legal_moves)
+        if self._hooked and self._hook_buf is not None:
+            feats = self._hook_buf
+        else:
+            if self.cfg.logits_feature == "logprobs":
+                feats = torch.log_softmax(masked_logits, dim=-1)
+            else:
+                feats = masked_logits
+        return feats, masked_logits
+
+
+@dataclass
+class ModelBundle:
+    profile: EngineProfile
+    policy_runtime: PolicyTimerRuntime
+    timer_head: Optional[TimerHead]
+    timer_feat_dim: Optional[int]
+    stockfish: chess.engine.SimpleEngine
+
+
+@dataclass
+class BotMoveResult:
+    move_uci: str
+    eval_cp: int
+    pv_uci: list[str]
+    candidate_moves: list[dict[str, Any]]
+    stockfish_metrics: dict[str, Any]
+    selected_probability: Optional[float]
+    requested_think_ms: Optional[int]
+    actual_think_ms: int
+    engine_limit: dict[str, Any]
+
+
+_GLOBAL_LOCK = threading.Lock()
+_GLOBALS: dict[str, Any] = {
+    "device": None,
+    "elo_dict": None,
+    "all_moves": None,
+    "all_moves_dict": None,
+    "stockfish": None,
+    "models": {},
+}
+
+
+def get_device() -> torch.device:
+    return torch.device(os.environ.get("MAIA_DEVICE", "cpu"))
+
+
+def get_global_context() -> tuple[torch.device, dict[str, int], list[str], dict[str, int]]:
+    with _GLOBAL_LOCK:
+        if _GLOBALS["device"] is None:
+            _GLOBALS["device"] = get_device()
+        if _GLOBALS["elo_dict"] is None:
+            _GLOBALS["elo_dict"] = create_elo_dict()
+        if _GLOBALS["all_moves"] is None or _GLOBALS["all_moves_dict"] is None:
+            all_moves = get_all_possible_moves()
+            _GLOBALS["all_moves"] = all_moves
+            _GLOBALS["all_moves_dict"] = {m: i for i, m in enumerate(all_moves)}
+    return (
+        _GLOBALS["device"],
+        _GLOBALS["elo_dict"],
+        _GLOBALS["all_moves"],
+        _GLOBALS["all_moves_dict"],
+    )
+
+
+def get_stockfish() -> chess.engine.SimpleEngine:
+    with _GLOBAL_LOCK:
+        if _GLOBALS["stockfish"] is None:
+            stockfish_path = os.environ.get("STOCKFISH_PATH", "/opt/bin/stockfish")
+            sf_threads = int(os.environ.get("STOCKFISH_THREADS", "1"))
+            sf_hash_mb = int(os.environ.get("STOCKFISH_HASH_MB", "128"))
+            sf_timeout_s = float(os.environ.get("STOCKFISH_TIMEOUT_S", "20.0"))
+            _GLOBALS["stockfish"] = make_stockfish(
+                stockfish_path,
+                threads=sf_threads,
+                hash_mb=sf_hash_mb,
+                uci_elo=None,
+                skill_level=None,
+                timeout=sf_timeout_s,
+            )
+    return _GLOBALS["stockfish"]
+
+
+def _load_policy_weights(model: torch.nn.Module, pt_path: Path) -> None:
+    sd = load_state_dict_fuzzy(pt_path, map_location="cpu")
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    if missing:
+        logger.warning("Missing policy keys for %s: %s", pt_path, missing[:10])
+    if unexpected:
+        logger.warning("Unexpected policy keys for %s: %s", pt_path, unexpected[:10])
+
+
+def _resolve_policy_path(model_root: Path, gm_name: str) -> Path:
+    candidates = [
+        model_root / "style_policy" / gm_name / "policy_dpo_best.pt",
+        model_root / gm_name / "policy_dpo_best.pt",
+        model_root / f"{gm_name}_policy_dpo_best.pt",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"Could not find policy weights for gm_name={gm_name} under {model_root}"
+    )
+
+
+def _resolve_timer_path(model_root: Path, gm_name: str) -> Optional[Path]:
+    candidates = [
+        model_root / "timer_models" / gm_name / "timer_head_best.pt",
+        model_root / gm_name / "timer_head_best.pt",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def resolve_profile(game_type_id: str) -> EngineProfile:
+    configured_gm = (
+        os.environ.get("POLICY_ONLY_GM_NAME")
+        or os.environ.get("SERVE_GM_NAME")
+        or os.environ.get("GM_NAME")
+    )
+    if configured_gm:
+        gm_name = configured_gm
+    elif game_type_id.startswith("gm_") and "_" in game_type_id[3:]:
+        gm_name = game_type_id.split("_", 2)[1]
+    else:
+        gm_name = "carlsen"
+    maia_type = "rapid" if "rapid" in game_type_id else "blitz"
+    return EngineProfile(gm_name=gm_name, maia_type=maia_type)
+
+
+def get_or_load_bundle(profile: EngineProfile) -> ModelBundle:
+    key = f"{profile.gm_name}::{profile.maia_type}"
+    with _GLOBAL_LOCK:
+        cached = _GLOBALS["models"].get(key)
+        if cached is not None:
+            return cached
+
+    device, elo_dict, _all_moves, all_moves_dict = get_global_context()
+    policy = maia_model.from_pretrained(type=profile.maia_type, device=str(device)).to(device).eval()
+    model_root = Path(os.environ.get("MODEL_ROOT", "/opt/models"))
+    policy_path = _resolve_policy_path(model_root, profile.gm_name)
+    _load_policy_weights(policy, policy_path)
+
+    timer_cfg = TimerConfig()
+    policy_runtime = PolicyTimerRuntime(
+        maia=policy,
+        all_moves_dict=all_moves_dict,
+        elo_dict=elo_dict,
+        device=device,
+        timer_cfg=timer_cfg,
+    )
+
+    timer_head = None
+    timer_feat_dim = None
+    timer_path = _resolve_timer_path(model_root, profile.gm_name)
+    if timer_path is not None:
+        try:
+            timer_head, timer_feat_dim = build_timer_head_from_ckpt(timer_path, device)
+            logger.info("Loaded timer head for %s from %s", profile.gm_name, timer_path)
+        except Exception as exc:
+            logger.warning("Failed to load timer head for %s: %s", profile.gm_name, exc)
+    else:
+        logger.warning("No timer head checkpoint found for %s under %s", profile.gm_name, model_root)
+
+    bundle = ModelBundle(
+        profile=profile,
+        policy_runtime=policy_runtime,
+        timer_head=timer_head,
+        timer_feat_dim=timer_feat_dim,
+        stockfish=get_stockfish(),
+    )
+    with _GLOBAL_LOCK:
+        _GLOBALS["models"][key] = bundle
+    return bundle
+
+
+def _predict_think_ms(
+    *,
+    timer_head: TimerHead,
+    timer_cfg: TimerConfig,
+    feats: torch.Tensor,
+    ply_idx: int,
+    side_is_white: bool,
+    prev5_ms: list[int],
+    prev_clock_w_ms: int,
+    prev_clock_b_ms: int,
+) -> int:
+    device = feats.device
+    prev5 = [float(x) for x in prev5_ms[-5:]]
+    while len(prev5) < 5:
+        prev5.insert(0, 0.0)
+    prev5_t = torch.tensor([prev5], device=device, dtype=torch.float32)
+    prev5_feat = torch.log1p(torch.clamp(prev5_t, min=0.0))
+    side = torch.tensor([1 if side_is_white else 0], device=device, dtype=torch.long)
+    cw = torch.tensor([float(prev_clock_w_ms)], device=device)
+    cb = torch.tensor([float(prev_clock_b_ms)], device=device)
+    clock_left_ms = torch.where(side == 1, cw, cb).clamp(min=0.0)
+    clock_feat = torch.log1p(clock_left_ms).unsqueeze(-1)
+    ply = torch.tensor([float(ply_idx)], device=device).unsqueeze(-1)
+    ply_feat = (ply / float(timer_cfg.ply_norm)).clamp(min=0.0, max=10.0)
+    x = torch.cat([feats, prev5_feat, clock_feat, ply_feat], dim=-1)
+    pred_log = timer_head(x).squeeze(0)
+    pred_ms = float(torch.expm1(pred_log).clamp(min=0.0).item())
+    pred_ms_i = int(round(pred_ms))
+    pred_ms_i = max(timer_cfg.min_think_ms, min(timer_cfg.max_think_ms, pred_ms_i))
+    mover_clock = prev_clock_w_ms if side_is_white else prev_clock_b_ms
+    pred_ms_i = min(pred_ms_i, max(timer_cfg.min_think_ms, mover_clock - timer_cfg.safety_ms))
+    return max(timer_cfg.min_think_ms, pred_ms_i)
+
+
+def _limit_from_engine_config(
+    engine_config: EngineConfigRequest,
+    predicted_think_ms: Optional[int],
+) -> tuple[chess.engine.Limit, dict[str, Any], Optional[int]]:
+    def _time_s(ms: int) -> float:
+        return max(0.001, int(ms) / 1000.0)
+
+    if engine_config.limit is not None:
+        if engine_config.limit.type == "depth":
+            depth_value = int(engine_config.limit.value)
+            if predicted_think_ms is not None:
+                return chess.engine.Limit(depth=depth_value, time=_time_s(predicted_think_ms)), {
+                    "type": "depth+time_ms",
+                    "depth": depth_value,
+                    "time_ms": predicted_think_ms,
+                    "time_source": "timer_head",
+                }, predicted_think_ms
+            return chess.engine.Limit(depth=depth_value), {
+                "type": "depth",
+                "value": depth_value,
+            }, None
+        if engine_config.limit.type == "nodes":
+            return chess.engine.Limit(nodes=engine_config.limit.value), {
+                "type": "nodes",
+                "value": engine_config.limit.value,
+            }, None
+        value = max(1, int(engine_config.limit.value))
+        return chess.engine.Limit(time=_time_s(value)), {
+            "type": "time_ms",
+            "value": value,
+        }, value
+
+    depth_value = engine_config.stockfish_tree_search_depth or engine_config.stockfish_engine_depth
+    if depth_value is not None:
+        depth_value = int(depth_value)
+        if predicted_think_ms is not None:
+            return chess.engine.Limit(depth=depth_value, time=_time_s(predicted_think_ms)), {
+                "type": "depth+time_ms",
+                "depth": depth_value,
+                "time_ms": predicted_think_ms,
+                "time_source": "timer_head",
+            }, predicted_think_ms
+        return chess.engine.Limit(depth=depth_value), {"type": "depth", "value": depth_value}, None
+
+    if engine_config.stockfish_engine_nodes is not None:
+        return chess.engine.Limit(nodes=engine_config.stockfish_engine_nodes), {
+            "type": "nodes",
+            "value": engine_config.stockfish_engine_nodes,
+        }, None
+
+    if engine_config.stockfish_max_time_ms is not None:
+        time_ms = max(1, int(engine_config.stockfish_max_time_ms))
+        return chess.engine.Limit(time=_time_s(time_ms)), {
+            "type": "time_ms",
+            "value": time_ms,
+        }, time_ms
+
+    if predicted_think_ms is not None:
+        return chess.engine.Limit(time=_time_s(predicted_think_ms)), {
+            "type": "time_ms",
+            "value": predicted_think_ms,
+            "source": "timer_head",
+        }, predicted_think_ms
+
+    return chess.engine.Limit(time=0.2), {"type": "time_ms", "value": 200, "source": "default"}, 200
+
+
+@torch.no_grad()
+def choose_bot_move(
+    *,
+    bundle: ModelBundle,
+    fen: str,
+    clock: ClockState,
+    last_ply_times_ms: list[int],
+    engine_config: EngineConfigRequest,
+) -> BotMoveResult:
+    device, elo_dict, _all_moves, all_moves_dict = get_global_context()
+    _ = device, elo_dict
+    board = chess.Board(fen)
+    side_is_white = board.turn == chess.WHITE
+    feats, masked_logits = bundle.policy_runtime.forward_once(
+        fen,
+        bundle.profile.elo_self,
+        bundle.profile.elo_oppo,
+    )
+    predicted_think_ms = None
+    if engine_config.use_timer_head and bundle.timer_head is not None:
+        predicted_think_ms = _predict_think_ms(
+            timer_head=bundle.timer_head,
+            timer_cfg=bundle.policy_runtime.cfg,
+            feats=feats,
+            ply_idx=fen_ply_abs(fen),
+            side_is_white=side_is_white,
+            prev5_ms=last_ply_times_ms,
+            prev_clock_w_ms=int(clock.white_ms or 0),
+            prev_clock_b_ms=int(clock.black_ms or 0),
+        )
+    elif engine_config.use_timer_head:
+        logger.warning(
+            "Timer head requested but unavailable for gm=%s; falling back to non-timer engine limit",
+            bundle.profile.gm_name,
+        )
+
+    engine_limit, engine_limit_dict, requested_think_ms = _limit_from_engine_config(
+        engine_config,
+        predicted_think_ms,
+    )
+    logger.info(
+        "choose_bot_move gm=%s fen_ply=%s timer_requested=%s predicted_think_ms=%s engine_limit=%s",
+        bundle.profile.gm_name,
+        fen_ply_abs(fen),
+        engine_config.use_timer_head,
+        predicted_think_ms,
+        engine_limit_dict,
+    )
+
+    started = time.time()
+    infos = bundle.stockfish.analyse(
+        board,
+        engine_limit,
+        multipv=max(1, int(engine_config.stockfish_multipv_topk)),
+    )
+    actual_think_ms = int(round((time.time() - started) * 1000.0))
+
+    candidates: list[dict[str, Any]] = []
+    for info in infos:
+        pv = info.get("pv")
+        score = info.get("score")
+        if not pv or score is None:
+            continue
+        move = pv[0].uci()
+        cp = _score_to_cp(score)
+        rel = score.relative
+        mate = rel.mate()
+        pv_uci = [m.uci() for m in pv[:8]]
+        candidates.append(
+            {
+                "uci": move,
+                "cp": int(cp),
+                "mate": int(mate) if mate is not None else None,
+                "pv_uci": pv_uci,
+                "multipv_rank": int(info.get("multipv")) if info.get("multipv") is not None else None,
+                "depth": int(info.get("depth")) if info.get("depth") is not None else None,
+                "seldepth": int(info.get("seldepth")) if info.get("seldepth") is not None else None,
+                "nodes": int(info.get("nodes")) if info.get("nodes") is not None else None,
+                "nps": int(info.get("nps")) if info.get("nps") is not None else None,
+                "time_ms": int(round(float(info.get("time")) * 1000.0)) if info.get("time") is not None else None,
+                "tbhits": int(info.get("tbhits")) if info.get("tbhits") is not None else None,
+            }
+        )
+
+    if not candidates:
+        fallback = next(iter(board.legal_moves))
+        return BotMoveResult(
+            move_uci=fallback.uci(),
+            eval_cp=0,
+            pv_uci=[fallback.uci()],
+            candidate_moves=[
+                {
+                    "uci": fallback.uci(),
+                    "cp": 0,
+                    "mate": None,
+                    "pv_uci": [fallback.uci()],
+                    "multipv_rank": 1,
+                    "in_cp_gap_window": True,
+                    "prob": 1.0,
+                    "depth": None,
+                    "seldepth": None,
+                    "nodes": None,
+                    "nps": None,
+                    "time_ms": actual_think_ms,
+                    "tbhits": None,
+                }
+            ],
+            stockfish_metrics={
+                "requested_multipv_topk": max(1, int(engine_config.stockfish_multipv_topk)),
+                "returned_candidate_count": 1,
+                "cp_gap_window": engine_config.cp_gap_window,
+                "max_depth": None,
+                "max_seldepth": None,
+                "total_nodes": None,
+                "max_nps": None,
+                "max_time_ms": actual_think_ms,
+                "best_cp": 0,
+                "best_move_uci": fallback.uci(),
+                "best_move_mate": None,
+                "selected_move_rank_by_cp": 1,
+                "selected_move_rank_by_prob_within_window": 1,
+            },
+            selected_probability=1.0,
+            requested_think_ms=requested_think_ms,
+            actual_think_ms=actual_think_ms,
+            engine_limit=engine_limit_dict,
+        )
+
+    best_cp = max(item["cp"] for item in candidates)
+    best_candidate = max(candidates, key=lambda item: item["cp"])
+    best_pv = best_candidate["pv_uci"]
+    kept = candidates
+    if engine_config.cp_gap_window is not None:
+        kept = [item for item in candidates if item["cp"] >= best_cp - int(engine_config.cp_gap_window)]
+        if not kept:
+            kept = candidates
+
+    temp = max(1e-6, float(engine_config.temperature))
+    logp_all = torch.log_softmax(masked_logits[0] / temp, dim=-1)
+    score_terms: list[torch.Tensor] = []
+    serializable_candidates: list[dict[str, Any]] = []
+    for candidate in kept:
+        move_uci = str(candidate["uci"])
+        cp = int(candidate["cp"])
+        idx = uci_to_vocab_index(all_moves_dict, fen, move_uci)
+        if idx < 0:
+            base_term = torch.tensor(torch.finfo(logp_all.dtype).min, device=logp_all.device)
+        else:
+            base_term = logp_all[idx]
+        score_term = base_term
+        if engine_config.use_gibbs:
+            capped_cp = max(-int(engine_config.cp_cap), min(int(engine_config.cp_cap), int(cp)))
+            score_term = base_term + (
+                torch.tensor(
+                    float(capped_cp) / max(float(engine_config.cp_scale), 1e-6),
+                    device=logp_all.device,
+                    dtype=logp_all.dtype,
+                )
+                / max(float(engine_config.lam), 1e-6)
+            )
+        score_terms.append(score_term)
+        serializable_candidates.append({**candidate, "in_cp_gap_window": True})
+
+    probs_t = torch.softmax(torch.stack(score_terms, dim=0), dim=0)
+    probs = probs_t.detach().cpu().tolist()
+    for candidate, prob in zip(serializable_candidates, probs):
+        candidate["prob"] = float(prob)
+
+    kept_by_uci = {candidate["uci"]: candidate for candidate in serializable_candidates}
+    all_candidate_moves: list[dict[str, Any]] = []
+    for candidate in candidates:
+        move_uci = str(candidate["uci"])
+        kept_candidate = kept_by_uci.get(move_uci)
+        if kept_candidate is not None:
+            all_candidate_moves.append(kept_candidate)
+            continue
+        all_candidate_moves.append({**candidate, "in_cp_gap_window": False, "prob": None})
+
+    if engine_config.sample:
+        rng = random.Random(int(engine_config.random_seed))
+        cutoff = rng.random()
+        total = 0.0
+        chosen_idx = 0
+        for idx, prob in enumerate(probs):
+            total += float(prob)
+            if cutoff <= total:
+                chosen_idx = idx
+                break
+    else:
+        chosen_idx = int(torch.argmax(probs_t).item())
+
+    chosen_move = serializable_candidates[chosen_idx]["uci"]
+    chosen_prob = float(probs[chosen_idx]) if probs else None
+    rank_by_cp = next(
+        (rank for rank, candidate in enumerate(sorted(candidates, key=lambda item: item["cp"], reverse=True), start=1) if candidate["uci"] == chosen_move),
+        None,
+    )
+    rank_by_prob = next(
+        (rank for rank, candidate in enumerate(sorted(serializable_candidates, key=lambda item: float(item.get("prob") or 0.0), reverse=True), start=1) if candidate["uci"] == chosen_move),
+        None,
+    )
+    stockfish_metrics = {
+        "requested_multipv_topk": max(1, int(engine_config.stockfish_multipv_topk)),
+        "returned_candidate_count": len(candidates),
+        "cp_gap_window": engine_config.cp_gap_window,
+        "max_depth": max((candidate["depth"] for candidate in candidates if candidate.get("depth") is not None), default=None),
+        "max_seldepth": max((candidate["seldepth"] for candidate in candidates if candidate.get("seldepth") is not None), default=None),
+        "total_nodes": sum(candidate["nodes"] for candidate in candidates if candidate.get("nodes") is not None) or None,
+        "max_nps": max((candidate["nps"] for candidate in candidates if candidate.get("nps") is not None), default=None),
+        "max_time_ms": max((candidate["time_ms"] for candidate in candidates if candidate.get("time_ms") is not None), default=actual_think_ms),
+        "best_cp": int(best_cp),
+        "best_move_uci": str(best_candidate["uci"]),
+        "best_move_mate": best_candidate.get("mate"),
+        "selected_move_rank_by_cp": rank_by_cp,
+        "selected_move_rank_by_prob_within_window": rank_by_prob,
+    }
+    return BotMoveResult(
+        move_uci=chosen_move,
+        eval_cp=int(best_cp),
+        pv_uci=best_pv,
+        candidate_moves=all_candidate_moves,
+        stockfish_metrics=stockfish_metrics,
+        selected_probability=chosen_prob,
+        requested_think_ms=requested_think_ms,
+        actual_think_ms=actual_think_ms,
+        engine_limit=engine_limit_dict,
+    )
