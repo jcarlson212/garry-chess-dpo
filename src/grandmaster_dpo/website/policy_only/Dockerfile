@@ -46,10 +46,12 @@ RUN set -eux; \
         cp "$paper_policy" "/out/models/style_policy/${gm}/policy_dpo_best.pt"; \
       fi; \
       timer_head="/artifacts/timer_src/${gm}/timer_head_best.pt"; \
+      fallback_timer_head="/artifacts/timer_src/carlsen/timer_head_best.pt"; \
       if [ -f "$timer_head" ]; then \
         cp "$timer_head" "/out/models/timer_models/${gm}/timer_head_best.pt"; \
       else \
-        echo "No timer head for ${gm}; runtime will fall back to non-timer limits."; \
+        echo "No timer head for ${gm}; using carlsen timer head fallback."; \
+        cp "$fallback_timer_head" "/out/models/timer_models/${gm}/timer_head_best.pt"; \
       fi; \
     done
 

@@ -153,13 +153,13 @@ The fallback path is the current paper-experiment layout used by Carlsen, Firouz
 final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic/<gm_name>/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight=0.60_style_tau=0.25_embedding_model=final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42.pt
 ```
 
-The timer head is optional. When present, it still uses:
+The timer head uses:
 
 ```text
 processed/single_gm/time_per_move/train_val/<gm_name>/timer_head_best.pt
 ```
 
-Kasparov currently has a policy checkpoint but no timer head in this layout. The build allows that, and the runtime logs a warning then falls back to non-timer engine limits when `use_timer_head` is requested for a GM without a timer checkpoint.
+Kasparov currently has a policy checkpoint but no timer head in this layout. The build allows that and copies Carlsen's timer head into the selected GM's runtime model folder as a fallback. Local/runtime model resolution does the same fallback if a GM-specific timer head is missing but Carlsen's exists.
 
 These are copied into:
 

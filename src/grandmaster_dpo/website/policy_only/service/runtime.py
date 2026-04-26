@@ -586,6 +586,10 @@ def _resolve_timer_path(model_root: Path, gm_name: str) -> Optional[Path]:
     for path in candidates:
         if path.exists():
             return path
+    fallback = model_root / "timer_models" / "carlsen" / "timer_head_best.pt"
+    if fallback.exists():
+        logger.warning("No timer head checkpoint found for %s; using carlsen timer head fallback", gm_name)
+        return fallback
     return None
 
 
