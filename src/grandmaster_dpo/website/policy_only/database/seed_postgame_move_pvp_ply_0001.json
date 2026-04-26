@@ -1,0 +1,34 @@
+{
+  "PK": { "S": "GAME#game_pvp_001" },
+  "SK": { "S": "POSTGAME#MOVE#DEPTH#18#PLY#0001" },
+  "entity_type": { "S": "GAME_POSTGAME_MOVE" },
+  "game_id": { "S": "game_pvp_001" },
+  "ply": { "N": "1" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "fen_before": { "S": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+  "played_move_uci": { "S": "d2d4" },
+  "played_move_san": { "S": "d4" },
+  "actor_id": { "S": "user_white_001" },
+  "actor_type": { "S": "user" },
+  "move_analysis": {
+    "M": {
+      "engine_name": { "S": "stockfish" },
+      "engine_depth": { "N": "18" },
+      "eval_before_cp": { "N": "18" },
+      "eval_after_cp": { "N": "21" },
+      "best_move_uci": { "S": "d2d4" },
+      "played_move_rank": { "N": "1" },
+      "cp_loss": { "N": "0" },
+      "classification": { "S": "best" },
+      "is_best": { "BOOL": true },
+      "is_blunder": { "BOOL": false },
+      "is_mistake": { "BOOL": false },
+      "is_inaccuracy": { "BOOL": false },
+      "accuracy_score": { "N": "1.0" }
+    }
+  },
+  "requested_at_iso": { "S": "2026-04-22T08:20:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T08:31:00.000Z" },
+  "version": { "N": "1" }
+}

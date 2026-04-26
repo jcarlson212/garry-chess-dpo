@@ -1,0 +1,74 @@
+{
+  "PK": { "S": "GAME#game_bot_001" },
+  "SK": { "S": "INFERENCE#PLY#0002" },
+  "entity_type": { "S": "GAME_INFERENCE_POSITION" },
+  "game_id": { "S": "game_bot_001" },
+  "ply": { "N": "2" },
+  "fen_before": { "S": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
+  "side_to_move": { "S": "black" },
+  "actor_id": { "S": "carlsen" },
+  "actor_type": { "S": "bot" },
+  "selected_move_uci": { "S": "e7e5" },
+  "selected_move_san": { "S": "e5" },
+  "selected_move_probability": { "N": "0.7722" },
+  "inference_config": {
+    "M": {
+      "policy_model_name": { "S": "carlsen_style_v3" },
+      "use_gibbs": { "BOOL": false },
+      "lam": { "N": "1.0" },
+      "temperature": { "N": "1.0" },
+      "sample": { "BOOL": true },
+      "cp_gap_window": { "N": "60" },
+      "stockfish_multipv_topk": { "N": "10" },
+      "timer_head_enabled": { "BOOL": true },
+      "requested_depth": { "N": "8" },
+      "requested_time_ms": { "N": "742" }
+    }
+  },
+  "board_state_analysis": {
+    "M": {
+      "engine_name": { "S": "stockfish" },
+      "engine_depth": { "N": "8" },
+      "engine_time_ms": { "N": "742" },
+      "position_eval_cp": { "N": "-41" },
+      "best_move_uci": { "S": "e7e5" },
+      "pv_uci": {
+        "L": [{ "S": "e7e5" }, { "S": "b1c3" }, { "S": "g8f6" }]
+      },
+      "candidate_count": { "N": "3" }
+    }
+  },
+  "candidate_moves": {
+    "L": [
+      {
+        "M": {
+          "uci": { "S": "e7e5" },
+          "probability": { "N": "0.7722" },
+          "in_cp_gap_window": { "BOOL": true },
+          "cp": { "N": "-41" },
+          "multipv_rank": { "N": "1" }
+        }
+      },
+      {
+        "M": {
+          "uci": { "S": "c7c5" },
+          "probability": { "N": "0.1820" },
+          "in_cp_gap_window": { "BOOL": true },
+          "cp": { "N": "-42" },
+          "multipv_rank": { "N": "2" }
+        }
+      },
+      {
+        "M": {
+          "uci": { "S": "e7e6" },
+          "probability": { "N": "0.0021" },
+          "in_cp_gap_window": { "BOOL": true },
+          "cp": { "N": "-44" },
+          "multipv_rank": { "N": "3" }
+        }
+      }
+    ]
+  },
+  "created_at_iso": { "S": "2026-04-22T07:00:03.200Z" },
+  "version": { "N": "1" }
+}

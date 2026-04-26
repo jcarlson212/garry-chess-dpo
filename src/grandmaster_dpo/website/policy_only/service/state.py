@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from grandmaster_dpo.website.policy_only.schemas import ClockState
 
@@ -19,24 +19,44 @@ except Exception:  # pragma: no cover - optional until dependency is installed
 class StoredGameState:
     game_id: str
     fen: str
+    start_fen: str
     ply: int
     player_color: str
+    authenticated_user_id: str | None
     clock: ClockState
+    initial_clock: ClockState
     bot_id: str
     game_type_id: str
+    moves_compact: list[dict[str, Any]] = field(default_factory=list)
+    inference_positions: list[dict[str, Any]] = field(default_factory=list)
     last_ply_times_ms: list[int] = field(default_factory=list)
+    terminal_status: dict[str, Any] | None = None
+    finished_event_published_at_ms: int | None = None
+    finished_event_message_id: str | None = None
+    finished_event_payload: dict[str, Any] | None = None
+    created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     updated_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
     def to_dict(self) -> dict[str, object]:
         return {
             "game_id": self.game_id,
             "fen": self.fen,
+            "start_fen": self.start_fen,
             "ply": self.ply,
             "player_color": self.player_color,
+            "authenticated_user_id": self.authenticated_user_id,
             "clock": self.clock.model_dump(),
+            "initial_clock": self.initial_clock.model_dump(),
             "bot_id": self.bot_id,
             "game_type_id": self.game_type_id,
+            "moves_compact": self.moves_compact,
+            "inference_positions": self.inference_positions,
             "last_ply_times_ms": self.last_ply_times_ms,
+            "terminal_status": self.terminal_status,
+            "finished_event_published_at_ms": self.finished_event_published_at_ms,
+            "finished_event_message_id": self.finished_event_message_id,
+            "finished_event_payload": self.finished_event_payload,
+            "created_at_ms": self.created_at_ms,
             "updated_at_ms": self.updated_at_ms,
         }
 
@@ -45,12 +65,42 @@ class StoredGameState:
         return cls(
             game_id=str(data["game_id"]),
             fen=str(data["fen"]),
+            start_fen=str(data.get("start_fen") or data["fen"]),
             ply=int(data["ply"]),
             player_color=str(data["player_color"]),
+            authenticated_user_id=(
+                str(data["authenticated_user_id"])
+                if data.get("authenticated_user_id") is not None
+                else None
+            ),
             clock=ClockState.model_validate(data.get("clock") or {}),
+            initial_clock=ClockState.model_validate(data.get("initial_clock") or data.get("clock") or {}),
             bot_id=str(data.get("bot_id") or ""),
             game_type_id=str(data.get("game_type_id") or ""),
+            moves_compact=[
+                item for item in (data.get("moves_compact") or []) if isinstance(item, dict)
+            ],
+            inference_positions=[
+                item for item in (data.get("inference_positions") or []) if isinstance(item, dict)
+            ],
             last_ply_times_ms=[int(x) for x in (data.get("last_ply_times_ms") or [])],
+            terminal_status=data.get("terminal_status") if isinstance(data.get("terminal_status"), dict) else None,
+            finished_event_published_at_ms=(
+                int(data["finished_event_published_at_ms"])
+                if data.get("finished_event_published_at_ms") is not None
+                else None
+            ),
+            finished_event_message_id=(
+                str(data["finished_event_message_id"])
+                if data.get("finished_event_message_id") is not None
+                else None
+            ),
+            finished_event_payload=(
+                data.get("finished_event_payload")
+                if isinstance(data.get("finished_event_payload"), dict)
+                else None
+            ),
+            created_at_ms=int(data.get("created_at_ms") or int(time.time() * 1000)),
             updated_at_ms=int(data.get("updated_at_ms") or int(time.time() * 1000)),
         )
 

@@ -1,0 +1,34 @@
+{
+  "PK": { "S": "GAME#game_bot_001" },
+  "SK": { "S": "POSTGAME#MOVE#DEPTH#18#PLY#0002" },
+  "entity_type": { "S": "GAME_POSTGAME_MOVE" },
+  "game_id": { "S": "game_bot_001" },
+  "ply": { "N": "2" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "fen_before": { "S": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
+  "played_move_uci": { "S": "e7e5" },
+  "played_move_san": { "S": "e5" },
+  "actor_id": { "S": "carlsen" },
+  "actor_type": { "S": "bot" },
+  "move_analysis": {
+    "M": {
+      "engine_name": { "S": "stockfish" },
+      "engine_depth": { "N": "18" },
+      "eval_before_cp": { "N": "-33" },
+      "eval_after_cp": { "N": "-29" },
+      "best_move_uci": { "S": "c7c5" },
+      "played_move_rank": { "N": "2" },
+      "cp_loss": { "N": "3" },
+      "classification": { "S": "best" },
+      "is_best": { "BOOL": false },
+      "is_blunder": { "BOOL": false },
+      "is_mistake": { "BOOL": false },
+      "is_inaccuracy": { "BOOL": false },
+      "accuracy_score": { "N": "0.93" }
+    }
+  },
+  "requested_at_iso": { "S": "2026-04-22T07:10:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T07:12:30.000Z" },
+  "version": { "N": "1" }
+}

@@ -1,0 +1,25 @@
+{
+  "PK": { "S": "GAME#game_pvp_001" },
+  "SK": { "S": "POSTGAME#SUMMARY#DEPTH#18#PURPOSE#postgame_accuracy" },
+  "entity_type": { "S": "GAME_POSTGAME_SUMMARY" },
+  "game_id": { "S": "game_pvp_001" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "analysis_state": { "S": "ready" },
+  "summary": {
+    "M": {
+      "sample_count": { "N": "4" },
+      "accuracy_percent": { "N": "84.7" },
+      "white_accuracy_percent": { "N": "86.1" },
+      "black_accuracy_percent": { "N": "83.2" },
+      "best_count": { "N": "3" },
+      "inaccuracy_count": { "N": "1" },
+      "mistake_count": { "N": "0" },
+      "blunder_count": { "N": "0" }
+    }
+  },
+  "outputs_s3_key": { "S": "games/game_pvp_001/postgame/depth18/full.json" },
+  "requested_at_iso": { "S": "2026-04-22T08:20:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T08:31:00.000Z" },
+  "version": { "N": "1" }
+}

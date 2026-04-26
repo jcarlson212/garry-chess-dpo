@@ -1,0 +1,141 @@
+{
+  "PK": { "S": "GAME#game_bot_001" },
+  "SK": { "S": "GAME" },
+  "entity_type": { "S": "GAME" },
+  "game_id": { "S": "game_bot_001" },
+  "white_actor_id": { "S": "user_54489478" },
+  "white_actor_type": { "S": "user" },
+  "black_actor_id": { "S": "carlsen" },
+  "black_actor_type": { "S": "bot" },
+  "white_label": { "S": "Jason Carlson" },
+  "black_label": { "S": "Magnus Carlsen" },
+  "white_family": { "S": "human" },
+  "black_family": { "S": "grandmaster" },
+  "black_elo_estimate": { "N": "2850" },
+  "white_actor_username": { "S": "jcarlson212" },
+  "white_user_id": { "S": "user_54489478" },
+  "creation_time_since_epoch_ms": { "N": "1776841200123" },
+  "ended_time_since_epoch_ms": { "N": "1776841682456" },
+  "created_at_iso": { "S": "2026-04-22T07:00:00.123Z" },
+  "updated_at_iso": { "S": "2026-04-22T07:08:02.456Z" },
+  "mode_kind": { "S": "bot" },
+  "mode_variant": { "S": "carlsen_style" },
+  "time_control_id": { "S": "blitz_5_0" },
+  "initial_time_ms": { "N": "300000" },
+  "increment_ms": { "N": "0" },
+  "result": { "S": "black_win" },
+  "white_result": { "S": "loss" },
+  "black_result": { "S": "win" },
+  "winner_actor_id": { "S": "carlsen" },
+  "winner_actor_color": { "S": "black" },
+  "termination_reason": { "S": "checkmate" },
+  "start_fen": { "S": "startpos" },
+  "final_fen": { "S": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3" },
+  "move_count": { "N": "4" },
+  "moves_compact": {
+    "L": [
+      {
+        "M": {
+          "ply": { "N": "1" },
+          "color": { "S": "w" },
+          "actor_id": { "S": "user_54489478" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "e2" },
+          "to_sq": { "S": "e4" },
+          "san": { "S": "e4" },
+          "uci": { "S": "e2e4" },
+          "move_time_ms": { "N": "1200" },
+          "clock_after_white_ms": { "N": "298800" },
+          "clock_after_black_ms": { "N": "300000" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "2" },
+          "color": { "S": "b" },
+          "actor_id": { "S": "carlsen" },
+          "actor_type": { "S": "bot" },
+          "from_sq": { "S": "e7" },
+          "to_sq": { "S": "e5" },
+          "san": { "S": "e5" },
+          "uci": { "S": "e7e5" },
+          "move_time_ms": { "N": "742" },
+          "clock_after_white_ms": { "N": "298800" },
+          "clock_after_black_ms": { "N": "299258" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "3" },
+          "color": { "S": "w" },
+          "actor_id": { "S": "user_54489478" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "g1" },
+          "to_sq": { "S": "f3" },
+          "san": { "S": "Nf3" },
+          "uci": { "S": "g1f3" },
+          "move_time_ms": { "N": "980" },
+          "clock_after_white_ms": { "N": "297820" },
+          "clock_after_black_ms": { "N": "299258" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "4" },
+          "color": { "S": "b" },
+          "actor_id": { "S": "carlsen" },
+          "actor_type": { "S": "bot" },
+          "from_sq": { "S": "b8" },
+          "to_sq": { "S": "c6" },
+          "san": { "S": "Nc6" },
+          "uci": { "S": "b8c6" },
+          "move_time_ms": { "N": "815" },
+          "clock_after_white_ms": { "N": "297820" },
+          "clock_after_black_ms": { "N": "298443" }
+        }
+      }
+    ]
+  },
+  "inference_status": {
+    "M": {
+      "has_inference_traces": { "BOOL": true },
+      "inference_trace_count": { "N": "2" },
+      "latest_inference_config": {
+        "M": {
+          "policy_model_name": { "S": "carlsen_style_v3" },
+          "use_gibbs": { "BOOL": false },
+          "lam": { "N": "1.0" },
+          "cp_gap_window": { "N": "60" },
+          "stockfish_multipv_topk": { "N": "10" },
+          "sample": { "BOOL": true },
+          "temperature": { "N": "1.0" },
+          "timer_head_enabled": { "BOOL": true }
+        }
+      }
+    }
+  },
+  "postgame_analysis_status": {
+    "M": {
+      "analysis_state": { "S": "ready" },
+      "latest_requested_depth": { "N": "18" },
+      "latest_completed_depth": { "N": "18" },
+      "finalized_depths": { "L": [{ "N": "18" }] },
+      "analysis_updated_at": { "S": "2026-04-22T07:12:30.000Z" }
+    }
+  },
+  "game_metadata": {
+    "M": {
+      "source": { "S": "ecs_completed_game_event" },
+      "lifecycle": { "S": "finished" },
+      "rated": { "BOOL": false }
+    }
+  },
+  "authoritative_status": { "S": "final" },
+  "is_ranked": { "BOOL": false },
+  "visibility": { "S": "private" },
+  "version": { "N": "1" },
+  "GSI1PK": { "S": "PLAYER#user_54489478" },
+  "GSI1SK": { "S": "TS#1776841200123#COLOR#white#GAME#game_bot_001" },
+  "GSI2PK": { "S": "PAIR#bot#carlsen#user#user_54489478" },
+  "GSI2SK": { "S": "TS#1776841200123#GAME#game_bot_001" }
+}

@@ -1,18 +1,37 @@
-# Policy-Only ECS/Fargate Service
+# Policy-Only And Postgame ECS/Fargate Runbook
 
-This folder now contains a small HTTP service designed for ECS/Fargate deployment.
+This folder now contains two related ECS/Fargate deployment targets:
 
-The service still follows the same core serving idea as before:
+- the live `policy_only` HTTP game service
+- the `game_finished_postprocessing` SQS-driven worker service
 
-- one image per GM persona,
+Together they support:
+
+- serving authoritative live game turns
+- publishing finished-game events to SNS
+- routing those events through SNS -> SQS
+- postprocessing completed games with depth-22 Stockfish analysis
+- writing completed game rows and analysis rows into DynamoDB
+
+The live game service still follows the same core serving idea as before:
+
+- one image can contain one or more GM personas,
 - one shared code path,
-- GM-specific policy and timer-head weights baked into the image at build time,
+- selected GM-specific policy and timer-head weights baked into the image at build time,
 - Stockfish-assisted move selection at request time,
 - authoritative game-state responses from the backend.
+
+The postgame worker follows a different model:
+
+- one shared worker image for all finished games
+- consumes from an SQS queue subscribed to the finished-game SNS topic
+- only deletes messages after DynamoDB write + postgame analysis succeed
+- throws on failures so ECS/SQS redrive behavior can retry and eventually DLQ
 
 The intended personas discussed so far are:
 
 - `carlsen`: positional
+- `kasparov`: aggressive/classical
 - `firouzja`: tactical
 - `praggnanandhaa`: balanced
 
@@ -42,6 +61,48 @@ policy_only/
 ```
 
 The idea is that each endpoint gets its own route file, while orchestration stays in the `service/` layer and schema shape stays explicit in `schemas/`.
+
+The finished-game worker lives alongside this package:
+
+```text
+website/
+  policy_only/
+    ...
+  game_finished_postprocessing/
+    main.py                      SQS long-poll worker entrypoint
+    processor.py                 SNS/SQS parsing + Dynamo + Stockfish processing
+    Dockerfile                   ECS worker image
+```
+
+## End-To-End Architecture
+
+The intended production flow is:
+
+```text
+frontend
+  -> ALB
+  -> ECS/Fargate policy_only service
+  -> Redis / Valkey for authoritative in-progress state
+  -> when game finishes: SNS topic publish
+  -> SNS subscription fanout
+  -> SQS queue: garry-chess-games-finished
+  -> ECS/Fargate postgame worker service
+  -> DynamoDB table: garry-chess-games
+```
+
+Recommended AWS resources:
+
+- ALB for the live `policy_only` API
+- ECS service for each live GM persona
+- SNS topic:
+  - `arn:aws:sns:us-east-1:437720536299:garry-chess-games-finished`
+- SQS queue subscribed to that topic:
+  - `garry-chess-games-finished`
+- SQS DLQ:
+  - `garry-chess-games-finished-dlq`
+- DynamoDB table:
+  - `garry-chess-games`
+- ElastiCache Valkey for authoritative in-progress state
 
 ## Current Endpoints
 
@@ -77,19 +138,28 @@ That prevents unbounded growth during local testing, but it still is not appropr
 
 ## Model Artifacts Expected By The Docker Build
 
-The Docker build expects these files to exist in the repo:
+The Docker build accepts a comma- or space-separated `GM_NAMES` build arg. It copies only those selected GM artifacts into the final runtime image. The older single-GM `GM_NAME` arg still works when `GM_NAMES` is omitted.
 
-Policy checkpoint:
+The build expects a policy checkpoint to exist in one of these locations for each selected GM. The famous-player path is preferred when present, which is currently how Kasparov is packaged:
+
+```text
+website_famous_player_experiments/experiment2_style_model/trained_models_single_gm_twic/<gm_name>/policy_best.pt
+```
+
+The fallback path is the current paper-experiment layout used by Carlsen, Firouzja, and Praggnanandhaa:
+
 
 ```text
 final_experiments_for_paper/experiment2_style_model/trained_models_single_gm_twic/<gm_name>/policy_best_sft_and_dpo_w_style_v3_beta=0.60_dpo_loss_weight=0.60_style_tau=0.25_embedding_model=final_v3_phi1_tau0_25_warm_from_v2final__pair-v3__phi-phi1__edim-256__bs-4096__lr-0.0003__tau-0.25__seed-42.pt
 ```
 
-Timer head:
+The timer head is optional. When present, it still uses:
 
 ```text
 processed/single_gm/time_per_move/train_val/<gm_name>/timer_head_best.pt
 ```
+
+Kasparov currently has a policy checkpoint but no timer head in this layout. The build allows that, and the runtime logs a warning then falls back to non-timer engine limits when `use_timer_head` is requested for a GM without a timer checkpoint.
 
 These are copied into:
 
@@ -100,16 +170,37 @@ These are copied into:
 
 ## Build Args
 
-- `GM_NAME`: which GM persona to bake into the image
+- `GM_NAMES`: comma- or space-separated GM personas to bake into the image, for example `kasparov,carlsen,firouzja,praggnanandhaa`
+- `GM_NAME`: single-GM compatibility arg used only when `GM_NAMES` is omitted
 - `STOCKFISH_REF`: which Stockfish git ref to build, default `sf_18`
 
 Because many local development machines are Apple Silicon while ECS/Fargate often runs `linux/amd64`, the build commands below explicitly produce `linux/amd64` images.
 
-## Local Build Commands
+## 1. Build And Deploy The Live Policy Game Tasks
+
+This section is for the HTTP ECS services that expose:
+
+- `GET /healthz`
+- `POST /games`
+- `GET/POST /games/{game_id}/clock*`
+
+### Local Build Commands
 
 Run from repo root.
 
-### Carlsen
+### Multi-GM Image
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
+  --build-arg GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa \
+  --build-arg STOCKFISH_REF=sf_18 \
+  -t garry-chess-policy-only:multi-gm \
+  --load .
+```
+
+### Single-GM Compatibility
 
 ```bash
 docker buildx build \
@@ -121,36 +212,12 @@ docker buildx build \
   --load .
 ```
 
-### Firouzja
-
-```bash
-docker buildx build \
-  --platform linux/amd64 \
-  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAME=firouzja \
-  --build-arg STOCKFISH_REF=sf_18 \
-  -t garry-chess-policy-only:firouzja \
-  --load .
-```
-
-### Praggnanandhaa
-
-```bash
-docker buildx build \
-  --platform linux/amd64 \
-  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAME=praggnanandhaa \
-  --build-arg STOCKFISH_REF=sf_18 \
-  -t garry-chess-policy-only:praggnanandhaa \
-  --load .
-```
-
 ## Local Run
 
-Run one image at a time:
+Run the image:
 
 ```bash
-docker run --rm -p 8080:8080 garry-chess-policy-only:carlsen
+docker run --rm -p 8080:8080 garry-chess-policy-only:multi-gm
 ```
 
 If you changed dependencies locally, refresh your env first:
@@ -175,8 +242,9 @@ curl -X POST http://localhost:8080/games \
     "client_ply": 0,
     "pre_move_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     "client_uci": "e2e4",
-    "bot_id": "carlsen",
-    "game_type_id": "gm_carlsen_blitz",
+    "gm_name": "kasparov",
+    "bot_id": "kasparov",
+    "game_type_id": "gm_kasparov_blitz",
     "player_color": "white",
     "clock": {
       "white_ms": 300000,
@@ -236,64 +304,41 @@ aws ecr get-login-password --region "$AWS_REGION" | \
 docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ```
 
-### Build, Tag, And Push Carlsen
+### Build, Tag, And Push Multi-GM Policy Image
 
 ```bash
 docker buildx build \
   --platform linux/amd64 \
   -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAME=carlsen \
+  --build-arg GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa \
   --build-arg STOCKFISH_REF=sf_18 \
-  -t "${ECR_REPO}:carlsen" \
+  -t "${ECR_REPO}:multi-gm" \
   --load .
 
-docker tag "${ECR_REPO}:carlsen" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:carlsen"
+docker tag "${ECR_REPO}:multi-gm" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:multi-gm"
 
-docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:carlsen"
+docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:multi-gm"
 ```
 
-### Build, Tag, And Push Firouzja
+### Requesting A GM
 
-```bash
-docker buildx build \
-  --platform linux/amd64 \
-  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAME=firouzja \
-  --build-arg STOCKFISH_REF=sf_18 \
-  -t "${ECR_REPO}:firouzja" \
-  --load .
+For a multi-GM container, pass `gm_name` in the game request. The older `game_type_id` inference remains as a fallback, so `game_type_id=gm_carlsen_blitz` still selects Carlsen if `gm_name` is omitted.
 
-docker tag "${ECR_REPO}:firouzja" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:firouzja"
+The finished-game SNS payload keeps the existing nested `request` shape for postprocessing; the API-only selector `gm_name` is omitted from `payload["request"]`. The selected GM is still present in `response.analysis.gm_name`.
 
-docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:firouzja"
-```
-
-### Build, Tag, And Push Praggnanandhaa
-
-```bash
-docker buildx build \
-  --platform linux/amd64 \
-  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAME=praggnanandhaa \
-  --build-arg STOCKFISH_REF=sf_18 \
-  -t "${ECR_REPO}:praggnanandhaa" \
-  --load .
-
-docker tag "${ECR_REPO}:praggnanandhaa" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:praggnanandhaa"
-
-docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:praggnanandhaa"
-```
-
-## Recommended Runtime Environment Variables
+### Recommended Runtime Environment Variables For Live Policy Tasks
 
 Set these in the ECS task definition:
 
-- `POLICY_ONLY_GM_NAME`
+- `POLICY_ONLY_GM_NAMES`
 - `STOCKFISH_THREADS`
 - `STOCKFISH_HASH_MB`
 - `STOCKFISH_TIMEOUT_S`
 - `GAME_STATE_TTL_SECONDS`
 - `GAME_STATE_KEY_PREFIX`
+- `POLICY_ONLY_GAMES_FINISHED_SNS_TOPIC_ARN`
+- `POLICY_ONLY_GAMES_FINISHED_SNS_PUBLISH_ATTEMPTS`
+- `POLICY_ONLY_GAMES_FINISHED_SNS_RETRY_BACKOFF_SECONDS`
 
 For Valkey-backed state also set:
 
@@ -304,27 +349,168 @@ The env var keeps the Redis-compatible name because the service uses a Redis pro
 Recommended starting values:
 
 ```text
-POLICY_ONLY_GM_NAME=carlsen
+POLICY_ONLY_GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa
 STOCKFISH_THREADS=16
 STOCKFISH_HASH_MB=128
 STOCKFISH_TIMEOUT_S=20.0
 GAME_STATE_TTL_SECONDS=86400
 GAME_STATE_KEY_PREFIX=policy_only
+POLICY_ONLY_GAMES_FINISHED_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:437720536299:garry-chess-games-finished
+POLICY_ONLY_GAMES_FINISHED_SNS_PUBLISH_ATTEMPTS=3
+POLICY_ONLY_GAMES_FINISHED_SNS_RETRY_BACKOFF_SECONDS=0.25
 ```
 
-## ECS/Fargate Console Setup
+### Build And Deploy Checklist For Multi-GM Policy Service
+
+Multi-GM example:
+
+```bash
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=437720536299
+export ECR_REPO=garry-chess-policy-only
+export GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa
+export IMAGE_TAG=multi-gm
+
+docker buildx build \
+  --platform linux/amd64 \
+  -f src/grandmaster_dpo/website/policy_only/Dockerfile \
+  --build-arg GM_NAMES="${GM_NAMES}" \
+  --build-arg STOCKFISH_REF=sf_18 \
+  -t "${ECR_REPO}:${IMAGE_TAG}" \
+  --load .
+
+docker tag "${ECR_REPO}:${IMAGE_TAG}" \
+  "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+
+docker push \
+  "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+```
+
+Then in ECS:
+
+1. register / update the task definition revision
+2. point the container image at the pushed ECR tag
+3. force a new ECS deployment for the service
+4. wait for target group health to become healthy
+5. verify:
+
+```bash
+curl -i https://YOUR_POLICY_API_HOST/healthz
+```
+
+## 2. Build And Deploy The Postgame Processing Tasks
+
+This section is for the SQS-driven ECS worker that:
+
+- consumes finished-game events from SQS
+- writes completed game rows to DynamoDB
+- runs depth-22 Stockfish postgame analysis
+- writes `POSTGAME#...` analysis records
+
+### Worker Image Build
+
+Set these first:
+
+```bash
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=437720536299
+export ECR_REPO_POSTGAME=garry-chess-game-finished-postprocessing
+```
+
+Create the worker ECR repository if needed:
+
+```bash
+aws ecr describe-repositories --repository-names "$ECR_REPO_POSTGAME" --region "$AWS_REGION" >/dev/null 2>&1 || \
+aws ecr create-repository --repository-name "$ECR_REPO_POSTGAME" --region "$AWS_REGION"
+```
+
+Build, tag, and push:
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -f src/grandmaster_dpo/website/game_finished_postprocessing/Dockerfile \
+  --build-arg STOCKFISH_REF=sf_18 \
+  -t "${ECR_REPO_POSTGAME}:latest" \
+  --load .
+
+docker tag "${ECR_REPO_POSTGAME}:latest" \
+  "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_POSTGAME}:latest"
+
+docker push \
+  "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_POSTGAME}:latest"
+```
+
+### Worker Runtime Environment Variables
+
+Set these in the ECS worker task definition:
+
+- `GAME_FINISHED_SQS_QUEUE_URL`
+- `POLICY_ONLY_GAMES_TABLE_NAME`
+- `POSTGAME_ANALYSIS_DEPTH`
+- `POSTGAME_STOCKFISH_MULTIPV`
+- `POSTGAME_STOCKFISH_THREADS`
+- `POSTGAME_STOCKFISH_HASH_MB`
+- `POSTGAME_STOCKFISH_TIMEOUT_S`
+- `GAME_FINISHED_POSTPROCESSING_LOG_LEVEL`
+- `SQS_WAIT_TIME_SECONDS`
+- `SQS_VISIBILITY_TIMEOUT_SECONDS`
+- `SQS_MAX_NUMBER_OF_MESSAGES`
+- `EXIT_ON_IDLE` if you want one-shot ad hoc runs instead of a long-lived service
+
+Recommended starting values:
+
+```text
+GAME_FINISHED_SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/437720536299/garry-chess-games-finished
+POLICY_ONLY_GAMES_TABLE_NAME=garry-chess-games
+POSTGAME_ANALYSIS_DEPTH=22
+POSTGAME_STOCKFISH_MULTIPV=5
+POSTGAME_STOCKFISH_THREADS=4
+POSTGAME_STOCKFISH_HASH_MB=512
+POSTGAME_STOCKFISH_TIMEOUT_S=60.0
+GAME_FINISHED_POSTPROCESSING_LOG_LEVEL=INFO
+SQS_WAIT_TIME_SECONDS=20
+SQS_VISIBILITY_TIMEOUT_SECONDS=900
+SQS_MAX_NUMBER_OF_MESSAGES=1
+EXIT_ON_IDLE=false
+```
+
+### Worker IAM Permissions
+
+The worker task role should be allowed to:
+
+- `sqs:ReceiveMessage`
+- `sqs:DeleteMessage`
+- `sqs:GetQueueAttributes`
+- `sqs:ChangeMessageVisibility` (recommended)
+- `dynamodb:GetItem`
+- `dynamodb:PutItem`
+- `dynamodb:UpdateItem`
+- `dynamodb:Query`
+- `dynamodb:BatchGetItem`
+- `logs:CreateLogStream`
+- `logs:PutLogEvents`
+
+The live policy service task role should be allowed to:
+
+- `sns:Publish` on
+  - `arn:aws:sns:us-east-1:437720536299:garry-chess-games-finished`
+
+## 3. ECS Config For The Live Policy Game Tasks
+
+This is the manual console path for the live HTTP game services.
 
 This is the simplest manual setup path in the AWS console.
 
-### 1. Create Or Reuse The ECR Repository
+### 3.1 Create Or Reuse The ECR Repository
 
 In the AWS console:
 
 1. Open Amazon ECR.
 2. Create a private repository named something like `garry-chess-policy-only`.
-3. Push one of the persona images to it.
+3. Push the multi-GM policy image to it.
 
-### 2. Create An ECS Cluster
+### 3.2 Create An ECS Cluster
 
 1. Open Amazon ECS.
 2. Choose `Clusters`.
@@ -332,7 +518,7 @@ In the AWS console:
 4. Use an ECS cluster that supports Fargate tasks.
 5. Give it a name like `garry-chess-policy-only-cluster`.
 
-### 3. Create Valkey / ElastiCache First
+### 3.3 Create Valkey / ElastiCache First
 
 Do this before the ECS service if you want durable shared game state.
 
@@ -363,7 +549,7 @@ Example URL shape:
 redis://YOUR_REDIS_ENDPOINT:6379/0
 ```
 
-### 4. Create A Task Definition
+### 3.4 Create A Task Definition
 
 1. In ECS, choose `Task definitions`.
 2. Choose `Create new task definition`.
@@ -377,16 +563,20 @@ redis://YOUR_REDIS_ENDPOINT:6379/0
    - container port: `8080`
    - essential: yes
 6. Add environment variables:
-   - `POLICY_ONLY_GM_NAME`
+   - `POLICY_ONLY_GM_NAMES`
    - `STOCKFISH_THREADS`
    - `STOCKFISH_HASH_MB`
    - `STOCKFISH_TIMEOUT_S`
    - `GAME_STATE_TTL_SECONDS`
    - `GAME_STATE_KEY_PREFIX`
+   - `POLICY_ONLY_GAMES_FINISHED_SNS_TOPIC_ARN`
+   - `POLICY_ONLY_GAMES_FINISHED_SNS_PUBLISH_ATTEMPTS`
+   - `POLICY_ONLY_GAMES_FINISHED_SNS_RETRY_BACKOFF_SECONDS`
 7. Add `POLICY_ONLY_REDIS_URL`:
    - either as a plain env var
    - or preferably through ECS container secrets from Secrets Manager / SSM Parameter Store
-8. Configure logs to CloudWatch Logs.
+8. Give the task role permission to publish to the SNS topic.
+9. Configure logs to CloudWatch Logs.
 
 Suggested first-pass sizing:
 
@@ -402,7 +592,7 @@ If using Secrets Manager, create a secret first:
 3. In the ECS task definition container, add it under `Secrets`.
 4. Map it to the env var name `POLICY_ONLY_REDIS_URL`.
 
-### 5. Create An Application Load Balancer
+### 3.5 Create An Application Load Balancer
 
 Use an ALB if you want a normal HTTP endpoint.
 
@@ -419,7 +609,7 @@ Use an ALB if you want a normal HTTP endpoint.
 
 For Fargate with `awsvpc`, use `ip` target type, not `instance`.
 
-### 6. Create The ECS Service
+### 3.6 Create The ECS Service
 
 1. Open your ECS cluster.
 2. Choose `Create service`.
@@ -435,7 +625,7 @@ For Fargate with `awsvpc`, use `ip` target type, not `instance`.
    - container port: `8080`
    - target group: the one with `/healthz`
 
-### 7. Add Security Groups
+### 3.7 Add Security Groups
 
 Typical setup:
 
@@ -445,10 +635,25 @@ Typical setup:
 - ECS task security group:
   - inbound `8080` from the ALB security group
   - outbound allowed to the cache on `6379`
+  - outbound allowed to SNS / AWS public endpoints or NAT route if tasks are in private subnets
 - Cache security group:
   - inbound `6379` from the ECS task security group
 
-### 8. Test The Service
+### 3.8 DNS / TLS Setup
+
+For a clean API setup:
+
+1. request an ACM certificate for the hostname such as `policy.api.garrychess.ai`
+2. attach it to the ALB HTTPS listener
+3. create a Route 53 alias A record:
+   - `policy.api` -> your ALB
+4. test:
+
+```bash
+curl -i https://policy.api.garrychess.ai/healthz
+```
+
+### 3.9 Test The Service
 
 Once tasks are healthy behind the ALB:
 
@@ -466,13 +671,14 @@ curl -X POST http://YOUR_ALB_DNS_NAME/games \
     "client_ply": 0,
     "pre_move_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     "client_uci": "e2e4",
-    "bot_id": "carlsen",
-    "game_type_id": "gm_carlsen_blitz",
+    "gm_name": "kasparov",
+    "bot_id": "kasparov",
+    "game_type_id": "gm_kasparov_blitz",
     "player_color": "white"
   }'
 ```
 
-## Important Scaling Note
+### 3.10 Important Scaling Note
 
 If you run more than one ECS task for a persona and still use the current in-memory store, clock/game synchronization will break because each task has its own local memory.
 
@@ -480,11 +686,11 @@ For true multi-task scaling, use a shared backend such as ElastiCache Valkey and
 
 With the current code, that Redis-protocol path is now implemented. In ECS, the main thing is wiring `POLICY_ONLY_REDIS_URL` correctly and making sure the cache security group allows inbound `6379` from the ECS task security group.
 
-## Suggested Console Wiring Summary
+### 3.11 Suggested Console Wiring Summary
 
 If you want the shortest checklist:
 
-1. Create the ECR repo and push the GM image.
+1. Create the ECR repo and push the multi-GM image.
 2. Create the Valkey cache in ElastiCache.
 3. Copy the cache endpoint.
 4. Put the cache URL into Secrets Manager as `POLICY_ONLY_REDIS_URL`.
@@ -493,13 +699,168 @@ If you want the shortest checklist:
    - image = your ECR image
    - port = `8080`
    - secret/env = `POLICY_ONLY_REDIS_URL`
-   - env = `POLICY_ONLY_GM_NAME`, `GAME_STATE_TTL_SECONDS`, Stockfish envs
+   - env = `POLICY_ONLY_GM_NAMES`, `GAME_STATE_TTL_SECONDS`, Stockfish envs
 7. Create the ALB and target group with `/healthz`.
 8. Create the ECS service attached to that target group.
 9. Make security groups allow:
    - internet -> ALB `80/443`
    - ALB -> ECS task `8080`
    - ECS task -> cache `6379`
+
+## 4. ECS Config / Service For The Postgame Processing Tasks
+
+This is the manual console path for the SQS-driven worker service.
+
+### 4.1 SNS -> SQS Setup
+
+Create or verify:
+
+1. SNS topic:
+   - `arn:aws:sns:us-east-1:437720536299:garry-chess-games-finished`
+2. SQS main queue:
+   - `garry-chess-games-finished`
+3. SQS DLQ:
+   - `garry-chess-games-finished-dlq`
+
+On the main SQS queue:
+
+- configure the DLQ redrive policy
+- recommended starting `maxReceiveCount`: `10`
+
+On the SNS topic subscription:
+
+- subscribe the main SQS queue to the topic
+- use the queue policy that allows SNS to send messages to that queue
+
+Delivery semantics:
+
+- the live game service publishes finished-game events to SNS
+- SNS fans out to the SQS queue
+- the worker deletes the SQS message only after successful processing
+- on failure, it does not delete the message
+- SQS retries and eventually redrives to the DLQ
+
+### 4.2 Create The Worker Task Definition
+
+1. In ECS, create a new Fargate-compatible task definition
+2. Use the worker image from:
+   - `src/grandmaster_dpo/website/game_finished_postprocessing/Dockerfile`
+3. Add the worker env vars from the section above
+4. Configure CloudWatch logging
+5. Give the task role:
+   - SQS consume permissions
+   - DynamoDB table read/write permissions
+
+Suggested first-pass sizing:
+
+- CPU: `2048`
+- memory: `4096`
+
+Increase this if depth-22 analysis latency is too high.
+
+### 4.3 Create The Worker ECS Service
+
+You do not need an ALB for this service.
+
+1. Create a new ECS service from the worker task definition
+2. Desired count can start at `0` or `1`
+3. Put it in private subnets if you prefer
+4. Security group:
+   - no inbound needed
+   - outbound required to:
+     - SQS
+     - DynamoDB
+     - CloudWatch Logs
+
+### 4.4 Autoscaling For The Worker Service
+
+This worker is a good fit for ECS service autoscaling on SQS backlog.
+
+Recommended pattern:
+
+- min capacity: `0`
+- max capacity: some small starting ceiling like `5` or `10`
+- scale metric based on SQS visible messages / backlog per task
+
+The important semantic is:
+
+- if queue is empty, it is fine for the service to scale to zero
+- if queue grows, ECS should scale workers up
+
+### 4.5 Visibility Timeout And Retries
+
+Set SQS queue visibility timeout long enough for worst-case depth-22 analysis.
+
+Recommended starting point:
+
+- queue visibility timeout: `15 minutes`
+- worker env:
+  - `SQS_VISIBILITY_TIMEOUT_SECONDS=900`
+
+If analysis can take longer than that, increase both.
+
+If visibility timeout is too short:
+
+- the same message may be delivered again while a worker is still analyzing it
+- duplicates are still safe in principle because the DynamoDB writes are idempotent-ish
+- but it is noisy and wastes compute
+
+### 4.6 Failure Behavior
+
+The worker intentionally raises on postprocessing failures.
+
+That means:
+
+- success:
+  - write completed game to DynamoDB
+  - write postgame analysis rows
+  - delete SQS message
+- failure:
+  - log the exception
+  - do not delete the SQS message
+  - let SQS retry
+  - eventually redrive to `garry-chess-games-finished-dlq`
+
+This is the intended failure mode because it makes alarms and debugging much easier.
+
+### 4.7 Worker Verification
+
+Useful checks after deployment:
+
+1. CloudWatch logs for the worker container
+2. SQS queue depth:
+   - visible messages
+   - in-flight messages
+3. DLQ count:
+   - should normally stay at zero
+4. DynamoDB rows:
+   - parent `GAME`
+   - `INFERENCE#...`
+   - `POSTGAME#BOARD_STATE#DEPTH#22#...`
+   - `POSTGAME#MOVE#DEPTH#22#...`
+   - `POSTGAME#SUMMARY#DEPTH#22#...`
+
+## Notes On The Finished-Game Event Payload
+
+The postgame worker expects the finished-game SNS/SQS payload to carry a full game snapshot, not just a final result.
+
+That event now includes enough for downstream analysis:
+
+- `start_fen`
+- `final_fen`
+- `moves_compact`
+- `inference_positions`
+- actor metadata
+- final game status
+- clocks and timing context
+
+That lets the worker:
+
+- write the `GAME` item first
+- write inference child items
+- then do full postgame engine analysis
+
+without having to reconstruct the whole game externally.
 
 ## Why This Structure Helps Later
 

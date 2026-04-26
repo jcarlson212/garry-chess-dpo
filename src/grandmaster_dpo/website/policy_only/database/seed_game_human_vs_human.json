@@ -1,0 +1,130 @@
+{
+  "PK": { "S": "GAME#game_pvp_001" },
+  "SK": { "S": "GAME" },
+  "entity_type": { "S": "GAME" },
+  "game_id": { "S": "game_pvp_001" },
+  "white_actor_id": { "S": "user_white_001" },
+  "white_actor_type": { "S": "user" },
+  "black_actor_id": { "S": "user_black_001" },
+  "black_actor_type": { "S": "user" },
+  "white_label": { "S": "Alice Nguyen" },
+  "black_label": { "S": "Bob Patel" },
+  "white_family": { "S": "human" },
+  "black_family": { "S": "human" },
+  "white_actor_username": { "S": "alice_n" },
+  "black_actor_username": { "S": "bobp" },
+  "white_user_id": { "S": "user_white_001" },
+  "black_user_id": { "S": "user_black_001" },
+  "creation_time_since_epoch_ms": { "N": "1776844800123" },
+  "ended_time_since_epoch_ms": { "N": "1776845700789" },
+  "created_at_iso": { "S": "2026-04-22T08:00:00.123Z" },
+  "updated_at_iso": { "S": "2026-04-22T08:15:00.789Z" },
+  "mode_kind": { "S": "pvp" },
+  "mode_variant": { "S": "blitz" },
+  "time_control_id": { "S": "blitz_5_3" },
+  "initial_time_ms": { "N": "300000" },
+  "increment_ms": { "N": "3000" },
+  "result": { "S": "white_win" },
+  "white_result": { "S": "win" },
+  "black_result": { "S": "loss" },
+  "winner_actor_id": { "S": "user_white_001" },
+  "winner_actor_color": { "S": "white" },
+  "termination_reason": { "S": "timeout" },
+  "start_fen": { "S": "startpos" },
+  "final_fen": { "S": "rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3" },
+  "move_count": { "N": "4" },
+  "moves_compact": {
+    "L": [
+      {
+        "M": {
+          "ply": { "N": "1" },
+          "color": { "S": "w" },
+          "actor_id": { "S": "user_white_001" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "d2" },
+          "to_sq": { "S": "d4" },
+          "san": { "S": "d4" },
+          "uci": { "S": "d2d4" },
+          "move_time_ms": { "N": "830" },
+          "clock_after_white_ms": { "N": "302170" },
+          "clock_after_black_ms": { "N": "300000" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "2" },
+          "color": { "S": "b" },
+          "actor_id": { "S": "user_black_001" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "d7" },
+          "to_sq": { "S": "d5" },
+          "san": { "S": "d5" },
+          "uci": { "S": "d7d5" },
+          "move_time_ms": { "N": "910" },
+          "clock_after_white_ms": { "N": "302170" },
+          "clock_after_black_ms": { "N": "302090" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "3" },
+          "color": { "S": "w" },
+          "actor_id": { "S": "user_white_001" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "c2" },
+          "to_sq": { "S": "c4" },
+          "san": { "S": "c4" },
+          "uci": { "S": "c2c4" },
+          "move_time_ms": { "N": "1450" },
+          "clock_after_white_ms": { "N": "303720" },
+          "clock_after_black_ms": { "N": "302090" }
+        }
+      },
+      {
+        "M": {
+          "ply": { "N": "4" },
+          "color": { "S": "b" },
+          "actor_id": { "S": "user_black_001" },
+          "actor_type": { "S": "user" },
+          "from_sq": { "S": "e7" },
+          "to_sq": { "S": "e6" },
+          "san": { "S": "e6" },
+          "uci": { "S": "e7e6" },
+          "move_time_ms": { "N": "1040" },
+          "clock_after_white_ms": { "N": "303720" },
+          "clock_after_black_ms": { "N": "304050" }
+        }
+      }
+    ]
+  },
+  "inference_status": {
+    "M": {
+      "has_inference_traces": { "BOOL": false },
+      "inference_trace_count": { "N": "0" }
+    }
+  },
+  "postgame_analysis_status": {
+    "M": {
+      "analysis_state": { "S": "ready" },
+      "latest_requested_depth": { "N": "18" },
+      "latest_completed_depth": { "N": "18" },
+      "finalized_depths": { "L": [{ "N": "18" }] },
+      "analysis_updated_at": { "S": "2026-04-22T08:31:00.000Z" }
+    }
+  },
+  "game_metadata": {
+    "M": {
+      "source": { "S": "pvp_match" },
+      "lifecycle": { "S": "finished" },
+      "rated": { "BOOL": true }
+    }
+  },
+  "authoritative_status": { "S": "final" },
+  "is_ranked": { "BOOL": true },
+  "visibility": { "S": "private" },
+  "version": { "N": "1" },
+  "GSI1PK": { "S": "PLAYER#user_white_001" },
+  "GSI1SK": { "S": "TS#1776844800123#COLOR#white#GAME#game_pvp_001" },
+  "GSI2PK": { "S": "PAIR#user#user_black_001#user#user_white_001" },
+  "GSI2SK": { "S": "TS#1776844800123#GAME#game_pvp_001" }
+}

@@ -7,6 +7,7 @@ import random
 import re
 import threading
 import time
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -19,6 +20,7 @@ from maia2.utils import create_elo_dict, get_all_possible_moves, mirror_move
 
 from grandmaster_dpo.eval.stockfish_helpers import make_stockfish
 from grandmaster_dpo.website.policy_only.schemas import ClockState, EngineConfigRequest, GameStatusResponse
+from grandmaster_dpo.website.policy_only.service.opening_book import maybe_get_opening_book
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +123,18 @@ def fen_ply_abs(fen: str) -> int:
     return 2 * (fullmove - 1) + (1 if side == "b" else 0)
 
 
+def game_phase_from_ply_abs(ply_abs: int) -> str:
+    if ply_abs < 20:
+        return "opening"
+    if ply_abs < 60:
+        return "middlegame"
+    return "endgame"
+
+
+def position_identity(board: chess.Board) -> str:
+    return " ".join(board.fen().split(" ")[:4])
+
+
 def game_status_from_board(board: chess.Board) -> GameStatusResponse:
     if board.is_checkmate():
         winner = "black" if board.turn == chess.WHITE else "white"
@@ -145,6 +159,127 @@ def _score_to_cp(score: chess.engine.PovScore, mate_score: int = 100_000) -> int
             return mate_score if mate > 0 else -mate_score
         return 0
     return int(cp)
+
+
+def _phase_penalty_for_current_position(engine_config: EngineConfigRequest, *, penalty_name: str, phase: str) -> int:
+    draw_penalties = getattr(engine_config, "draw_penalties", None)
+    if draw_penalties is None or not draw_penalties.enabled:
+        return 0
+    penalty_cfg = getattr(draw_penalties, penalty_name, None)
+    if penalty_cfg is None:
+        return 0
+    value = getattr(penalty_cfg, phase, 0)
+    return max(0, int(value or 0))
+
+
+def _is_drawish_non_checkmate(board: chess.Board) -> bool:
+    return board.can_claim_draw() or (board.is_game_over(claim_draw=True) and not board.is_checkmate())
+
+
+def _has_reply_leading_to_draw(board: chess.Board) -> bool:
+    if _is_drawish_non_checkmate(board):
+        return True
+    for reply in board.legal_moves:
+        nxt = board.copy(stack=True)
+        nxt.push(reply)
+        if _is_drawish_non_checkmate(nxt):
+            return True
+    return False
+
+
+def _has_reply_leading_to_draw_with_counts(
+    board: chess.Board,
+    *,
+    position_counts: dict[str, int],
+) -> bool:
+    if _is_drawish_non_checkmate(board):
+        return True
+    for reply in board.legal_moves:
+        nxt = board.copy(stack=False)
+        nxt.push(reply)
+        if position_counts.get(position_identity(nxt), 0) >= 2 or _is_drawish_non_checkmate(nxt):
+            return True
+    return False
+
+
+def build_position_counts(*, start_fen: str, played_moves_uci: list[str]) -> dict[str, int]:
+    board = chess.Board(start_fen)
+    counts: Counter[str] = Counter({position_identity(board): 1})
+    for move_uci in played_moves_uci:
+        move = chess.Move.from_uci(str(move_uci))
+        if move not in board.legal_moves:
+            raise ValueError(f"Illegal historical move {move_uci} for reconstructed board")
+        board.push(move)
+        counts[position_identity(board)] += 1
+    return dict(counts)
+
+
+def apply_draw_penalties_to_candidate(
+    board: chess.Board,
+    candidate: dict[str, Any],
+    *,
+    engine_config: EngineConfigRequest,
+    position_counts: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    phase = game_phase_from_ply_abs(fen_ply_abs(board.fen()))
+    repetition_penalty = 0
+    one_move_penalty = 0
+    try:
+        move = chess.Move.from_uci(str(candidate["uci"]))
+    except Exception:
+        adjusted_cp = int(candidate["cp"])
+        return {
+            **candidate,
+            "adjusted_cp": adjusted_cp,
+            "draw_penalty_cp": 0,
+            "repetition_x2_penalty_cp": None,
+            "one_move_from_draw_penalty_cp": None,
+        }
+    if move in board.legal_moves:
+        child = board.copy(stack=True)
+        child.push(move)
+        if position_counts is not None:
+            child_key = position_identity(child)
+            child_seen = int(position_counts.get(child_key, 0))
+            child_counts = dict(position_counts)
+            child_counts[child_key] = child_seen + 1
+            if child_seen >= 1:
+                repetition_penalty = _phase_penalty_for_current_position(
+                    engine_config,
+                    penalty_name="repetition_x2_penalty_cp",
+                    phase=phase,
+                )
+            if child_counts[child_key] >= 3 or _has_reply_leading_to_draw_with_counts(
+                child,
+                position_counts=child_counts,
+            ):
+                one_move_penalty = _phase_penalty_for_current_position(
+                    engine_config,
+                    penalty_name="one_move_from_draw_penalty_cp",
+                    phase=phase,
+                )
+        else:
+            if child.is_repetition(2):
+                repetition_penalty = _phase_penalty_for_current_position(
+                    engine_config,
+                    penalty_name="repetition_x2_penalty_cp",
+                    phase=phase,
+                )
+            if _has_reply_leading_to_draw(child):
+                one_move_penalty = _phase_penalty_for_current_position(
+                    engine_config,
+                    penalty_name="one_move_from_draw_penalty_cp",
+                    phase=phase,
+                )
+    total_penalty = repetition_penalty + one_move_penalty
+    adjusted_cp = int(candidate["cp"]) - total_penalty
+    return {
+        **candidate,
+        "adjusted_cp": adjusted_cp,
+        "draw_penalty_cp": total_penalty if total_penalty > 0 else None,
+        "repetition_x2_penalty_cp": repetition_penalty if repetition_penalty > 0 else None,
+        "one_move_from_draw_penalty_cp": one_move_penalty if one_move_penalty > 0 else None,
+    }
 
 
 @dataclass(frozen=True)
@@ -281,6 +416,94 @@ class BotMoveResult:
     engine_limit: dict[str, Any]
 
 
+def _choose_book_move(
+    *,
+    gm_name: str,
+    board: chess.Board,
+    engine_config: EngineConfigRequest,
+    played_moves_uci: list[str] | None,
+) -> BotMoveResult | None:
+    opening_book = maybe_get_opening_book(
+        gm_name=gm_name,
+        board=board,
+        played_moves_uci=played_moves_uci,
+    )
+    if opening_book is None:
+        return None
+
+    _, engine_limit_dict, requested_think_ms = _limit_from_engine_config(engine_config, None)
+    ranked_moves = sorted(
+        opening_book.probabilities.items(),
+        key=lambda item: (item[1], item[0]),
+        reverse=True,
+    )
+    candidate_moves: list[dict[str, Any]] = []
+    for rank, (move_uci, prob) in enumerate(ranked_moves, start=1):
+        candidate_moves.append(
+            {
+                "uci": move_uci,
+                "cp": 0,
+                "adjusted_cp": 0,
+                "draw_penalty_cp": None,
+                "repetition_x2_penalty_cp": None,
+                "one_move_from_draw_penalty_cp": None,
+                "mate": None,
+                "pv_uci": [move_uci],
+                "multipv_rank": rank,
+                "in_cp_gap_window": True,
+                "prob": float(prob),
+                "depth": None,
+                "seldepth": None,
+                "nodes": None,
+                "nps": None,
+                "time_ms": 0,
+                "tbhits": None,
+            }
+        )
+
+    if engine_config.sample:
+        rng = random.Random(int(engine_config.random_seed))
+        cutoff = rng.random()
+        total = 0.0
+        chosen_idx = 0
+        for idx, (_, prob) in enumerate(ranked_moves):
+            total += float(prob)
+            if cutoff <= total:
+                chosen_idx = idx
+                break
+    else:
+        chosen_idx = 0
+
+    chosen_move, chosen_prob = ranked_moves[chosen_idx]
+    return BotMoveResult(
+        move_uci=chosen_move,
+        eval_cp=0,
+        pv_uci=[chosen_move],
+        candidate_moves=candidate_moves,
+        stockfish_metrics={
+            "requested_multipv_topk": max(1, int(engine_config.stockfish_multipv_topk)),
+            "returned_candidate_count": len(candidate_moves),
+            "cp_gap_window": engine_config.cp_gap_window,
+            "max_depth": None,
+            "max_seldepth": None,
+            "total_nodes": None,
+            "max_nps": None,
+            "max_time_ms": 0,
+            "best_cp": 0,
+            "best_move_uci": chosen_move,
+            "best_move_mate": None,
+            "selected_move_rank_by_cp": 1,
+            "selected_move_rank_by_prob_within_window": chosen_idx + 1,
+            "opening_book_branch": opening_book.branch_name,
+            "opening_book_gm_name": gm_name,
+        },
+        selected_probability=float(chosen_prob),
+        requested_think_ms=requested_think_ms,
+        actual_think_ms=0,
+        engine_limit=engine_limit_dict,
+    )
+
+
 _GLOBAL_LOCK = threading.Lock()
 _GLOBALS: dict[str, Any] = {
     "device": None,
@@ -288,7 +511,7 @@ _GLOBALS: dict[str, Any] = {
     "all_moves": None,
     "all_moves_dict": None,
     "stockfish": None,
-    "models": {},
+    "models": OrderedDict(),
 }
 
 
@@ -366,20 +589,58 @@ def _resolve_timer_path(model_root: Path, gm_name: str) -> Optional[Path]:
     return None
 
 
-def resolve_profile(game_type_id: str) -> EngineProfile:
-    configured_gm = (
+def _canonical_gm_name(gm_name: str | None) -> str:
+    return str(gm_name or "").strip().lower().replace("-", "_")
+
+
+def _split_gm_names(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    names = [
+        _canonical_gm_name(part)
+        for part in re.split(r"[\s,]+", raw)
+        if _canonical_gm_name(part)
+    ]
+    return list(dict.fromkeys(names))
+
+
+def configured_gm_names() -> list[str]:
+    names = _split_gm_names(
+        os.environ.get("POLICY_ONLY_GM_NAMES")
+        or os.environ.get("SERVE_GM_NAMES")
+        or os.environ.get("GM_NAMES")
+    )
+    if names:
+        return names
+    return _split_gm_names(
         os.environ.get("POLICY_ONLY_GM_NAME")
         or os.environ.get("SERVE_GM_NAME")
         or os.environ.get("GM_NAME")
+        or "carlsen"
     )
-    if configured_gm:
-        gm_name = configured_gm
-    elif game_type_id.startswith("gm_") and "_" in game_type_id[3:]:
-        gm_name = game_type_id.split("_", 2)[1]
-    else:
-        gm_name = "carlsen"
+
+
+def default_gm_name() -> str:
+    names = configured_gm_names()
+    return names[0] if names else "carlsen"
+
+
+def _infer_gm_name_from_game_type(game_type_id: str) -> str | None:
+    if game_type_id.startswith("gm_") and "_" in game_type_id[3:]:
+        return game_type_id.split("_", 2)[1]
+    return None
+
+
+def resolve_profile(game_type_id: str, gm_name: str | None = None) -> EngineProfile:
+    configured_names = configured_gm_names()
+    selected_gm = _canonical_gm_name(gm_name) or _canonical_gm_name(_infer_gm_name_from_game_type(game_type_id))
+    if not selected_gm:
+        selected_gm = default_gm_name()
+    if configured_names and selected_gm not in configured_names:
+        allowed = ", ".join(configured_names)
+        raise ValueError(f"gm_name={selected_gm} is not available in this container; allowed: {allowed}")
     maia_type = "rapid" if "rapid" in game_type_id else "blitz"
-    return EngineProfile(gm_name=gm_name, maia_type=maia_type)
+    return EngineProfile(gm_name=selected_gm, maia_type=maia_type)
 
 
 def get_or_load_bundle(profile: EngineProfile) -> ModelBundle:
@@ -387,6 +648,7 @@ def get_or_load_bundle(profile: EngineProfile) -> ModelBundle:
     with _GLOBAL_LOCK:
         cached = _GLOBALS["models"].get(key)
         if cached is not None:
+            _GLOBALS["models"].move_to_end(key)
             return cached
 
     device, elo_dict, _all_moves, all_moves_dict = get_global_context()
@@ -425,6 +687,18 @@ def get_or_load_bundle(profile: EngineProfile) -> ModelBundle:
     )
     with _GLOBAL_LOCK:
         _GLOBALS["models"][key] = bundle
+        cache_max_raw = os.environ.get("POLICY_ONLY_MODEL_CACHE_MAX")
+        if cache_max_raw is not None:
+            try:
+                cache_max = max(1, int(cache_max_raw))
+            except ValueError:
+                logger.warning("Invalid POLICY_ONLY_MODEL_CACHE_MAX=%r; using configured GM count", cache_max_raw)
+                cache_max = max(1, len(configured_gm_names()) * 2)
+        else:
+            cache_max = max(1, len(configured_gm_names()) * 2)
+        while len(_GLOBALS["models"]) > cache_max:
+            evicted_key, _evicted_bundle = _GLOBALS["models"].popitem(last=False)
+            logger.info("Evicted policy model bundle from cache: %s", evicted_key)
     return bundle
 
 
@@ -537,10 +811,27 @@ def choose_bot_move(
     clock: ClockState,
     last_ply_times_ms: list[int],
     engine_config: EngineConfigRequest,
+    start_fen: str | None = None,
+    played_moves_uci: list[str] | None = None,
 ) -> BotMoveResult:
     device, elo_dict, _all_moves, all_moves_dict = get_global_context()
     _ = device, elo_dict
     board = chess.Board(fen)
+    opening_book_result = _choose_book_move(
+        gm_name=bundle.profile.gm_name,
+        board=board,
+        engine_config=engine_config,
+        played_moves_uci=played_moves_uci,
+    )
+    if opening_book_result is not None:
+        logger.info(
+            "choose_bot_move_opening_book gm=%s fen_ply=%s branch=%s",
+            bundle.profile.gm_name,
+            fen_ply_abs(fen),
+            opening_book_result.stockfish_metrics.get("opening_book_branch"),
+        )
+        return opening_book_result
+
     side_is_white = board.turn == chess.WHITE
     feats, masked_logits = bundle.policy_runtime.forward_once(
         fen,
@@ -577,6 +868,20 @@ def choose_bot_move(
         predicted_think_ms,
         engine_limit_dict,
     )
+    position_counts = None
+    if start_fen is not None:
+        try:
+            position_counts = build_position_counts(
+                start_fen=start_fen,
+                played_moves_uci=list(played_moves_uci or []),
+            )
+        except Exception:
+            logger.exception(
+                "choose_bot_move_failed_to_reconstruct_history gm=%s start_fen=%s move_count=%s",
+                bundle.profile.gm_name,
+                start_fen,
+                len(list(played_moves_uci or [])),
+            )
 
     started = time.time()
     infos = bundle.stockfish.analyse(
@@ -660,11 +965,25 @@ def choose_bot_move(
     best_cp = max(item["cp"] for item in candidates)
     best_candidate = max(candidates, key=lambda item: item["cp"])
     best_pv = best_candidate["pv_uci"]
-    kept = candidates
+    adjusted_candidates = [
+        apply_draw_penalties_to_candidate(
+            board,
+            candidate,
+            engine_config=engine_config,
+            position_counts=position_counts,
+        )
+        for candidate in candidates
+    ]
+    best_adjusted_cp = max(int(item.get("adjusted_cp", item["cp"])) for item in adjusted_candidates)
+    kept = adjusted_candidates
     if engine_config.cp_gap_window is not None:
-        kept = [item for item in candidates if item["cp"] >= best_cp - int(engine_config.cp_gap_window)]
+        kept = [
+            item
+            for item in adjusted_candidates
+            if int(item.get("adjusted_cp", item["cp"])) >= best_adjusted_cp - int(engine_config.cp_gap_window)
+        ]
         if not kept:
-            kept = candidates
+            kept = adjusted_candidates
 
     temp = max(1e-6, float(engine_config.temperature))
     logp_all = torch.log_softmax(masked_logits[0] / temp, dim=-1)
@@ -672,7 +991,7 @@ def choose_bot_move(
     serializable_candidates: list[dict[str, Any]] = []
     for candidate in kept:
         move_uci = str(candidate["uci"])
-        cp = int(candidate["cp"])
+        cp = int(candidate.get("adjusted_cp", candidate["cp"]))
         idx = uci_to_vocab_index(all_moves_dict, fen, move_uci)
         if idx < 0:
             base_term = torch.tensor(torch.finfo(logp_all.dtype).min, device=logp_all.device)
@@ -699,7 +1018,7 @@ def choose_bot_move(
 
     kept_by_uci = {candidate["uci"]: candidate for candidate in serializable_candidates}
     all_candidate_moves: list[dict[str, Any]] = []
-    for candidate in candidates:
+    for candidate in adjusted_candidates:
         move_uci = str(candidate["uci"])
         kept_candidate = kept_by_uci.get(move_uci)
         if kept_candidate is not None:

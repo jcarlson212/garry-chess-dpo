@@ -4,6 +4,7 @@ from .game import (
     ClockStateResponse,
     ClockSyncRequest,
     ClockUpdateRequest,
+    DrawPenaltyConfig,
     EngineConfigRequest,
     EngineLimitRequest,
     ErrorInfo,
@@ -13,8 +14,22 @@ from .game import (
     GameStatusResponse,
     StockfishCandidateMoveResponse,
     StockfishMetricsResponse,
+    PhasePenaltyConfig,
 )
 from .health import HealthResponse
+from .puzzle import (
+    PuzzleAdvantage,
+    PuzzleCatalogResponse,
+    PuzzleCategorySummary,
+    PuzzleErrorResponse,
+    PuzzleMoveRequest,
+    PuzzlePrecomputedHints,
+    PuzzleReplayStep,
+    PuzzleScenarioSummary,
+    PuzzleSessionResponse,
+    PuzzleStartRequest,
+    PuzzleStateSummary,
+)
 
 __all__ = [
     "AnalysisResponse",
@@ -22,6 +37,7 @@ __all__ = [
     "ClockStateResponse",
     "ClockSyncRequest",
     "ClockUpdateRequest",
+    "DrawPenaltyConfig",
     "EngineConfigRequest",
     "EngineLimitRequest",
     "ErrorInfo",
@@ -31,5 +47,17 @@ __all__ = [
     "GameStatusResponse",
     "StockfishCandidateMoveResponse",
     "StockfishMetricsResponse",
+    "PhasePenaltyConfig",
     "HealthResponse",
+    "PuzzleAdvantage",
+    "PuzzleCatalogResponse",
+    "PuzzleCategorySummary",
+    "PuzzleErrorResponse",
+    "PuzzleMoveRequest",
+    "PuzzlePrecomputedHints",
+    "PuzzleReplayStep",
+    "PuzzleScenarioSummary",
+    "PuzzleSessionResponse",
+    "PuzzleStartRequest",
+    "PuzzleStateSummary",
 ]

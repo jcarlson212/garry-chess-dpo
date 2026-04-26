@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -12,4 +12,5 @@ class HealthResponse(BaseModel):
     service: str
     deployment_target: str
     gm_name: Optional[str] = None
+    gm_names: list[str] = Field(default_factory=list)
     state_store: str

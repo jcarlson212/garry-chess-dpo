@@ -23,6 +23,18 @@ class EngineLimitRequest(StrictModel):
     value: int = 200
 
 
+class PhasePenaltyConfig(StrictModel):
+    opening: int = 0
+    middlegame: int = 0
+    endgame: int = 0
+
+
+class DrawPenaltyConfig(StrictModel):
+    enabled: bool = False
+    repetition_x2_penalty_cp: PhasePenaltyConfig = Field(default_factory=PhasePenaltyConfig)
+    one_move_from_draw_penalty_cp: PhasePenaltyConfig = Field(default_factory=PhasePenaltyConfig)
+
+
 class EngineConfigRequest(StrictModel):
     limit: Optional[EngineLimitRequest] = None
     random_seed: int = 0
@@ -39,6 +51,7 @@ class EngineConfigRequest(StrictModel):
     stockfish_engine_depth: Optional[int] = None
     stockfish_engine_nodes: Optional[int] = None
     stockfish_max_time_ms: Optional[int] = None
+    draw_penalties: DrawPenaltyConfig = Field(default_factory=DrawPenaltyConfig)
 
 
 class GameRequest(StrictModel):
@@ -46,16 +59,18 @@ class GameRequest(StrictModel):
     client_ply: int = -1
     pre_move_fen: str
     client_uci: str = ""
+    gm_name: Optional[str] = None
     bot_id: str = ""
     game_type_id: str
     clock: ClockState = Field(default_factory=ClockState)
     timing: TimingInfo = Field(default_factory=TimingInfo)
     engine_config: EngineConfigRequest = Field(default_factory=EngineConfigRequest)
     player_color: Optional[Literal["white", "black"]] = None
+    authenticated_user_id: Optional[str] = None
 
 
 class GameStatusResponse(StrictModel):
-    state: Literal["ongoing", "checkmate", "stalemate", "draw"]
+    state: Literal["ongoing", "checkmate", "stalemate", "draw", "timeout"]
     winner: Optional[Literal["white", "black"]] = None
     reason: str = ""
 
@@ -63,6 +78,10 @@ class GameStatusResponse(StrictModel):
 class StockfishCandidateMoveResponse(StrictModel):
     uci: str
     cp: int
+    adjusted_cp: Optional[int] = None
+    draw_penalty_cp: Optional[int] = None
+    repetition_x2_penalty_cp: Optional[int] = None
+    one_move_from_draw_penalty_cp: Optional[int] = None
     mate: Optional[int] = None
     pv_uci: list[str] = Field(default_factory=list)
     multipv_rank: Optional[int] = None
@@ -80,6 +99,8 @@ class StockfishMetricsResponse(StrictModel):
     requested_multipv_topk: int
     returned_candidate_count: int
     cp_gap_window: Optional[int] = None
+    opening_book_branch: Optional[str] = None
+    opening_book_gm_name: Optional[str] = None
     max_depth: Optional[int] = None
     max_seldepth: Optional[int] = None
     total_nodes: Optional[int] = None

@@ -1,0 +1,33 @@
+{
+  "PK": { "S": "GAME#game_bot_001" },
+  "SK": { "S": "POSTGAME#BOARD_STATE#DEPTH#18#PLY#0002" },
+  "entity_type": { "S": "GAME_POSTGAME_BOARD_STATE" },
+  "game_id": { "S": "game_bot_001" },
+  "ply": { "N": "2" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "fen_before": { "S": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
+  "side_to_move": { "S": "black" },
+  "board_state_analysis": {
+    "M": {
+      "engine_name": { "S": "stockfish" },
+      "engine_depth": { "N": "18" },
+      "position_eval_cp": { "N": "-33" },
+      "best_move_uci": { "S": "c7c5" },
+      "pv_uci": {
+        "L": [{ "S": "c7c5" }, { "S": "g1f3" }, { "S": "e7e6" }]
+      },
+      "candidate_count": { "N": "3" }
+    }
+  },
+  "top_moves": {
+    "L": [
+      { "M": { "uci": { "S": "c7c5" }, "cp": { "N": "-33" }, "multipv_rank": { "N": "1" } } },
+      { "M": { "uci": { "S": "e7e5" }, "cp": { "N": "-36" }, "multipv_rank": { "N": "2" } } },
+      { "M": { "uci": { "S": "e7e6" }, "cp": { "N": "-41" }, "multipv_rank": { "N": "3" } } }
+    ]
+  },
+  "requested_at_iso": { "S": "2026-04-22T07:10:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T07:12:30.000Z" },
+  "version": { "N": "1" }
+}

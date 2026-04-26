@@ -1,0 +1,33 @@
+{
+  "PK": { "S": "GAME#game_pvp_001" },
+  "SK": { "S": "POSTGAME#BOARD_STATE#DEPTH#18#PLY#0001" },
+  "entity_type": { "S": "GAME_POSTGAME_BOARD_STATE" },
+  "game_id": { "S": "game_pvp_001" },
+  "ply": { "N": "1" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "fen_before": { "S": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+  "side_to_move": { "S": "white" },
+  "board_state_analysis": {
+    "M": {
+      "engine_name": { "S": "stockfish" },
+      "engine_depth": { "N": "18" },
+      "position_eval_cp": { "N": "18" },
+      "best_move_uci": { "S": "d2d4" },
+      "pv_uci": {
+        "L": [{ "S": "d2d4" }, { "S": "d7d5" }, { "S": "c2c4" }]
+      },
+      "candidate_count": { "N": "3" }
+    }
+  },
+  "top_moves": {
+    "L": [
+      { "M": { "uci": { "S": "d2d4" }, "cp": { "N": "18" }, "multipv_rank": { "N": "1" } } },
+      { "M": { "uci": { "S": "e2e4" }, "cp": { "N": "16" }, "multipv_rank": { "N": "2" } } },
+      { "M": { "uci": { "S": "c2c4" }, "cp": { "N": "14" }, "multipv_rank": { "N": "3" } } }
+    ]
+  },
+  "requested_at_iso": { "S": "2026-04-22T08:20:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T08:31:00.000Z" },
+  "version": { "N": "1" }
+}

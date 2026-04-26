@@ -1,0 +1,25 @@
+{
+  "PK": { "S": "GAME#game_bot_001" },
+  "SK": { "S": "POSTGAME#SUMMARY#DEPTH#18#PURPOSE#postgame_accuracy" },
+  "entity_type": { "S": "GAME_POSTGAME_SUMMARY" },
+  "game_id": { "S": "game_bot_001" },
+  "analysis_depth": { "N": "18" },
+  "analysis_purpose": { "S": "postgame_accuracy" },
+  "analysis_state": { "S": "ready" },
+  "summary": {
+    "M": {
+      "sample_count": { "N": "4" },
+      "accuracy_percent": { "N": "68.4" },
+      "white_accuracy_percent": { "N": "61.2" },
+      "black_accuracy_percent": { "N": "75.6" },
+      "best_count": { "N": "2" },
+      "inaccuracy_count": { "N": "1" },
+      "mistake_count": { "N": "1" },
+      "blunder_count": { "N": "0" }
+    }
+  },
+  "outputs_s3_key": { "S": "games/game_bot_001/postgame/depth18/full.json" },
+  "requested_at_iso": { "S": "2026-04-22T07:10:00.000Z" },
+  "completed_at_iso": { "S": "2026-04-22T07:12:30.000Z" },
+  "version": { "N": "1" }
+}
