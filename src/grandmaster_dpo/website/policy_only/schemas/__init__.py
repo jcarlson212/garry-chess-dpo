@@ -15,6 +15,7 @@ from .game import (
     StockfishCandidateMoveResponse,
     StockfishMetricsResponse,
     PhasePenaltyConfig,
+    PhaseFloatConfig,
 )
 from .health import HealthResponse
 from .puzzle import (
@@ -48,6 +49,7 @@ __all__ = [
     "StockfishCandidateMoveResponse",
     "StockfishMetricsResponse",
     "PhasePenaltyConfig",
+    "PhaseFloatConfig",
     "HealthResponse",
     "PuzzleAdvantage",
     "PuzzleCatalogResponse",

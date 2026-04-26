@@ -31,6 +31,7 @@ from grandmaster_dpo.website.policy_only.service.runtime import (
     get_or_load_bundle,
     resolve_profile,
 )
+from grandmaster_dpo.website.policy_only.service.opening_starts import OpeningStartManager
 from grandmaster_dpo.website.policy_only.service.state import GameStateStore, StoredGameState
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,11 @@ class PolicyOnlyGameService:
         self,
         store: GameStateStore,
         finished_game_publisher: GameFinishedPublisher | None = None,
+        opening_start_manager: OpeningStartManager | None = None,
     ) -> None:
         self.store = store
         self.finished_game_publisher = finished_game_publisher or NullGameFinishedPublisher()
+        self.opening_start_manager = opening_start_manager or OpeningStartManager()
 
     @staticmethod
     def _now_iso() -> str:
@@ -147,6 +150,25 @@ class PolicyOnlyGameService:
                 "use_gibbs": req.engine_config.use_gibbs,
                 "lam": req.engine_config.lam,
                 "temperature": req.engine_config.temperature,
+                "alpha_style": req.engine_config.alpha_style,
+                "beta_engine": req.engine_config.beta_engine,
+                "engine_temp": req.engine_config.engine_temp,
+                "style_temperature": req.engine_config.style_temperature,
+                "novelty_weight": req.engine_config.novelty_weight,
+                "novelty_weight_prob": req.engine_config.novelty_weight_prob,
+                "novelty_weight_phase": req.engine_config.novelty_weight_phase.model_dump(mode="python"),
+                "risk_weight": req.engine_config.risk_weight,
+                "risk_weight_prob": req.engine_config.risk_weight_prob,
+                "risk_weight_phase": req.engine_config.risk_weight_phase.model_dump(mode="python"),
+                "attack_weight": req.engine_config.attack_weight,
+                "attack_weight_prob": req.engine_config.attack_weight_prob,
+                "attack_weight_phase": req.engine_config.attack_weight_phase.model_dump(mode="python"),
+                "weird_move_prob": req.engine_config.weird_move_prob,
+                "weird_move_phase": req.engine_config.weird_move_phase.model_dump(mode="python"),
+                "weird_move_min_cp_loss": req.engine_config.weird_move_min_cp_loss,
+                "weird_move_max_cp_loss": req.engine_config.weird_move_max_cp_loss,
+                "top_move_suppression_prob": req.engine_config.top_move_suppression_prob,
+                "top_move_suppression_phase": req.engine_config.top_move_suppression_phase.model_dump(mode="python"),
                 "sample": req.engine_config.sample,
                 "cp_gap_window": req.engine_config.cp_gap_window,
                 "stockfish_multipv_topk": req.engine_config.stockfish_multipv_topk,
@@ -261,7 +283,7 @@ class PolicyOnlyGameService:
             f"{req.game_id}:{response.server_ply_after}:{response.game_status.state}:"
             f"{response.game_status.reason}:{response.new_fen}"
         )
-        request_payload = req.model_dump(mode="python", exclude={"gm_name"})
+        request_payload = req.model_dump(mode="python", exclude={"gm_name", "opening_family"})
         return {
             "event_type": "game_finished",
             "event_version": 2,
@@ -413,13 +435,29 @@ class PolicyOnlyGameService:
                     clock=req.clock,
                 )
             player_color = req.player_color
-            server_fen = req.pre_move_fen
-            server_ply = req.client_ply if req.client_ply >= 0 else fen_ply_abs(req.pre_move_fen)
+            if req.opening_family:
+                try:
+                    opening_start = self.opening_start_manager.get(req.opening_family)
+                except KeyError as exc:
+                    raise self._error(
+                        status_code=400,
+                        game_id=req.game_id,
+                        code="unknown_opening_family",
+                        message=str(exc),
+                        server_ply=req.client_ply if req.client_ply >= 0 else 0,
+                        server_fen=req.pre_move_fen,
+                        clock=req.clock,
+                    )
+                server_fen = opening_start.fen
+                server_ply = req.client_ply if req.client_ply >= 0 else 0
+            else:
+                server_fen = req.pre_move_fen
+                server_ply = req.client_ply if req.client_ply >= 0 else fen_ply_abs(req.pre_move_fen)
             return None, player_color, server_fen, server_ply
         return state, state.player_color, state.fen, state.ply
 
     def play_turn(self, req: GameRequest) -> GameResponse:
-        if not req.game_id or not req.pre_move_fen or not req.game_type_id:
+        if not req.game_id or (not req.pre_move_fen and not req.opening_family) or not req.game_type_id:
             raise self._error(
                 status_code=400,
                 game_id=req.game_id or "",
@@ -483,7 +521,7 @@ class PolicyOnlyGameService:
 
         clock = state.clock if state is not None else req.clock
         initial_clock = state.initial_clock if state is not None else req.clock.model_copy(deep=True)
-        start_fen = state.start_fen if state is not None else req.pre_move_fen
+        start_fen = state.start_fen if state is not None else server_fen
         moves_compact = list(state.moves_compact) if state is not None else []
         inference_positions = list(state.inference_positions) if state is not None else []
         created_at_ms = state.created_at_ms if state is not None else int(time.time() * 1000)

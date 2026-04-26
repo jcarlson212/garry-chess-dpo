@@ -125,10 +125,10 @@ class PuzzleService:
             stockfish_multipv_topk=max(self.branch_width, 3),
             cp_gap_window=40,
             use_gibbs=False,
-            lam=1.0,
+            engine_temp=1.0,
             cp_scale=150.0,
             cp_cap=2000,
-            temperature=0.25,
+            style_temperature=0.25,
             sample=False,
             use_timer_head=False,
         )

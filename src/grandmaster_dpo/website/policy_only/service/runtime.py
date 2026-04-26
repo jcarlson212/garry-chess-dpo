@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import math
 import os
 import random
@@ -280,6 +281,187 @@ def apply_draw_penalties_to_candidate(
         "repetition_x2_penalty_cp": repetition_penalty if repetition_penalty > 0 else None,
         "one_move_from_draw_penalty_cp": one_move_penalty if one_move_penalty > 0 else None,
     }
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _phase_multiplier(phase_cfg: Any, phase: str) -> float:
+    value = getattr(phase_cfg, phase, 1.0)
+    return max(0.0, float(value if value is not None else 1.0))
+
+
+def _mood_gate_enabled(*, random_seed: int, move_uci: str, feature_name: str, probability: float) -> bool:
+    probability = _clamp01(probability)
+    if probability <= 0.0:
+        return False
+    if probability >= 1.0:
+        return True
+    key = f"{int(random_seed)}:{move_uci}:{feature_name}".encode("utf-8")
+    digest = hashlib.sha256(key).digest()
+    value = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
+    return value < probability
+
+
+def _stable_probability(*, random_seed: int, fen: str, feature_name: str) -> float:
+    key = f"{int(random_seed)}:{fen}:{feature_name}".encode("utf-8")
+    digest = hashlib.sha256(key).digest()
+    return int.from_bytes(digest[:8], "big") / float(2**64 - 1)
+
+
+def _should_apply_position_gate(*, engine_config: EngineConfigRequest, fen: str, feature_name: str, probability: float) -> bool:
+    probability = _clamp01(probability)
+    if probability <= 0.0:
+        return False
+    if probability >= 1.0:
+        return True
+    return _stable_probability(
+        random_seed=engine_config.random_seed,
+        fen=fen,
+        feature_name=feature_name,
+    ) < probability
+
+
+def _candidate_mood_scores(
+    board: chess.Board,
+    candidate: dict[str, Any],
+    *,
+    engine_config: EngineConfigRequest,
+    phase: str,
+    best_adjusted_cp: int,
+    cp_gap_window: int | None,
+    max_rank: int,
+) -> dict[str, float]:
+    move_uci_raw = str(candidate.get("uci") or "")
+    novelty_enabled = _mood_gate_enabled(
+        random_seed=engine_config.random_seed,
+        move_uci=move_uci_raw,
+        feature_name="novelty",
+        probability=engine_config.novelty_weight_prob
+        * _phase_multiplier(engine_config.novelty_weight_phase, phase),
+    )
+    risk_enabled = _mood_gate_enabled(
+        random_seed=engine_config.random_seed,
+        move_uci=move_uci_raw,
+        feature_name="risk",
+        probability=engine_config.risk_weight_prob
+        * _phase_multiplier(engine_config.risk_weight_phase, phase),
+    )
+    attack_enabled = _mood_gate_enabled(
+        random_seed=engine_config.random_seed,
+        move_uci=move_uci_raw,
+        feature_name="attack",
+        probability=engine_config.attack_weight_prob
+        * _phase_multiplier(engine_config.attack_weight_phase, phase),
+    )
+
+    rank = int(candidate.get("multipv_rank") or max_rank or 1)
+    rank_novelty = 0.0 if max_rank <= 1 else (rank - 1) / max(1, max_rank - 1)
+    cp = int(candidate.get("adjusted_cp", candidate.get("cp", best_adjusted_cp)))
+    cp_window = max(1, int(cp_gap_window if cp_gap_window is not None else 300))
+    cp_drop = max(0, best_adjusted_cp - cp)
+    cp_novelty = _clamp01(cp_drop / float(cp_window))
+    novelty_score = _clamp01((0.65 * rank_novelty) + (0.35 * cp_novelty)) if novelty_enabled else 0.0
+
+    attack_score = 0.0
+    risk_score = 0.0
+    try:
+        move = chess.Move.from_uci(move_uci_raw)
+    except Exception:
+        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0}
+    if move not in board.legal_moves:
+        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0}
+
+    moved_piece = board.piece_at(move.from_square)
+    captured_piece = board.piece_at(move.to_square)
+    child = board.copy(stack=False)
+    child.push(move)
+    opponent = child.turn
+    mover = not opponent
+
+    if attack_enabled:
+        if child.is_check():
+            attack_score += 0.45
+        if captured_piece is not None:
+            attack_score += 0.20
+        if moved_piece is not None:
+            to_rank = chess.square_rank(move.to_square)
+            if moved_piece.color == chess.WHITE:
+                attack_score += 0.15 * _clamp01(to_rank / 7.0)
+            else:
+                attack_score += 0.15 * _clamp01((7 - to_rank) / 7.0)
+        opponent_king = child.king(opponent)
+        if opponent_king is not None:
+            distance = chess.square_distance(move.to_square, opponent_king)
+            attack_score += 0.20 * _clamp01((7 - distance) / 7.0)
+        attack_score = _clamp01(attack_score)
+
+    if risk_enabled:
+        risk_score += 0.50 * cp_novelty
+        if moved_piece is not None and child.is_attacked_by(opponent, move.to_square):
+            piece_value = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}.get(
+                moved_piece.piece_type,
+                0,
+            )
+            if not child.is_attacked_by(mover, move.to_square):
+                risk_score += 0.35
+            risk_score += min(0.30, piece_value / 30.0)
+        if captured_piece is not None:
+            risk_score += 0.10
+        risk_score = _clamp01(risk_score)
+
+    return {
+        "novelty_score": novelty_score,
+        "risk_score": risk_score,
+        "attack_score": attack_score,
+    }
+
+
+def _apply_weird_move_filters(
+    *,
+    kept: list[dict[str, Any]],
+    engine_config: EngineConfigRequest,
+    fen: str,
+    phase: str,
+    best_adjusted_cp: int,
+) -> list[dict[str, Any]]:
+    filtered = list(kept)
+    if len(filtered) <= 1:
+        return filtered
+
+    if _should_apply_position_gate(
+        engine_config=engine_config,
+        fen=fen,
+        feature_name="top_move_suppression",
+        probability=engine_config.top_move_suppression_prob
+        * _phase_multiplier(engine_config.top_move_suppression_phase, phase),
+    ):
+        best_cp = max(int(item.get("adjusted_cp", item["cp"])) for item in filtered)
+        without_best = [
+            item for item in filtered if int(item.get("adjusted_cp", item["cp"])) < best_cp
+        ]
+        if without_best:
+            filtered = without_best
+
+    if _should_apply_position_gate(
+        engine_config=engine_config,
+        fen=fen,
+        feature_name="weird_move",
+        probability=engine_config.weird_move_prob
+        * _phase_multiplier(engine_config.weird_move_phase, phase),
+    ):
+        min_loss = max(0, int(engine_config.weird_move_min_cp_loss))
+        max_loss = max(min_loss, int(engine_config.weird_move_max_cp_loss))
+        weird = [
+            item
+            for item in filtered
+            if min_loss <= best_adjusted_cp - int(item.get("adjusted_cp", item["cp"])) <= max_loss
+        ]
+        if weird:
+            filtered = weird
+
+    return filtered or kept
 
 
 @dataclass(frozen=True)
@@ -979,6 +1161,23 @@ def choose_bot_move(
         for candidate in candidates
     ]
     best_adjusted_cp = max(int(item.get("adjusted_cp", item["cp"])) for item in adjusted_candidates)
+    max_multipv_rank = max((int(item.get("multipv_rank") or 1) for item in adjusted_candidates), default=1)
+    phase = game_phase_from_ply_abs(fen_ply_abs(fen))
+    adjusted_candidates = [
+        {
+            **candidate,
+            **_candidate_mood_scores(
+                board,
+                candidate,
+                engine_config=engine_config,
+                phase=phase,
+                best_adjusted_cp=best_adjusted_cp,
+                cp_gap_window=engine_config.cp_gap_window,
+                max_rank=max_multipv_rank,
+            ),
+        }
+        for candidate in adjusted_candidates
+    ]
     kept = adjusted_candidates
     if engine_config.cp_gap_window is not None:
         kept = [
@@ -988,9 +1187,23 @@ def choose_bot_move(
         ]
         if not kept:
             kept = adjusted_candidates
+    kept = _apply_weird_move_filters(
+        kept=kept,
+        engine_config=engine_config,
+        fen=fen,
+        phase=phase,
+        best_adjusted_cp=best_adjusted_cp,
+    )
 
-    temp = max(1e-6, float(engine_config.temperature))
-    logp_all = torch.log_softmax(masked_logits[0] / temp, dim=-1)
+    style_temp = max(1e-6, float(engine_config.style_temperature))
+    logp_all = torch.log_softmax(masked_logits[0] / style_temp, dim=-1)
+    beta_engine = (
+        float(engine_config.beta_engine)
+        if engine_config.beta_engine is not None
+        else (1.0 if engine_config.use_gibbs else 0.0)
+    )
+    alpha_style = float(engine_config.alpha_style)
+    engine_temp = max(1e-6, float(engine_config.engine_temp))
     score_terms: list[torch.Tensor] = []
     serializable_candidates: list[dict[str, Any]] = []
     for candidate in kept:
@@ -1001,17 +1214,20 @@ def choose_bot_move(
             base_term = torch.tensor(torch.finfo(logp_all.dtype).min, device=logp_all.device)
         else:
             base_term = logp_all[idx]
-        score_term = base_term
-        if engine_config.use_gibbs:
-            capped_cp = max(-int(engine_config.cp_cap), min(int(engine_config.cp_cap), int(cp)))
-            score_term = base_term + (
-                torch.tensor(
-                    float(capped_cp) / max(float(engine_config.cp_scale), 1e-6),
-                    device=logp_all.device,
-                    dtype=logp_all.dtype,
-                )
-                / max(float(engine_config.lam), 1e-6)
-            )
+        capped_cp = max(-int(engine_config.cp_cap), min(int(engine_config.cp_cap), int(cp)))
+        engine_term = torch.tensor(
+            float(capped_cp) / max(float(engine_config.cp_scale), 1e-6) / engine_temp,
+            device=logp_all.device,
+            dtype=logp_all.dtype,
+        )
+        mood_term = torch.tensor(
+            (float(engine_config.novelty_weight) * float(candidate.get("novelty_score") or 0.0))
+            + (float(engine_config.risk_weight) * float(candidate.get("risk_score") or 0.0))
+            + (float(engine_config.attack_weight) * float(candidate.get("attack_score") or 0.0)),
+            device=logp_all.device,
+            dtype=logp_all.dtype,
+        )
+        score_term = (alpha_style * base_term) + (beta_engine * engine_term) + mood_term
         score_terms.append(score_term)
         serializable_candidates.append({**candidate, "in_cp_gap_window": True})
 

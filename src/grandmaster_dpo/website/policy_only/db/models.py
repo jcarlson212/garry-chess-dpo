@@ -43,6 +43,25 @@ class InferenceConfigRecord(DbModel):
     use_gibbs: bool = False
     lam: Optional[float] = None
     temperature: Optional[float] = None
+    alpha_style: Optional[float] = None
+    beta_engine: Optional[float] = None
+    engine_temp: Optional[float] = None
+    style_temperature: Optional[float] = None
+    novelty_weight: Optional[float] = None
+    novelty_weight_prob: Optional[float] = None
+    novelty_weight_phase: dict[str, Any] = Field(default_factory=dict)
+    risk_weight: Optional[float] = None
+    risk_weight_prob: Optional[float] = None
+    risk_weight_phase: dict[str, Any] = Field(default_factory=dict)
+    attack_weight: Optional[float] = None
+    attack_weight_prob: Optional[float] = None
+    attack_weight_phase: dict[str, Any] = Field(default_factory=dict)
+    weird_move_prob: Optional[float] = None
+    weird_move_phase: dict[str, Any] = Field(default_factory=dict)
+    weird_move_min_cp_loss: Optional[int] = None
+    weird_move_max_cp_loss: Optional[int] = None
+    top_move_suppression_prob: Optional[float] = None
+    top_move_suppression_phase: dict[str, Any] = Field(default_factory=dict)
     sample: Optional[bool] = None
     cp_gap_window: Optional[int] = None
     stockfish_multipv_topk: Optional[int] = None
@@ -77,6 +96,9 @@ class CandidateMoveRecord(DbModel):
     nps: Optional[int] = None
     time_ms: Optional[int] = None
     tbhits: Optional[int] = None
+    novelty_score: Optional[float] = None
+    risk_score: Optional[float] = None
+    attack_score: Optional[float] = None
 
 
 class BoardStateAnalysisRecord(DbModel):

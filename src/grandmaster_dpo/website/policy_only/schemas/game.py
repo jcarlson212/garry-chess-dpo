@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -29,6 +29,12 @@ class PhasePenaltyConfig(StrictModel):
     endgame: int = 0
 
 
+class PhaseFloatConfig(StrictModel):
+    opening: float = 1.0
+    middlegame: float = 1.0
+    endgame: float = 1.0
+
+
 class DrawPenaltyConfig(StrictModel):
     enabled: bool = False
     repetition_x2_penalty_cp: PhasePenaltyConfig = Field(default_factory=PhasePenaltyConfig)
@@ -41,10 +47,29 @@ class EngineConfigRequest(StrictModel):
     stockfish_multipv_topk: int = 10
     cp_gap_window: Optional[int] = 60
     use_gibbs: bool = False
-    lam: float = 1.0
+    lam: Optional[float] = None
+    temperature: Optional[float] = None
+    alpha_style: float = 1.0
+    beta_engine: Optional[float] = None
+    engine_temp: float = 1.0
+    style_temperature: float = 1.0
+    novelty_weight: float = 0.0
+    novelty_weight_prob: float = 1.0
+    novelty_weight_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
+    risk_weight: float = 0.0
+    risk_weight_prob: float = 1.0
+    risk_weight_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
+    attack_weight: float = 0.0
+    attack_weight_prob: float = 1.0
+    attack_weight_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
+    weird_move_prob: float = 0.0
+    weird_move_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
+    weird_move_min_cp_loss: int = 20
+    weird_move_max_cp_loss: int = 120
+    top_move_suppression_prob: float = 0.0
+    top_move_suppression_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
     cp_scale: float = 150.0
     cp_cap: int = 2000
-    temperature: float = 1.0
     sample: bool = True
     use_timer_head: bool = True
     stockfish_tree_search_depth: Optional[int] = None
@@ -53,13 +78,22 @@ class EngineConfigRequest(StrictModel):
     stockfish_max_time_ms: Optional[int] = None
     draw_penalties: DrawPenaltyConfig = Field(default_factory=DrawPenaltyConfig)
 
+    @model_validator(mode="after")
+    def _apply_legacy_mood_aliases(self) -> "EngineConfigRequest":
+        if self.lam is not None:
+            self.engine_temp = float(self.lam)
+        if self.temperature is not None:
+            self.style_temperature = float(self.temperature)
+        return self
+
 
 class GameRequest(StrictModel):
     game_id: str
     client_ply: int = -1
-    pre_move_fen: str
+    pre_move_fen: str = ""
     client_uci: str = ""
     gm_name: Optional[str] = None
+    opening_family: Optional[str] = None
     bot_id: str = ""
     game_type_id: str
     clock: ClockState = Field(default_factory=ClockState)
@@ -93,6 +127,9 @@ class StockfishCandidateMoveResponse(StrictModel):
     nps: Optional[int] = None
     time_ms: Optional[int] = None
     tbhits: Optional[int] = None
+    novelty_score: Optional[float] = None
+    risk_score: Optional[float] = None
+    attack_score: Optional[float] = None
 
 
 class StockfishMetricsResponse(StrictModel):
