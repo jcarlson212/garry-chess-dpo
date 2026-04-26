@@ -188,15 +188,15 @@ This section is for the HTTP ECS services that expose:
 
 Run from repo root.
 
-### Multi-GM Image
+### Grouped Multi-GM Image
 
 ```bash
 docker buildx build \
   --platform linux/amd64 \
   -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa \
+  --build-arg GM_NAMES=carlsen,firouzja,praggnanandhaa,kasparov \
   --build-arg STOCKFISH_REF=sf_18 \
-  -t garry-chess-policy-only:multi-gm \
+  -t garry-chess-policy-only:carlsen-firouzja-pragg-kasparov \
   --load .
 ```
 
@@ -217,7 +217,7 @@ docker buildx build \
 Run the image:
 
 ```bash
-docker run --rm -p 8080:8080 garry-chess-policy-only:multi-gm
+docker run --rm -p 8080:8080 garry-chess-policy-only:carlsen-firouzja-pragg-kasparov
 ```
 
 If you changed dependencies locally, refresh your env first:
@@ -310,14 +310,14 @@ docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_RE
 docker buildx build \
   --platform linux/amd64 \
   -f src/grandmaster_dpo/website/policy_only/Dockerfile \
-  --build-arg GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa \
+  --build-arg GM_NAMES=carlsen,firouzja,praggnanandhaa,kasparov \
   --build-arg STOCKFISH_REF=sf_18 \
-  -t "${ECR_REPO}:multi-gm" \
+  -t "${ECR_REPO}:carlsen-firouzja-pragg-kasparov" \
   --load .
 
-docker tag "${ECR_REPO}:multi-gm" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:multi-gm"
+docker tag "${ECR_REPO}:carlsen-firouzja-pragg-kasparov" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:carlsen-firouzja-pragg-kasparov"
 
-docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:multi-gm"
+docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:carlsen-firouzja-pragg-kasparov"
 ```
 
 ### Requesting A GM
@@ -349,7 +349,7 @@ The env var keeps the Redis-compatible name because the service uses a Redis pro
 Recommended starting values:
 
 ```text
-POLICY_ONLY_GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa
+POLICY_ONLY_GM_NAMES=carlsen,firouzja,praggnanandhaa,kasparov
 STOCKFISH_THREADS=16
 STOCKFISH_HASH_MB=128
 STOCKFISH_TIMEOUT_S=20.0
@@ -368,8 +368,8 @@ Multi-GM example:
 export AWS_REGION=us-east-1
 export AWS_ACCOUNT_ID=437720536299
 export ECR_REPO=garry-chess-policy-only
-export GM_NAMES=kasparov,carlsen,firouzja,praggnanandhaa
-export IMAGE_TAG=multi-gm
+export GM_NAMES=carlsen,firouzja,praggnanandhaa,kasparov
+export IMAGE_TAG=carlsen-firouzja-pragg-kasparov
 
 docker buildx build \
   --platform linux/amd64 \
