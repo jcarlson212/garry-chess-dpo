@@ -9,6 +9,7 @@ from .game import (
     EngineLimitRequest,
     ErrorInfo,
     ErrorResponse,
+    ForcedBlunderConfig,
     GameRequest,
     GameResponse,
     GameStatusResponse,
@@ -16,6 +17,7 @@ from .game import (
     StockfishMetricsResponse,
     PhasePenaltyConfig,
     PhaseFloatConfig,
+    PhaseProbabilityConfig,
 )
 from .health import HealthResponse
 from .puzzle import (
@@ -43,6 +45,7 @@ __all__ = [
     "EngineLimitRequest",
     "ErrorInfo",
     "ErrorResponse",
+    "ForcedBlunderConfig",
     "GameRequest",
     "GameResponse",
     "GameStatusResponse",
@@ -50,6 +53,7 @@ __all__ = [
     "StockfishMetricsResponse",
     "PhasePenaltyConfig",
     "PhaseFloatConfig",
+    "PhaseProbabilityConfig",
     "HealthResponse",
     "PuzzleAdvantage",
     "PuzzleCatalogResponse",

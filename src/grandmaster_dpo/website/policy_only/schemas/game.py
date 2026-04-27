@@ -35,10 +35,29 @@ class PhaseFloatConfig(StrictModel):
     endgame: float = 1.0
 
 
+class PhaseProbabilityConfig(StrictModel):
+    opening: float = 0.0
+    middlegame: float = 0.0
+    endgame: float = 0.0
+
+
 class DrawPenaltyConfig(StrictModel):
     enabled: bool = False
     repetition_x2_penalty_cp: PhasePenaltyConfig = Field(default_factory=PhasePenaltyConfig)
     one_move_from_draw_penalty_cp: PhasePenaltyConfig = Field(default_factory=PhasePenaltyConfig)
+
+
+class ForcedBlunderConfig(StrictModel):
+    enabled: bool = False
+    probability: float = 0.0
+    max_bot_move_number: Optional[int] = 7
+    piece_types: list[Literal["knight", "bishop", "rook", "queen"]] = Field(
+        default_factory=lambda: ["knight", "bishop", "rook", "queen"]
+    )
+    min_cp_loss: int = 300
+    max_cp_loss: int = 1200
+    once_per_game: bool = True
+    disable_opening_book_until_triggered: bool = True
 
 
 class EngineConfigRequest(StrictModel):
@@ -68,15 +87,19 @@ class EngineConfigRequest(StrictModel):
     weird_move_max_cp_loss: int = 120
     top_move_suppression_prob: float = 0.0
     top_move_suppression_phase: PhaseFloatConfig = Field(default_factory=PhaseFloatConfig)
+    sacrifice_weight: float = 1.0
+    sacrifice_propensity_phase: PhaseProbabilityConfig = Field(default_factory=PhaseProbabilityConfig)
     cp_scale: float = 150.0
     cp_cap: int = 2000
     sample: bool = True
     use_timer_head: bool = True
+    time_control_style_scale: float = 1.0
     stockfish_tree_search_depth: Optional[int] = None
     stockfish_engine_depth: Optional[int] = None
     stockfish_engine_nodes: Optional[int] = None
     stockfish_max_time_ms: Optional[int] = None
     draw_penalties: DrawPenaltyConfig = Field(default_factory=DrawPenaltyConfig)
+    forced_blunder: ForcedBlunderConfig = Field(default_factory=ForcedBlunderConfig)
 
     @model_validator(mode="after")
     def _apply_legacy_mood_aliases(self) -> "EngineConfigRequest":
@@ -130,6 +153,10 @@ class StockfishCandidateMoveResponse(StrictModel):
     novelty_score: Optional[float] = None
     risk_score: Optional[float] = None
     attack_score: Optional[float] = None
+    sacrifice_score: Optional[float] = None
+    forced_blunder_candidate: Optional[bool] = None
+    forced_blunder_piece_type: Optional[str] = None
+    forced_blunder_cp_loss: Optional[int] = None
 
 
 class StockfishMetricsResponse(StrictModel):
@@ -143,11 +170,19 @@ class StockfishMetricsResponse(StrictModel):
     total_nodes: Optional[int] = None
     max_nps: Optional[int] = None
     max_time_ms: Optional[int] = None
+    stockfish_actual_think_ms: Optional[int] = None
+    backend_wall_time_ms: Optional[int] = None
     best_cp: Optional[int] = None
     best_move_uci: Optional[str] = None
     best_move_mate: Optional[int] = None
     selected_move_rank_by_cp: Optional[int] = None
     selected_move_rank_by_prob_within_window: Optional[int] = None
+    forced_blunder_attempted: Optional[bool] = None
+    forced_blunder_triggered: Optional[bool] = None
+    forced_blunder_candidate_count: Optional[int] = None
+    forced_blunder_bot_move_number: Optional[int] = None
+    forced_blunder_piece_type: Optional[str] = None
+    forced_blunder_cp_loss: Optional[int] = None
 
 
 class AnalysisResponse(StrictModel):

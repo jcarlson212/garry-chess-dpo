@@ -292,6 +292,128 @@ def _phase_multiplier(phase_cfg: Any, phase: str) -> float:
     return max(0.0, float(value if value is not None else 1.0))
 
 
+def _piece_value(piece_type: int | None) -> int:
+    return {
+        chess.PAWN: 1,
+        chess.KNIGHT: 3,
+        chess.BISHOP: 3,
+        chess.ROOK: 5,
+        chess.QUEEN: 9,
+        chess.KING: 0,
+    }.get(piece_type, 0)
+
+
+_FORCED_BLUNDER_PIECE_TYPES = {
+    "knight": chess.KNIGHT,
+    "bishop": chess.BISHOP,
+    "rook": chess.ROOK,
+    "queen": chess.QUEEN,
+}
+_PIECE_NAME_BY_TYPE = {value: key for key, value in _FORCED_BLUNDER_PIECE_TYPES.items()}
+
+
+def _bot_side_move_number(
+    *,
+    fen: str,
+    start_fen: str | None,
+    played_moves_uci: list[str] | None,
+    side_to_move: chess.Color,
+) -> int:
+    if start_fen is not None:
+        try:
+            history_board = chess.Board(start_fen)
+            count = 0
+            for move_uci in list(played_moves_uci or []):
+                if history_board.turn == side_to_move:
+                    count += 1
+                history_board.push_uci(move_uci)
+            return count + 1
+        except Exception:
+            logger.debug(
+                "forced_blunder_failed_to_reconstruct_bot_move_number start_fen=%s move_count=%s",
+                start_fen,
+                len(list(played_moves_uci or [])),
+                exc_info=True,
+            )
+    try:
+        return max(1, int(chess.Board(fen).fullmove_number))
+    except Exception:
+        return max(1, (fen_ply_abs(fen) // 2) + 1)
+
+
+def _forced_blunder_probability(engine_config: EngineConfigRequest) -> float:
+    return _clamp01(getattr(engine_config.forced_blunder, "probability", 0.0))
+
+
+def _should_attempt_forced_blunder(
+    *,
+    engine_config: EngineConfigRequest,
+    fen: str,
+    bot_move_number: int,
+    forced_blunder_already_triggered: bool,
+) -> bool:
+    cfg = engine_config.forced_blunder
+    if not cfg.enabled:
+        return False
+    if cfg.once_per_game and forced_blunder_already_triggered:
+        return False
+    if cfg.max_bot_move_number is not None and bot_move_number > max(0, int(cfg.max_bot_move_number)):
+        return False
+    return _should_apply_position_gate(
+        engine_config=engine_config,
+        fen=fen,
+        feature_name="forced_blunder",
+        probability=_forced_blunder_probability(engine_config),
+    )
+
+
+def _forced_blunder_candidates(
+    *,
+    board: chess.Board,
+    candidates: list[dict[str, Any]],
+    engine_config: EngineConfigRequest,
+    best_adjusted_cp: int,
+) -> list[dict[str, Any]]:
+    cfg = engine_config.forced_blunder
+    allowed_piece_types = {
+        _FORCED_BLUNDER_PIECE_TYPES[name]
+        for name in cfg.piece_types
+        if name in _FORCED_BLUNDER_PIECE_TYPES
+    }
+    if not allowed_piece_types:
+        return []
+    min_loss = max(0, int(cfg.min_cp_loss))
+    max_loss = max(min_loss, int(cfg.max_cp_loss))
+    forced: list[dict[str, Any]] = []
+    for candidate in candidates:
+        move_uci = str(candidate.get("uci") or "")
+        try:
+            move = chess.Move.from_uci(move_uci)
+        except Exception:
+            continue
+        if move not in board.legal_moves:
+            continue
+        moved_piece = board.piece_at(move.from_square)
+        if moved_piece is None or moved_piece.piece_type not in allowed_piece_types:
+            continue
+        cp_loss = best_adjusted_cp - int(candidate.get("adjusted_cp", candidate["cp"]))
+        if cp_loss < min_loss or cp_loss > max_loss:
+            continue
+        child = board.copy(stack=False)
+        child.push(move)
+        if not child.is_attacked_by(child.turn, move.to_square):
+            continue
+        forced.append(
+            {
+                **candidate,
+                "forced_blunder_candidate": True,
+                "forced_blunder_piece_type": _PIECE_NAME_BY_TYPE.get(moved_piece.piece_type),
+                "forced_blunder_cp_loss": int(cp_loss),
+            }
+        )
+    return forced
+
+
 def _mood_gate_enabled(*, random_seed: int, move_uci: str, feature_name: str, probability: float) -> bool:
     probability = _clamp01(probability)
     if probability <= 0.0:
@@ -355,6 +477,12 @@ def _candidate_mood_scores(
         probability=engine_config.attack_weight_prob
         * _phase_multiplier(engine_config.attack_weight_phase, phase),
     )
+    sacrifice_enabled = _mood_gate_enabled(
+        random_seed=engine_config.random_seed,
+        move_uci=move_uci_raw,
+        feature_name="sacrifice",
+        probability=_phase_multiplier(engine_config.sacrifice_propensity_phase, phase),
+    )
 
     rank = int(candidate.get("multipv_rank") or max_rank or 1)
     rank_novelty = 0.0 if max_rank <= 1 else (rank - 1) / max(1, max_rank - 1)
@@ -366,12 +494,13 @@ def _candidate_mood_scores(
 
     attack_score = 0.0
     risk_score = 0.0
+    sacrifice_score = 0.0
     try:
         move = chess.Move.from_uci(move_uci_raw)
     except Exception:
-        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0}
+        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0, "sacrifice_score": 0.0}
     if move not in board.legal_moves:
-        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0}
+        return {"novelty_score": novelty_score, "risk_score": 0.0, "attack_score": 0.0, "sacrifice_score": 0.0}
 
     moved_piece = board.piece_at(move.from_square)
     captured_piece = board.piece_at(move.to_square)
@@ -400,10 +529,7 @@ def _candidate_mood_scores(
     if risk_enabled:
         risk_score += 0.50 * cp_novelty
         if moved_piece is not None and child.is_attacked_by(opponent, move.to_square):
-            piece_value = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}.get(
-                moved_piece.piece_type,
-                0,
-            )
+            piece_value = _piece_value(moved_piece.piece_type)
             if not child.is_attacked_by(mover, move.to_square):
                 risk_score += 0.35
             risk_score += min(0.30, piece_value / 30.0)
@@ -411,10 +537,35 @@ def _candidate_mood_scores(
             risk_score += 0.10
         risk_score = _clamp01(risk_score)
 
+    if sacrifice_enabled and moved_piece is not None and moved_piece.piece_type in {
+        chess.KNIGHT,
+        chess.BISHOP,
+        chess.ROOK,
+        chess.QUEEN,
+    }:
+        moved_value = _piece_value(moved_piece.piece_type)
+        captured_value = _piece_value(captured_piece.piece_type) if captured_piece is not None else 0
+        material_given = max(0, moved_value - captured_value)
+        is_en_prise = child.is_attacked_by(opponent, move.to_square)
+        is_defended = child.is_attacked_by(mover, move.to_square)
+        is_forcing = child.is_check()
+        if material_given > 0 and (is_en_prise or is_forcing):
+            sacrifice_score += 0.45 * _clamp01(material_given / 8.0)
+            if is_forcing:
+                sacrifice_score += 0.25
+            if not is_defended:
+                sacrifice_score += 0.20
+            opponent_king = child.king(opponent)
+            if opponent_king is not None:
+                distance = chess.square_distance(move.to_square, opponent_king)
+                sacrifice_score += 0.10 * _clamp01((7 - distance) / 7.0)
+        sacrifice_score = _clamp01(sacrifice_score)
+
     return {
         "novelty_score": novelty_score,
         "risk_score": risk_score,
         "attack_score": attack_score,
+        "sacrifice_score": sacrifice_score,
     }
 
 
@@ -929,16 +1080,26 @@ def _limit_from_engine_config(
     def _time_s(ms: int) -> float:
         return max(0.001, int(ms) / 1000.0)
 
+    def _scaled_timer_ms() -> Optional[int]:
+        if predicted_think_ms is None:
+            return None
+        scale = max(0.0, float(engine_config.time_control_style_scale))
+        return max(1, int(round(float(predicted_think_ms) * scale)))
+
+    scaled_predicted_think_ms = _scaled_timer_ms()
+
     if engine_config.limit is not None:
         if engine_config.limit.type == "depth":
             depth_value = int(engine_config.limit.value)
-            if predicted_think_ms is not None:
-                return chess.engine.Limit(depth=depth_value, time=_time_s(predicted_think_ms)), {
+            if scaled_predicted_think_ms is not None:
+                return chess.engine.Limit(depth=depth_value, time=_time_s(scaled_predicted_think_ms)), {
                     "type": "depth+time_ms",
                     "depth": depth_value,
-                    "time_ms": predicted_think_ms,
+                    "time_ms": scaled_predicted_think_ms,
                     "time_source": "timer_head",
-                }, predicted_think_ms
+                    "raw_timer_head_ms": predicted_think_ms,
+                    "time_control_style_scale": engine_config.time_control_style_scale,
+                }, scaled_predicted_think_ms
             return chess.engine.Limit(depth=depth_value), {
                 "type": "depth",
                 "value": depth_value,
@@ -957,13 +1118,15 @@ def _limit_from_engine_config(
     depth_value = engine_config.stockfish_tree_search_depth or engine_config.stockfish_engine_depth
     if depth_value is not None:
         depth_value = int(depth_value)
-        if predicted_think_ms is not None:
-            return chess.engine.Limit(depth=depth_value, time=_time_s(predicted_think_ms)), {
+        if scaled_predicted_think_ms is not None:
+            return chess.engine.Limit(depth=depth_value, time=_time_s(scaled_predicted_think_ms)), {
                 "type": "depth+time_ms",
                 "depth": depth_value,
-                "time_ms": predicted_think_ms,
+                "time_ms": scaled_predicted_think_ms,
                 "time_source": "timer_head",
-            }, predicted_think_ms
+                "raw_timer_head_ms": predicted_think_ms,
+                "time_control_style_scale": engine_config.time_control_style_scale,
+            }, scaled_predicted_think_ms
         return chess.engine.Limit(depth=depth_value), {"type": "depth", "value": depth_value}, None
 
     if engine_config.stockfish_engine_nodes is not None:
@@ -979,14 +1142,20 @@ def _limit_from_engine_config(
             "value": time_ms,
         }, time_ms
 
-    if predicted_think_ms is not None:
-        return chess.engine.Limit(time=_time_s(predicted_think_ms)), {
+    if scaled_predicted_think_ms is not None:
+        return chess.engine.Limit(time=_time_s(scaled_predicted_think_ms)), {
             "type": "time_ms",
-            "value": predicted_think_ms,
+            "value": scaled_predicted_think_ms,
             "source": "timer_head",
-        }, predicted_think_ms
+            "raw_timer_head_ms": predicted_think_ms,
+            "time_control_style_scale": engine_config.time_control_style_scale,
+        }, scaled_predicted_think_ms
 
     return chess.engine.Limit(time=0.2), {"type": "time_ms", "value": 200, "source": "default"}, 200
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int(round((time.time() - started) * 1000.0)))
 
 
 @torch.no_grad()
@@ -999,25 +1168,51 @@ def choose_bot_move(
     engine_config: EngineConfigRequest,
     start_fen: str | None = None,
     played_moves_uci: list[str] | None = None,
+    forced_blunder_already_triggered: bool = False,
 ) -> BotMoveResult:
     device, elo_dict, _all_moves, all_moves_dict = get_global_context()
     _ = device, elo_dict
     board = chess.Board(fen)
-    opening_book_result = _choose_book_move(
-        gm_name=bundle.profile.gm_name,
-        board=board,
-        engine_config=engine_config,
+    bot_move_number = _bot_side_move_number(
+        fen=fen,
+        start_fen=start_fen,
         played_moves_uci=played_moves_uci,
+        side_to_move=board.turn,
     )
-    if opening_book_result is not None:
+    forced_blunder_attempted = _should_attempt_forced_blunder(
+        engine_config=engine_config,
+        fen=fen,
+        bot_move_number=bot_move_number,
+        forced_blunder_already_triggered=forced_blunder_already_triggered,
+    )
+    skip_opening_book_for_forced_blunder = (
+        forced_blunder_attempted
+        and engine_config.forced_blunder.disable_opening_book_until_triggered
+    )
+    if not skip_opening_book_for_forced_blunder:
+        opening_book_result = _choose_book_move(
+            gm_name=bundle.profile.gm_name,
+            board=board,
+            engine_config=engine_config,
+            played_moves_uci=played_moves_uci,
+        )
+        if opening_book_result is not None:
+            logger.info(
+                "choose_bot_move_opening_book gm=%s fen_ply=%s branch=%s",
+                bundle.profile.gm_name,
+                fen_ply_abs(fen),
+                opening_book_result.stockfish_metrics.get("opening_book_branch"),
+            )
+            return opening_book_result
+    else:
         logger.info(
-            "choose_bot_move_opening_book gm=%s fen_ply=%s branch=%s",
+            "choose_bot_move_forced_blunder_skipping_opening_book gm=%s fen_ply=%s bot_move_number=%s",
             bundle.profile.gm_name,
             fen_ply_abs(fen),
-            opening_book_result.stockfish_metrics.get("opening_book_branch"),
+            bot_move_number,
         )
-        return opening_book_result
 
+    backend_started = time.time()
     side_is_white = board.turn == chess.WHITE
     feats, masked_logits = bundle.policy_runtime.forward_once(
         fen,
@@ -1075,7 +1270,7 @@ def choose_bot_move(
         engine_limit,
         multipv=max(1, int(engine_config.stockfish_multipv_topk)),
     )
-    actual_think_ms = int(round((time.time() - started) * 1000.0))
+    stockfish_actual_think_ms = _elapsed_ms(started)
 
     candidates: list[dict[str, Any]] = []
     for info in infos:
@@ -1106,6 +1301,8 @@ def choose_bot_move(
 
     if not candidates:
         fallback = next(iter(board.legal_moves))
+        backend_wall_time_ms = max(stockfish_actual_think_ms, _elapsed_ms(backend_started))
+        actual_think_ms = backend_wall_time_ms
         return BotMoveResult(
             move_uci=fallback.uci(),
             eval_cp=0,
@@ -1123,7 +1320,7 @@ def choose_bot_move(
                     "seldepth": None,
                     "nodes": None,
                     "nps": None,
-                    "time_ms": actual_think_ms,
+                    "time_ms": stockfish_actual_think_ms,
                     "tbhits": None,
                 }
             ],
@@ -1135,12 +1332,18 @@ def choose_bot_move(
                 "max_seldepth": None,
                 "total_nodes": None,
                 "max_nps": None,
-                "max_time_ms": actual_think_ms,
+                "max_time_ms": stockfish_actual_think_ms,
+                "stockfish_actual_think_ms": stockfish_actual_think_ms,
+                "backend_wall_time_ms": backend_wall_time_ms,
                 "best_cp": 0,
                 "best_move_uci": fallback.uci(),
                 "best_move_mate": None,
                 "selected_move_rank_by_cp": 1,
                 "selected_move_rank_by_prob_within_window": 1,
+                "forced_blunder_attempted": forced_blunder_attempted,
+                "forced_blunder_triggered": False,
+                "forced_blunder_candidate_count": 0,
+                "forced_blunder_bot_move_number": bot_move_number,
             },
             selected_probability=1.0,
             requested_think_ms=requested_think_ms,
@@ -1178,22 +1381,35 @@ def choose_bot_move(
         }
         for candidate in adjusted_candidates
     ]
-    kept = adjusted_candidates
-    if engine_config.cp_gap_window is not None:
-        kept = [
-            item
-            for item in adjusted_candidates
-            if int(item.get("adjusted_cp", item["cp"])) >= best_adjusted_cp - int(engine_config.cp_gap_window)
-        ]
-        if not kept:
-            kept = adjusted_candidates
-    kept = _apply_weird_move_filters(
-        kept=kept,
-        engine_config=engine_config,
-        fen=fen,
-        phase=phase,
-        best_adjusted_cp=best_adjusted_cp,
+    forced_candidates = (
+        _forced_blunder_candidates(
+            board=board,
+            candidates=adjusted_candidates,
+            engine_config=engine_config,
+            best_adjusted_cp=best_adjusted_cp,
+        )
+        if forced_blunder_attempted
+        else []
     )
+    if forced_candidates:
+        kept = forced_candidates
+    else:
+        kept = adjusted_candidates
+        if engine_config.cp_gap_window is not None:
+            kept = [
+                item
+                for item in adjusted_candidates
+                if int(item.get("adjusted_cp", item["cp"])) >= best_adjusted_cp - int(engine_config.cp_gap_window)
+            ]
+            if not kept:
+                kept = adjusted_candidates
+        kept = _apply_weird_move_filters(
+            kept=kept,
+            engine_config=engine_config,
+            fen=fen,
+            phase=phase,
+            best_adjusted_cp=best_adjusted_cp,
+        )
 
     style_temp = max(1e-6, float(engine_config.style_temperature))
     logp_all = torch.log_softmax(masked_logits[0] / style_temp, dim=-1)
@@ -1223,7 +1439,8 @@ def choose_bot_move(
         mood_term = torch.tensor(
             (float(engine_config.novelty_weight) * float(candidate.get("novelty_score") or 0.0))
             + (float(engine_config.risk_weight) * float(candidate.get("risk_score") or 0.0))
-            + (float(engine_config.attack_weight) * float(candidate.get("attack_score") or 0.0)),
+            + (float(engine_config.attack_weight) * float(candidate.get("attack_score") or 0.0))
+            + (float(engine_config.sacrifice_weight) * float(candidate.get("sacrifice_score") or 0.0)),
             device=logp_all.device,
             dtype=logp_all.dtype,
         )
@@ -1260,6 +1477,7 @@ def choose_bot_move(
         chosen_idx = int(torch.argmax(probs_t).item())
 
     chosen_move = serializable_candidates[chosen_idx]["uci"]
+    chosen_candidate = serializable_candidates[chosen_idx]
     chosen_prob = float(probs[chosen_idx]) if probs else None
     rank_by_cp = next(
         (rank for rank, candidate in enumerate(sorted(candidates, key=lambda item: item["cp"], reverse=True), start=1) if candidate["uci"] == chosen_move),
@@ -1269,6 +1487,8 @@ def choose_bot_move(
         (rank for rank, candidate in enumerate(sorted(serializable_candidates, key=lambda item: float(item.get("prob") or 0.0), reverse=True), start=1) if candidate["uci"] == chosen_move),
         None,
     )
+    backend_wall_time_ms = max(stockfish_actual_think_ms, _elapsed_ms(backend_started))
+    actual_think_ms = backend_wall_time_ms
     stockfish_metrics = {
         "requested_multipv_topk": max(1, int(engine_config.stockfish_multipv_topk)),
         "returned_candidate_count": len(candidates),
@@ -1277,12 +1497,20 @@ def choose_bot_move(
         "max_seldepth": max((candidate["seldepth"] for candidate in candidates if candidate.get("seldepth") is not None), default=None),
         "total_nodes": sum(candidate["nodes"] for candidate in candidates if candidate.get("nodes") is not None) or None,
         "max_nps": max((candidate["nps"] for candidate in candidates if candidate.get("nps") is not None), default=None),
-        "max_time_ms": max((candidate["time_ms"] for candidate in candidates if candidate.get("time_ms") is not None), default=actual_think_ms),
+        "max_time_ms": max((candidate["time_ms"] for candidate in candidates if candidate.get("time_ms") is not None), default=stockfish_actual_think_ms),
+        "stockfish_actual_think_ms": stockfish_actual_think_ms,
+        "backend_wall_time_ms": backend_wall_time_ms,
         "best_cp": int(best_cp),
         "best_move_uci": str(best_candidate["uci"]),
         "best_move_mate": best_candidate.get("mate"),
         "selected_move_rank_by_cp": rank_by_cp,
         "selected_move_rank_by_prob_within_window": rank_by_prob,
+        "forced_blunder_attempted": forced_blunder_attempted,
+        "forced_blunder_triggered": bool(chosen_candidate.get("forced_blunder_candidate")),
+        "forced_blunder_candidate_count": len(forced_candidates),
+        "forced_blunder_bot_move_number": bot_move_number,
+        "forced_blunder_piece_type": chosen_candidate.get("forced_blunder_piece_type"),
+        "forced_blunder_cp_loss": chosen_candidate.get("forced_blunder_cp_loss"),
     }
     return BotMoveResult(
         move_uci=chosen_move,

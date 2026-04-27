@@ -62,14 +62,18 @@ class InferenceConfigRecord(DbModel):
     weird_move_max_cp_loss: Optional[int] = None
     top_move_suppression_prob: Optional[float] = None
     top_move_suppression_phase: dict[str, Any] = Field(default_factory=dict)
+    sacrifice_weight: Optional[float] = None
+    sacrifice_propensity_phase: dict[str, Any] = Field(default_factory=dict)
     sample: Optional[bool] = None
     cp_gap_window: Optional[int] = None
     stockfish_multipv_topk: Optional[int] = None
     timer_head_enabled: Optional[bool] = None
+    time_control_style_scale: Optional[float] = None
     requested_depth: Optional[int] = None
     requested_time_ms: Optional[int] = None
     requested_nodes: Optional[int] = None
     draw_penalties: dict[str, Any] = Field(default_factory=dict)
+    forced_blunder: dict[str, Any] = Field(default_factory=dict)
 
 
 class InferenceStatusRecord(DbModel):
@@ -99,6 +103,7 @@ class CandidateMoveRecord(DbModel):
     novelty_score: Optional[float] = None
     risk_score: Optional[float] = None
     attack_score: Optional[float] = None
+    sacrifice_score: Optional[float] = None
 
 
 class BoardStateAnalysisRecord(DbModel):

@@ -51,6 +51,7 @@ class SnsGameFinishedPublisher:
 
     def publish_finished_game(self, payload: dict[str, Any]) -> str:
         message = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+        message_bytes = len(message.encode("utf-8"))
         last_error: Exception | None = None
         for attempt in range(1, self.publish_attempts + 1):
             try:
@@ -70,9 +71,10 @@ class SnsGameFinishedPublisher:
             except Exception as exc:  # pragma: no cover - retry path is validated via service tests
                 last_error = exc
                 logger.warning(
-                    "games_finished_publish_attempt_failed game_id=%s event_key=%s attempt=%s/%s error=%s",
+                    "games_finished_publish_attempt_failed game_id=%s event_key=%s message_bytes=%s attempt=%s/%s error=%s",
                     payload.get("game_id"),
                     payload.get("event_key"),
+                    message_bytes,
                     attempt,
                     self.publish_attempts,
                     exc,

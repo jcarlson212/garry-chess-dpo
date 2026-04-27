@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -35,6 +36,25 @@ from grandmaster_dpo.website.policy_only.service.opening_starts import OpeningSt
 from grandmaster_dpo.website.policy_only.service.state import GameStateStore, StoredGameState
 
 logger = logging.getLogger(__name__)
+
+FINISHED_EVENT_DEFAULT_CANDIDATE_LIMIT = 3
+FINISHED_EVENT_CANDIDATE_KEYS = {
+    "uci",
+    "prob",
+    "probability",
+    "in_cp_gap_window",
+    "cp",
+    "adjusted_cp",
+    "draw_penalty_cp",
+    "repetition_x2_penalty_cp",
+    "one_move_from_draw_penalty_cp",
+    "mate",
+    "multipv_rank",
+    "novelty_score",
+    "risk_score",
+    "attack_score",
+    "sacrifice_score",
+}
 
 
 class GameServiceError(Exception):
@@ -169,10 +189,13 @@ class PolicyOnlyGameService:
                 "weird_move_max_cp_loss": req.engine_config.weird_move_max_cp_loss,
                 "top_move_suppression_prob": req.engine_config.top_move_suppression_prob,
                 "top_move_suppression_phase": req.engine_config.top_move_suppression_phase.model_dump(mode="python"),
+                "sacrifice_weight": req.engine_config.sacrifice_weight,
+                "sacrifice_propensity_phase": req.engine_config.sacrifice_propensity_phase.model_dump(mode="python"),
                 "sample": req.engine_config.sample,
                 "cp_gap_window": req.engine_config.cp_gap_window,
                 "stockfish_multipv_topk": req.engine_config.stockfish_multipv_topk,
                 "timer_head_enabled": req.engine_config.use_timer_head,
+                "time_control_style_scale": req.engine_config.time_control_style_scale,
                 "requested_depth": (
                     req.engine_config.limit.value
                     if req.engine_config.limit is not None and req.engine_config.limit.type == "depth"
@@ -186,12 +209,127 @@ class PolicyOnlyGameService:
                     else req.engine_config.stockfish_engine_nodes
                 ),
                 "draw_penalties": req.engine_config.draw_penalties.model_dump(mode="python"),
+                "forced_blunder": {
+                    **req.engine_config.forced_blunder.model_dump(mode="python"),
+                    "attempted": stockfish_metrics.get("forced_blunder_attempted"),
+                    "triggered": stockfish_metrics.get("forced_blunder_triggered"),
+                    "candidate_count": stockfish_metrics.get("forced_blunder_candidate_count"),
+                    "bot_move_number": stockfish_metrics.get("forced_blunder_bot_move_number"),
+                    "piece_type": stockfish_metrics.get("forced_blunder_piece_type"),
+                    "cp_loss": stockfish_metrics.get("forced_blunder_cp_loss"),
+                },
             },
             "board_state_analysis": board_state_analysis,
             "candidate_moves": list(move_result.candidate_moves),
             "created_at_iso": self._now_iso(),
             "engine_limit": dict(move_result.engine_limit or {}),
         }
+
+    @staticmethod
+    def _forced_blunder_already_triggered(inference_positions: list[dict[str, Any]]) -> bool:
+        for raw in inference_positions:
+            if not isinstance(raw, dict):
+                continue
+            inference_config = raw.get("inference_config")
+            if not isinstance(inference_config, dict):
+                continue
+            forced_blunder = inference_config.get("forced_blunder")
+            if isinstance(forced_blunder, dict) and forced_blunder.get("triggered") is True:
+                return True
+        return False
+
+    @staticmethod
+    def _finished_event_candidate_limit() -> int:
+        raw = os.environ.get("POLICY_ONLY_FINISHED_EVENT_CANDIDATE_LIMIT")
+        if raw is None:
+            return FINISHED_EVENT_DEFAULT_CANDIDATE_LIMIT
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            logger.warning(
+                "invalid_finished_event_candidate_limit value=%r using_default=%s",
+                raw,
+                FINISHED_EVENT_DEFAULT_CANDIDATE_LIMIT,
+            )
+            return FINISHED_EVENT_DEFAULT_CANDIDATE_LIMIT
+
+    @staticmethod
+    def _compact_finished_event_candidate(candidate: Any) -> dict[str, Any]:
+        if not isinstance(candidate, dict):
+            return {}
+        return {
+            key: value
+            for key, value in candidate.items()
+            if key in FINISHED_EVENT_CANDIDATE_KEYS and value is not None
+        }
+
+    def _compact_finished_event_candidates(
+        self,
+        candidates: list[Any],
+        *,
+        selected_move_uci: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        candidate_limit = self._finished_event_candidate_limit()
+        if candidate_limit <= 0:
+            return [], len(candidates)
+
+        def _candidate_score(candidate: Any) -> tuple[int, float, int]:
+            if not isinstance(candidate, dict):
+                return (0, 0.0, 0)
+            is_selected = 1 if str(candidate.get("uci") or "") == selected_move_uci else 0
+            prob = candidate.get("probability", candidate.get("prob"))
+            try:
+                probability = float(prob) if prob is not None else 0.0
+            except (TypeError, ValueError):
+                probability = 0.0
+            try:
+                rank_score = -int(candidate.get("multipv_rank") or 9999)
+            except (TypeError, ValueError):
+                rank_score = -9999
+            return (is_selected, probability, rank_score)
+
+        compacted: list[dict[str, Any]] = []
+        for candidate in sorted(candidates, key=_candidate_score, reverse=True):
+            compacted_candidate = self._compact_finished_event_candidate(candidate)
+            if compacted_candidate:
+                compacted.append(compacted_candidate)
+            if len(compacted) >= candidate_limit:
+                break
+        return compacted, max(0, len(candidates) - len(compacted))
+
+    def _compact_finished_event_inference_positions(
+        self,
+        inference_positions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        compacted_positions: list[dict[str, Any]] = []
+        truncated_candidate_count = 0
+        for raw in inference_positions:
+            if not isinstance(raw, dict):
+                continue
+            compacted = dict(raw)
+            candidate_moves = list(raw.get("candidate_moves") or [])
+            compacted_candidates, truncated = self._compact_finished_event_candidates(
+                candidate_moves,
+                selected_move_uci=str(raw.get("selected_move_uci") or ""),
+            )
+            compacted["candidate_moves"] = compacted_candidates
+            if truncated > 0:
+                compacted["candidate_moves_truncated_count"] = truncated
+                truncated_candidate_count += truncated
+            compacted_positions.append(compacted)
+
+        if truncated_candidate_count > 0:
+            logger.info(
+                "finished_event_inference_candidates_compacted positions=%s truncated_candidates=%s kept_per_position=%s",
+                len(compacted_positions),
+                truncated_candidate_count,
+                self._finished_event_candidate_limit(),
+            )
+        return compacted_positions
+
+    @staticmethod
+    def _json_size_bytes(payload: dict[str, Any]) -> int:
+        return len(json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8"))
 
     def _maybe_publish_finished_event(self, state: StoredGameState) -> None:
         if state.finished_event_published_at_ms is not None or not state.finished_event_payload:
@@ -284,7 +422,7 @@ class PolicyOnlyGameService:
             f"{response.game_status.reason}:{response.new_fen}"
         )
         request_payload = req.model_dump(mode="python", exclude={"gm_name", "opening_family"})
-        return {
+        payload = {
             "event_type": "game_finished",
             "event_version": 2,
             "delivery_semantics": "at_least_once",
@@ -311,7 +449,9 @@ class PolicyOnlyGameService:
                 "final_fen": response.new_fen,
                 "move_count": len(state.moves_compact),
                 "moves_compact": list(state.moves_compact),
-                "inference_positions": list(state.inference_positions),
+                "inference_positions": self._compact_finished_event_inference_positions(
+                    list(state.inference_positions)
+                ),
                 "white_actor_id": white_actor_id,
                 "white_actor_type": white_actor_type,
                 "white_label": white_label,
@@ -348,6 +488,14 @@ class PolicyOnlyGameService:
             "request": request_payload,
             "response": response.model_dump(mode="python"),
         }
+        logger.info(
+            "finished_event_payload_built game_id=%s bytes=%s moves=%s inference_positions=%s",
+            response.game_id,
+            self._json_size_bytes(payload),
+            len(state.moves_compact),
+            len(state.inference_positions),
+        )
+        return payload
 
     def _persist_terminal_state_and_publish(
         self,
@@ -646,6 +794,7 @@ class PolicyOnlyGameService:
             engine_config=req.engine_config,
             start_fen=start_fen,
             played_moves_uci=[str(item.get("uci") or "") for item in moves_compact],
+            forced_blunder_already_triggered=self._forced_blunder_already_triggered(inference_positions),
         )
         try:
             bot_move = chess.Move.from_uci(move_result.move_uci)

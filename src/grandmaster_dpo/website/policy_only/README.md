@@ -256,6 +256,7 @@ curl -X POST http://localhost:8080/games \
     "engine_config": {
       "random_seed": 7,
       "use_timer_head": true,
+      "time_control_style_scale": 1.0,
       "use_gibbs": false,
       "cp_gap_window": 60,
       "stockfish_multipv_topk": 10
@@ -325,6 +326,47 @@ docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:c
 For a multi-GM container, pass `gm_name` in the game request. The older `game_type_id` inference remains as a fallback, so `game_type_id=gm_carlsen_blitz` still selects Carlsen if `gm_name` is omitted.
 
 The finished-game SNS payload keeps the existing nested `request` shape for postprocessing; the API-only selector `gm_name` is omitted from `payload["request"]`. The selected GM is still present in `response.analysis.gm_name`.
+
+### Forced Opening Blunders
+
+`engine_config.forced_blunder` can force the bot to choose from legal, attacked non-pawn-piece moves in a configured centipawn-loss band. It is useful for test personas such as a strong style model that drops a piece early and then resumes normal play.
+
+Recommended "drunk Magnus" config:
+
+```json
+{
+  "gm_name": "carlsen",
+  "engine_config": {
+    "random_seed": 7,
+    "sample": true,
+    "use_timer_head": true,
+    "cp_gap_window": 60,
+    "stockfish_multipv_topk": 20,
+    "forced_blunder": {
+      "enabled": true,
+      "probability": 1.0,
+      "max_bot_move_number": 7,
+      "piece_types": ["knight", "bishop", "rook", "queen"],
+      "min_cp_loss": 300,
+      "max_cp_loss": 1200,
+      "once_per_game": true,
+      "disable_opening_book_until_triggered": true
+    }
+  }
+}
+```
+
+When `disable_opening_book_until_triggered` is true, the opening book is bypassed while the forced blunder is eligible. Once a forced blunder is selected, the inference trace marks it as triggered and future bot turns use the normal book/model/engine path.
+
+### Timer Scaling
+
+The timer head was trained on blitz-style move timing. To make a bot think faster or slower without replacing the timer model, pass `engine_config.time_control_style_scale`.
+
+- `1.0`: default blitz-like timing
+- `< 1.0`: shorter Stockfish time limits
+- `> 1.0`: longer Stockfish time limits
+
+The scale only applies to timer-head-derived limits. Explicit client limits such as `engine_config.limit`, `stockfish_max_time_ms`, `stockfish_engine_nodes`, or depth-only requests remain explicit.
 
 ### Recommended Runtime Environment Variables For Live Policy Tasks
 
