@@ -117,3 +117,5 @@ secrets/
 # Misc / Personal
 queue.json
 training_summaries.txt
+# Compressed archives of experiment result dirs (too large for git)
+final_experiments_for_paper/experiment3/depth_study_validation_results/*.tar.zst

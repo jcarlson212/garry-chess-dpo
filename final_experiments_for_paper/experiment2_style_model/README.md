@@ -2,6 +2,20 @@ Reproducibility Commands
 
 For this experiment we filter from all players with more than 1K games on TWIC per ~early 2026 for all their games with ELO > 2500 by at least one player, de-duplicate, make sure games last at least five plies, cap each player to max 500 games appearing in final dataset (as target), ensure from each player there's 60% blitz, 30% rapid, 10% classical–if that's not possible we drop the player. We partition the output based on the game state hashed w/ md5. Game metadata is maintained.
 
+### On-disk compression (July 2026)
+
+To save disk space, the large generated datasets in this directory are stored zstd-compressed:
+
+- `pairs_v1/` and `pairs_v2/` jsonl shards are stored as `*.jsonl.zst` (zstd -9, ~7.7x smaller). All pipeline readers (`prepare_style_training_cache.py`, `eval_style_embedding_model.py`, `generate_paper_plots.py`) read `.jsonl.zst` transparently via `grandmaster_dpo.utilities.jsonl_io` — no decompression needed.
+- `pairs_v{1,2,3}_cached/` and `eval_outputs/` numpy arrays are stored as `*.npy.zst` / `*.npz.zst` (zstd -3, ~8.5x smaller). Training (`train_style_encoder.py`) mmaps these caches, so they must be decompressed before re-running training or anything else that loads them:
+
+  ```sh
+  # decompress a cache dir in place (removes the .zst files)
+  find pairs_v1_cached -name '*.zst' -exec zstd -d -q --rm {} +
+  ```
+
+  Alternatively, caches can be regenerated from the compressed pairs jsonls with `prepare_style_training_cache.py`.
+
 ### Data Filtering
 
 ```sh

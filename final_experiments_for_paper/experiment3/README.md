@@ -110,3 +110,14 @@ python src/grandmaster_dpo/graphs/single_gm/generate_experiment3_paper_plots.py 
 --eval-root final_experiments_for_paper/experiment3/depth_study_validation_results \
 --out-dir final_experiments_for_paper/experiment3/paper_plots_depth_study
 ```
+
+## On-disk compression (July 2026)
+
+To save disk space, the per-GM eval outputs under `depth_study_validation_results/` are archived
+as `<gm>.tar.zst` (zstd -9, ~6x smaller). To restore a GM's results before re-running graphs or
+inspecting per-row files:
+
+```sh
+cd final_experiments_for_paper/experiment3/depth_study_validation_results
+tar --use-compress-program=unzstd -xf carlsen.tar.zst
+```
