@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader, Dataset
 
 # Adjust these imports to match your repo layout.
 from grandmaster_dpo.train.style_embeddings_for_gms.dataset_schema import TrainConfig
+from grandmaster_dpo.utilities.jsonl_io import open_jsonl_binary, sorted_jsonl_paths
 from grandmaster_dpo.train.style_embeddings_for_gms.train_style_encoder import StyleEncoder
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
     PHASE_TO_ID,
@@ -155,9 +156,9 @@ def example_meta_from_raw(ex: Dict[str, Any]) -> ExampleMeta:
 
 def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int], skip_rows: int = 0) -> Iterable[Dict[str, Any]]:
     seen = 0
-    for path in sorted(input_dir.glob("*.jsonl")):
+    for path in sorted_jsonl_paths(input_dir):
         print(f"[read] file={path}")
-        with path.open("rb") as f:
+        with open_jsonl_binary(path) as f:
             for line in f:
                 if not line.strip():
                     continue

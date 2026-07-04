@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import orjson
 
+from grandmaster_dpo.utilities.jsonl_io import open_jsonl_binary, sorted_jsonl_paths
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
     raw_example_to_cached_arrays,
 )
@@ -44,9 +45,9 @@ def stable_example_hash64(ex: Dict[str, Any]) -> int:
 
 def iter_jsonl_rows(input_dir: Path, max_rows: Optional[int]) -> Iterable[Dict[str, Any]]:
     seen = 0
-    for path in sorted(input_dir.glob("*.jsonl")):
+    for path in sorted_jsonl_paths(input_dir):
         print(f"[read] file={path}")
-        with path.open("rb") as f:
+        with open_jsonl_binary(path) as f:
             for line in f:
                 if not line.strip():
                     continue
