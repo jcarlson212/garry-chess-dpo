@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+from grandmaster_dpo.utilities.npy_io import cache_file_present, load_npy
 import pandas as pd
 
 
@@ -2005,10 +2007,10 @@ def _stratified_pick_indices(
 
 def _load_test_embeddings_with_meta(run: RunRecord) -> Optional[Dict[str, np.ndarray]]:
     p = run.path / "test" / "embeddings_and_meta.npz"
-    if not p.exists() or not p.is_file():
+    if not cache_file_present(p):
         return None
     try:
-        with np.load(p, allow_pickle=True) as data:
+        with load_npy(p, allow_pickle=True) as data:
             emb = np.asarray(data["embeddings"], dtype=np.float32)
             pid = _as_str_array(np.asarray(data["player_id"], dtype=object))
             phase = _as_str_array(np.asarray(data["phase_id"], dtype=object))

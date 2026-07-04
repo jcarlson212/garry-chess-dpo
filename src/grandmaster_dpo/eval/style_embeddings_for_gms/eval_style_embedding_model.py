@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader, Dataset
 # Adjust these imports to match your repo layout.
 from grandmaster_dpo.train.style_embeddings_for_gms.dataset_schema import TrainConfig
 from grandmaster_dpo.utilities.jsonl_io import open_jsonl_binary, sorted_jsonl_paths
+from grandmaster_dpo.utilities.npy_io import cache_file_present, load_npy
 from grandmaster_dpo.train.style_embeddings_for_gms.train_style_encoder import StyleEncoder
 from grandmaster_dpo.utilities.shared_style_emb_model_utils import (
     PHASE_TO_ID,
@@ -377,7 +378,7 @@ def collect_resumable_shards(output_dir: Path) -> Tuple[List[Path], List[Dict[st
         if idx != expected_idx:
             stale.append(sd)
             continue
-        if any(not (sd / rel).exists() for rel in req):
+        if any(not cache_file_present(sd / rel) for rel in req):
             stale.append(sd)
             break
         meta = read_json_if_exists(sd / "meta.json")
@@ -524,7 +525,7 @@ def detect_optional_feature_files(shard_dir: Path) -> OptionalFeatureFiles:
     def pick(*names: str) -> Optional[Path]:
         for name in names:
             path = shard_dir / name
-            if path.exists():
+            if cache_file_present(path):
                 return path
         return None
 
@@ -593,14 +594,14 @@ class PairEvalDataset(Dataset):
         for sd in shard_dirs:
             shard = {
                 "path": sd,
-                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
-                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
-                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
-                "anchor_idx": np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
-                "pos_flat": np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
-                "pos_offsets": np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
-                "neg_flat": np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
-                "neg_offsets": np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
+                "boards": load_npy(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": load_npy(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": load_npy(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
+                "anchor_idx": load_npy(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
+                "pos_flat": load_npy(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
+                "pos_offsets": load_npy(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
+                "neg_flat": load_npy(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
+                "neg_offsets": load_npy(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
             }
             self.shards.append(shard)
             self.lengths.append(len(shard["anchor_idx"]))
@@ -639,7 +640,7 @@ class PairEvalDataset(Dataset):
         path = getattr(files, key)
         if path is None:
             return None
-        return np.load(path, mmap_mode="r")
+        return load_npy(path, mmap_mode="r")
 
     def _decode_vocab(self, vocab: Optional[List[str]], encoded_value: Any) -> Optional[str]:
         if vocab is None or encoded_value is None:
@@ -736,9 +737,9 @@ class ExampleEmbeddingDataset(Dataset):
         total_examples = 0
         for sd in shard_dirs:
             shard = {
-                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
-                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
-                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
+                "boards": load_npy(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": load_npy(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": load_npy(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
             }
             self.shards.append(shard)
             self.lengths.append(len(shard["boards"]))
@@ -770,7 +771,7 @@ class ExampleEmbeddingDataset(Dataset):
         path = getattr(files, key)
         if path is None:
             return None
-        return np.load(path, mmap_mode="r")
+        return load_npy(path, mmap_mode="r")
 
     def _decode_vocab(self, vocab: Optional[List[str]], encoded_value: Any) -> Optional[str]:
         if vocab is None or encoded_value is None:
@@ -1061,10 +1062,10 @@ def _load_cached_shard_embeddings(
         return None
     if int(meta.get("n_examples", -1)) != int(expected_examples):
         return None
-    if not emb_path.exists():
+    if not cache_file_present(emb_path):
         return None
     try:
-        with np.load(emb_path) as data:
+        with load_npy(emb_path) as data:
             emb = np.asarray(data["embeddings"], dtype=np.float32)
     except Exception:
         return None
@@ -1173,7 +1174,7 @@ def compute_pair_metrics_with_embedding_cache(
 
     total_rows = 0
     for sd in shard_dirs:
-        anchor_idx = np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
+        anchor_idx = load_npy(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
         total_rows += int(len(anchor_idx))
     max_rows = int(total_rows if max_batches is None else min(total_rows, max_batches * batch_size))
     print(f"[eval-progress] pair-metrics (embedding-cache) start: total_rows={total_rows:,} max_rows={max_rows:,}")
@@ -1182,21 +1183,21 @@ def compute_pair_metrics_with_embedding_cache(
     start_t = time.time()
 
     for sd in shard_dirs:
-        boards = np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r")
-        moves = np.load(sd / "examples_moves.uint8.npy", mmap_mode="r")
-        game_types = np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r")
-        anchor_idx = np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
-        pos_flat = np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r")
-        pos_offsets = np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r")
-        neg_flat = np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r")
-        neg_offsets = np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r")
+        boards = load_npy(sd / "examples_board_tokens.uint8.npy", mmap_mode="r")
+        moves = load_npy(sd / "examples_moves.uint8.npy", mmap_mode="r")
+        game_types = load_npy(sd / "examples_game_type.uint8.npy", mmap_mode="r")
+        anchor_idx = load_npy(sd / "pair_anchor_idx.int32.npy", mmap_mode="r")
+        pos_flat = load_npy(sd / "pair_pos_flat.int32.npy", mmap_mode="r")
+        pos_offsets = load_npy(sd / "pair_pos_offsets.int64.npy", mmap_mode="r")
+        neg_flat = load_npy(sd / "pair_neg_flat.int32.npy", mmap_mode="r")
+        neg_offsets = load_npy(sd / "pair_neg_offsets.int64.npy", mmap_mode="r")
 
         files = detect_optional_feature_files(sd)
-        player_ids = np.load(files.player_ids, mmap_mode="r") if files.player_ids is not None else None
-        phase_ids = np.load(files.phase_ids, mmap_mode="r") if files.phase_ids is not None else None
-        engine_rank = np.load(files.engine_rank, mmap_mode="r") if files.engine_rank is not None else None
-        engine_cp_gap = np.load(files.engine_cp_gap, mmap_mode="r") if files.engine_cp_gap is not None else None
-        example_ids = np.load(files.example_ids, mmap_mode="r") if files.example_ids is not None else None
+        player_ids = load_npy(files.player_ids, mmap_mode="r") if files.player_ids is not None else None
+        phase_ids = load_npy(files.phase_ids, mmap_mode="r") if files.phase_ids is not None else None
+        engine_rank = load_npy(files.engine_rank, mmap_mode="r") if files.engine_rank is not None else None
+        engine_cp_gap = load_npy(files.engine_cp_gap, mmap_mode="r") if files.engine_cp_gap is not None else None
+        example_ids = load_npy(files.example_ids, mmap_mode="r") if files.example_ids is not None else None
         player_vocab = load_vocab(files.player_vocab)
         example_vocab = load_vocab(files.example_vocab)
 
@@ -2436,7 +2437,7 @@ def validate_cached_split_dir(cached_split_dir: Path) -> Tuple[bool, str]:
     for shard_dir in shard_dirs:
         for rel in req:
             path = shard_dir / rel
-            if not path.exists() or not path.is_file():
+            if not cache_file_present(path):
                 return False, f"missing_required_file:{path.name}"
 
     return True, "ok"
@@ -2456,7 +2457,7 @@ def is_prebuilt_cached_split_dir(path: Path) -> Tuple[bool, str]:
     for shard_dir in shard_dirs:
         for rel in req:
             f = shard_dir / rel
-            if not f.exists() or not f.is_file():
+            if not cache_file_present(f):
                 return False, f"missing_required_file:{shard_dir.name}/{rel}"
     return True, "ok"
 

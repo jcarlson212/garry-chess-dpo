@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
+
+from grandmaster_dpo.utilities.npy_io import load_npy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -175,14 +177,14 @@ def shard_dirs(split_dir: Path) -> List[Path]:
 
 def load_shard(shard_dir: Path) -> Dict[str, np.ndarray]:
     return {
-        "boards": np.load(shard_dir / "examples_board_tokens.uint8.npy", mmap_mode="r"),
-        "moves": np.load(shard_dir / "examples_moves.uint8.npy", mmap_mode="r"),
-        "game_types": np.load(shard_dir / "examples_game_type.uint8.npy", mmap_mode="r"),
-        "anchor_idx": np.load(shard_dir / "pair_anchor_idx.int32.npy", mmap_mode="r"),
-        "pos_flat": np.load(shard_dir / "pair_pos_flat.int32.npy", mmap_mode="r"),
-        "pos_offsets": np.load(shard_dir / "pair_pos_offsets.int64.npy", mmap_mode="r"),
-        "neg_flat": np.load(shard_dir / "pair_neg_flat.int32.npy", mmap_mode="r"),
-        "neg_offsets": np.load(shard_dir / "pair_neg_offsets.int64.npy", mmap_mode="r"),
+        "boards": load_npy(shard_dir / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+        "moves": load_npy(shard_dir / "examples_moves.uint8.npy", mmap_mode="r"),
+        "game_types": load_npy(shard_dir / "examples_game_type.uint8.npy", mmap_mode="r"),
+        "anchor_idx": load_npy(shard_dir / "pair_anchor_idx.int32.npy", mmap_mode="r"),
+        "pos_flat": load_npy(shard_dir / "pair_pos_flat.int32.npy", mmap_mode="r"),
+        "pos_offsets": load_npy(shard_dir / "pair_pos_offsets.int64.npy", mmap_mode="r"),
+        "neg_flat": load_npy(shard_dir / "pair_neg_flat.int32.npy", mmap_mode="r"),
+        "neg_offsets": load_npy(shard_dir / "pair_neg_offsets.int64.npy", mmap_mode="r"),
     }
 
 

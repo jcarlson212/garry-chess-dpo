@@ -19,6 +19,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
+from grandmaster_dpo.utilities.npy_io import load_npy
+
 from .dataset_schema import ExampleRow, PairRow, TrainConfig
 from .pair_variants import validate_pair_row
 from .train_configs import STUDIES
@@ -53,15 +55,15 @@ class PairShardedDataset(Dataset):
         total_rows = 0
         for sd in shard_dirs:
             shard = {
-                "boards": np.load(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
-                "moves": np.load(sd / "examples_moves.uint8.npy", mmap_mode="r"),
-                "game_types": np.load(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
+                "boards": load_npy(sd / "examples_board_tokens.uint8.npy", mmap_mode="r"),
+                "moves": load_npy(sd / "examples_moves.uint8.npy", mmap_mode="r"),
+                "game_types": load_npy(sd / "examples_game_type.uint8.npy", mmap_mode="r"),
 
-                "anchor_idx": np.load(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
-                "pos_flat": np.load(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
-                "pos_offsets": np.load(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
-                "neg_flat": np.load(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
-                "neg_offsets": np.load(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
+                "anchor_idx": load_npy(sd / "pair_anchor_idx.int32.npy", mmap_mode="r"),
+                "pos_flat": load_npy(sd / "pair_pos_flat.int32.npy", mmap_mode="r"),
+                "pos_offsets": load_npy(sd / "pair_pos_offsets.int64.npy", mmap_mode="r"),
+                "neg_flat": load_npy(sd / "pair_neg_flat.int32.npy", mmap_mode="r"),
+                "neg_offsets": load_npy(sd / "pair_neg_offsets.int64.npy", mmap_mode="r"),
             }
 
             self.shards.append(shard)
