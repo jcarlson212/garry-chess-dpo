@@ -7,14 +7,11 @@ For this experiment we filter from all players with more than 1K games on TWIC p
 To save disk space, the large generated datasets in this directory are stored zstd-compressed:
 
 - `pairs_v1/` and `pairs_v2/` jsonl shards are stored as `*.jsonl.zst` (zstd -9, ~7.7x smaller). All pipeline readers (`prepare_style_training_cache.py`, `eval_style_embedding_model.py`, `generate_paper_plots.py`) read `.jsonl.zst` transparently via `grandmaster_dpo.utilities.jsonl_io` — no decompression needed.
-- `pairs_v{1,2,3}_cached/` and `eval_outputs/` numpy arrays are stored as `*.npy.zst` / `*.npz.zst` (zstd -3, ~8.5x smaller). Training (`train_style_encoder.py`) mmaps these caches, so they must be decompressed before re-running training or anything else that loads them:
+- `pairs_v{1,2,3}_cached/` and `eval_outputs/` numpy arrays are stored as `*.npy.zst` / `*.npz.zst` (zstd -3, ~8.5x smaller). Cache consumers (training, eval, hardneg cache build, paper figures) load these through `grandmaster_dpo.utilities.npy_io.load_npy`, which transparently decompresses a `.zst` file in place (removing the `.zst`) the first time it is needed — no manual step required. Note this restores the uncompressed size on disk for the shards actually loaded; recompress afterwards with:
 
   ```sh
-  # decompress a cache dir in place (removes the .zst files)
-  find pairs_v1_cached -name '*.zst' -exec zstd -d -q --rm {} +
+  find pairs_v1_cached -name '*.npy' -exec zstd -3 -q --check --rm {} +
   ```
-
-  Alternatively, caches can be regenerated from the compressed pairs jsonls with `prepare_style_training_cache.py`.
 
 ### Data Filtering
 
